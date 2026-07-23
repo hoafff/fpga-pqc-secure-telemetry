@@ -9,23 +9,24 @@ SYNTH_LOG="${BUILD_DIR}/yosys-forward-ntt-core.log"
 mkdir -p "${BUILD_DIR}"
 cd "${ROOT_DIR}"
 
-RTL_SOURCES="
-    rtl/arithmetic/mod_add.sv
-    rtl/arithmetic/mod_sub.sv
-    rtl/arithmetic/mod_mul_3329_pipe.sv
-    rtl/ntt/ntt_butterfly_pipe.sv
-    rtl/ntt/twiddle_rom_3329.sv
-    rtl/ntt/forward_ntt_scheduler.sv
-    rtl/ntt/true_dual_port_ram_256x16.sv
-    rtl/ntt/coefficient_pingpong_memory_256x16.sv
-    rtl/ntt/forward_ntt_core.sv
-"
+# Keep the source list on the same Yosys command line. Newlines inside a
+# read_verilog command are parsed as command terminators by older Yosys builds.
+READ_RTL="read_verilog -sv -DSYNTHESIS \
+rtl/arithmetic/mod_add.sv \
+rtl/arithmetic/mod_sub.sv \
+rtl/arithmetic/mod_mul_3329_pipe.sv \
+rtl/ntt/ntt_butterfly_pipe.sv \
+rtl/ntt/twiddle_rom_3329.sv \
+rtl/ntt/forward_ntt_scheduler.sv \
+rtl/ntt/true_dual_port_ram_256x16.sv \
+rtl/ntt/coefficient_pingpong_memory_256x16.sv \
+rtl/ntt/forward_ntt_core.sv"
 
 # Stop before generic memory mapping and require exactly two collected memory
 # cells. This proves that the two 256x16 coefficient banks survive RTL lowering
 # as memories instead of becoming thousands of flip-flops and muxes.
 yosys -ql "${MEMORY_LOG}" -p "
-    read_verilog -sv -DSYNTHESIS ${RTL_SOURCES};
+    ${READ_RTL};
     hierarchy -check -top forward_ntt_core;
     proc;
     opt;
@@ -41,7 +42,7 @@ yosys -ql "${MEMORY_LOG}" -p "
 # driver and lowering failures. The resulting generic cell count is not an FPGA
 # utilization estimate.
 yosys -ql "${SYNTH_LOG}" -p "
-    read_verilog -sv -DSYNTHESIS ${RTL_SOURCES};
+    ${READ_RTL};
     hierarchy -check -top forward_ntt_core;
     synth -top forward_ntt_core;
     check;
