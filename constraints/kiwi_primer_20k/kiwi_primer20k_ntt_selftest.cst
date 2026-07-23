@@ -1,0 +1,33 @@
+// Kiwi Primer 20K v1.0
+// Device: GW2A-LV18PG256C8/I7
+// Source: OneKiwi schematic and user guide.
+
+IO_LOC "sys_clk_i" H11;
+IO_PORT "sys_clk_i" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+
+IO_LOC "rst_ni" A5;
+IO_PORT "rst_ni" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+IO_LOC "btn1_ni" A3;
+IO_PORT "btn1_ni" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+IO_LOC "led1_no" J1;
+IO_PORT "led1_no" IO_TYPE=LVCMOS33;
+
+IO_LOC "led2_no" J2;
+IO_PORT "led2_no" IO_TYPE=LVCMOS33;
+
+IO_LOC "led3_no" H1;
+IO_PORT "led3_no" IO_TYPE=LVCMOS33;
+
+IO_LOC "led4_no" H2;
+IO_PORT "led4_no" IO_TYPE=LVCMOS33;
+
+IO_LOC "led5_no" G1;
+IO_PORT "led5_no" IO_TYPE=LVCMOS33;
+
+IO_LOC "led6_no" G2;
+IO_PORT "led6_no" IO_TYPE=LVCMOS33;
+
+IO_LOC "led7_no" F1;
+IO_PORT "led7_no" IO_TYPE=LVCMOS33;
