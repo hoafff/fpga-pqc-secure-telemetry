@@ -133,9 +133,30 @@ Run locally with:
 bash scripts/sim/run_iverilog_unit_tests.sh
 ```
 
+## Generic synthesis check
+
+`scripts/synth/check_forward_ntt_core_yosys.sh` performs a board-independent Yosys synthesis and hierarchy check with simulation-only assertions removed.
+
+The first successful generic synthesis produced approximately 32,282 primitive logic cells after technology-independent lowering. It reported zero inferred memories because the correctness-first coefficient store and case-based twiddle ROM were lowered into registers and multiplexers.
+
+This figure is not an FPGA resource estimate and must not be reported as LUT usage. It is a useful warning that the current memory architecture is functionally valid but not suitable as the final board implementation.
+
+Run the check with:
+
+```bash
+bash scripts/synth/check_forward_ntt_core_yosys.sh
+```
+
 ## Status and limitations
 
-This milestone proves algorithmic and control correctness in simulation. It does not yet prove:
+This milestone proves:
+
+- agreement between two independent Python NTT models;
+- full end-to-end RTL agreement for five vectors and 1280 coefficients;
+- correct stage draining and in-place dependency handling;
+- generic synthesis without hierarchy or undriven-signal errors.
+
+It does not yet prove:
 
 - efficient BRAM mapping;
 - device timing closure;
