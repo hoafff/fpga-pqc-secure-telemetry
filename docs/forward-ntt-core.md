@@ -111,12 +111,15 @@ bash scripts/sim/run_iverilog_unit_tests.sh
 
 ## Yosys memory check
 
-`scripts/synth/check_forward_ntt_core_yosys.sh` performs two checks:
+`scripts/synth/check_forward_ntt_core_yosys.sh` performs three checks:
 
-1. RTL lowering stops before generic memory mapping and requires exactly two `$mem_v2` coefficient-memory cells.
-2. A complete board-independent synthesis checks hierarchy, drivers and structural correctness.
+1. The hierarchy contains exactly two instances of `true_dual_port_ram_256x16`.
+2. The `memory` array inside that reusable RAM module is lowered to a `$mem_v2` object instead of being converted early into flip-flops.
+3. A complete board-independent synthesis checks hierarchy, drivers and structural correctness.
 
-This proves that the generic RTL preserves the two coefficient arrays as memories. It does not prove that a particular vendor tool will map them into exactly two physical BRAM blocks.
+The design also contains other legitimate inferred memories, including the metadata FIFO and twiddle ROM. Therefore the check deliberately targets the coefficient-RAM module and its two instances rather than counting all `$mem_v2` objects globally.
+
+This proves that the generic RTL preserves the coefficient banks as memories. It does not prove that a particular vendor tool will map them into exactly two physical BRAM blocks.
 
 ## Remaining board-dependent work
 
