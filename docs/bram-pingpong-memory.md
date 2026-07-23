@@ -61,8 +61,13 @@ Testbench kiểm tra:
 - đủ 5 vector NTT và 1280 hệ số khớp golden model;
 - host access bị từ chối khi core bận.
 
-Yosys được dừng trước bước memory mapping và bắt buộc phải tìm đúng hai cell `$mem_v2`. Đây là kiểm tra độc lập rằng hai mảng hệ số vẫn còn ở dạng memory sau RTL lowering.
+Yosys kiểm tra hai điều độc lập:
+
+- hierarchy chứa đúng hai instance `true_dual_port_ram_256x16`;
+- mảng `memory` bên trong module RAM vẫn được hạ thành `$mem_v2`, không bị đổi sớm thành hàng nghìn flip-flop.
+
+Thiết kế còn có các memory nhỏ hợp lệ khác như metadata FIFO và twiddle ROM, nên không thể đánh giá coefficient RAM bằng cách đếm toàn bộ `$mem_v2` trong hierarchy.
 
 ## Giới hạn
 
-Việc Yosys giữ lại hai memory cell chưa đồng nghĩa đã ánh xạ thành BRAM trên một FPGA cụ thể. Kết quả cuối cùng vẫn phải được xác nhận bằng Vivado hoặc Gowin EDA với đúng mã chip, constraint và báo cáo utilization/timing của board.
+Việc Yosys giữ được module RAM và hai instance chưa đồng nghĩa đã ánh xạ thành BRAM trên một FPGA cụ thể. Kết quả cuối cùng vẫn phải được xác nhận bằng Vivado hoặc Gowin EDA với đúng mã chip, constraint và báo cáo utilization/timing của board.
