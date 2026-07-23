@@ -2,6 +2,7 @@ module forward_ntt_scheduler (
     input  logic       clk_i,
     input  logic       rst_ni,
     input  logic       start_i,
+    input  logic       ready_i,
 
     output logic       busy_o,
     output logic       valid_o,
@@ -30,10 +31,11 @@ module forward_ntt_scheduler (
     //         butterfly(j, j + len, zeta);
     //     }
     //
-    // A start pulse launches exactly 896 consecutive valid transactions.
-    // start_i is ignored while busy_o is asserted. The final transaction is
-    // consumed on a rising edge with transform_last_o == 1; done_o pulses in
-    // the immediately following cycle.
+    // A start pulse launches exactly 896 transactions. valid_o follows the
+    // standard ready/valid contract: scheduler state advances only on a rising
+    // edge where valid_o && ready_i are both high. start_i is ignored while
+    // busy_o is asserted. The final transaction is consumed on a rising edge
+    // with transform_last_o == 1; done_o pulses in the following cycle.
 
     localparam logic [8:0] N = 9'd256;
 
@@ -116,7 +118,7 @@ module forward_ntt_scheduler (
                     left_q   <= 8'd0;
                     zeta_q   <= 7'd1;
                 end
-            end else if (current_group_last) begin
+            end else if (ready_i && current_group_last) begin
                 if (next_group_start < N) begin
                     start_q <= next_group_start[7:0];
                     left_q  <= next_group_start[7:0];
@@ -131,7 +133,7 @@ module forward_ntt_scheduler (
                     busy_q <= 1'b0;
                     done_o <= 1'b1;
                 end
-            end else begin
+            end else if (ready_i) begin
                 left_q <= left_q + 8'd1;
             end
         end
