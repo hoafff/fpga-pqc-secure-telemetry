@@ -9,7 +9,7 @@ mkdir -p "${BUILD_DIR}"
 cd "${ROOT_DIR}"
 
 yosys -ql "${LOG_FILE}" -p "
-    read_verilog -sv -D SYNTHESIS \
+    read_verilog -sv -DSYNTHESIS \
         rtl/arithmetic/mod_add.sv \
         rtl/arithmetic/mod_sub.sv \
         rtl/arithmetic/mod_mul_3329_pipe.sv \
