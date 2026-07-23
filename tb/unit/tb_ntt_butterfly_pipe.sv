@@ -27,6 +27,9 @@ module tb_ntt_butterfly_pipe;
     integer unsigned sent_count;
     integer unsigned recv_count;
     integer unsigned i;
+    integer unsigned a_rand;
+    integer unsigned b_rand;
+    integer unsigned zeta_rand;
     logic [31:0] prng;
 
     ntt_butterfly_pipe dut (
@@ -87,8 +90,8 @@ module tb_ntt_butterfly_pipe;
             expected_valid_s2  = 1'b0;
             expected_valid_s3  = 1'b0;
             expected_valid_now = 1'b0;
-            head = 0;
-            tail = 0;
+            head       = 0;
+            tail       = 0;
             sent_count = 0;
             recv_count = 0;
         end else begin
@@ -119,7 +122,7 @@ module tb_ntt_butterfly_pipe;
                         "ntt_butterfly_pipe b_o mismatch: index=%0d got=%0d expected=%0d",
                         head, b_o, expected_b[head]);
 
-                head = head + 1;
+                head       = head + 1;
                 recv_count = recv_count + 1;
             end
         end
@@ -155,10 +158,6 @@ module tb_ntt_butterfly_pipe;
 
         // Reproducible pseudo-random traffic with bubbles.
         for (i = 0; i < 1000; i = i + 1) begin
-            integer unsigned a_rand;
-            integer unsigned b_rand;
-            integer unsigned zeta_rand;
-
             prng_next();
             a_rand = prng % Q;
             prng_next();
