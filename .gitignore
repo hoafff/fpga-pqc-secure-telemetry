@@ -1,0 +1,83 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# C/C++
+*.o
+*.obj
+*.elf
+*.exe
+*.out
+
+# FPGA tool outputs
+*.bit
+*.bin
+*.mcs
+*.sof
+*.pof
+*.jed
+*.fs
+*.rpt
+*.jou
+*.log
+*.str
+*.dcp
+*.ltx
+*.wdb
+*.vcd
+*.fst
+*.ghw
+
+# Vivado
+.Xil/
+*.cache/
+*.hw/
+*.ip_user_files/
+*.runs/
+*.sim/
+*.srcs/
+*.gen/
+*.xpr
+
+# Gowin
+impl/
+gw_project.gprj.user
+
+# Quartus
+.db/
+incremental_db/
+output_files/
+
+# Simulation/build
+build/
+sim_build/
+work/
+obj_dir/
+coverage/
+
+# Generated results
+results/**/*.csv
+results/**/*.json
+results/**/*.html
+results/**/*.png
+results/**/*.pdf
+!results/**/.gitkeep
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+*.secret
+secrets/
