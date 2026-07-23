@@ -41,7 +41,7 @@ jobs:
           bash scripts/sim/run_iverilog_unit_tests.sh \
             > build/sim/rtl-unit-tests.log 2>&1
 
-      - name: Run generic Yosys synthesis check
+      - name: Run Yosys memory and synthesis checks
         id: synth_check
         continue-on-error: true
         run: bash scripts/synth/check_forward_ntt_core_yosys.sh
@@ -53,6 +53,7 @@ jobs:
           name: verification-logs
           path: |
             build/sim/rtl-unit-tests.log
+            build/synth/yosys-forward-ntt-memory.log
             build/synth/yosys-forward-ntt-core.log
           if-no-files-found: warn
 
@@ -61,6 +62,9 @@ jobs:
         run: |
           if [ -f build/sim/rtl-unit-tests.log ]; then
             cat build/sim/rtl-unit-tests.log
+          fi
+          if [ -f build/synth/yosys-forward-ntt-memory.log ]; then
+            cat build/synth/yosys-forward-ntt-memory.log
           fi
           if [ -f build/synth/yosys-forward-ntt-core.log ]; then
             cat build/synth/yosys-forward-ntt-core.log

@@ -6,25 +6,24 @@ module forward_ntt_core (
     output logic        busy_o,
     output logic        done_o,
 
+    input  logic        host_re_i,
     input  logic        host_we_i,
     input  logic [7:0]  host_addr_i,
     input  logic [15:0] host_wdata_i,
     output logic        host_ready_o,
+    output logic        host_rvalid_o,
     output logic [15:0] host_rdata_o,
 
     output logic [2:0]  stage_o,
-    output logic        stage_barrier_o
+    output logic        stage_barrier_o,
+    output logic        active_bank_o
 );
-    // Correctness-first 256-coefficient ML-KEM forward NTT integration.
+    // BRAM-oriented 256-coefficient ML-KEM forward NTT integration.
     //
-    // Dataflow:
-    //   scheduler -> coefficient reads + twiddle ROM -> pipelined butterfly
-    //             -> metadata FIFO -> in-place coefficient writeback
-    //
-    // The scheduler is stalled after every stage's final transaction until that
-    // transaction reaches writeback. Because butterfly results preserve order,
-    // observing the stage-last writeback also proves that all earlier writes in
-    // that stage have completed. The next stage therefore cannot read stale data.
+    // Each stage reads from one synchronous true-dual-port coefficient RAM and
+    // writes to a second RAM. The banks swap only after the stage-last butterfly
+    // reaches writeback. This removes in-place read-after-write hazards and keeps
+    // both coefficient arrays compatible with block-RAM inference.
 
     localparam int unsigned META_DEPTH = 16;
     localparam int unsigned META_PTR_W = 4;
@@ -52,16 +51,17 @@ module forward_ntt_core (
     logic scheduler_transform_last;
     logic scheduler_fire;
 
+    logic memory_rvalid;
     logic [15:0] memory_left_data;
     logic [15:0] memory_right_data;
+    logic memory_active_bank;
+    logic memory_swap;
 
     logic twiddle_valid;
     logic [15:0] twiddle_data;
 
     logic req_valid_s1;
     logic req_valid_s2;
-    logic [15:0] req_left_data_s1;
-    logic [15:0] req_right_data_s1;
     logic [7:0] req_left_addr_s1;
     logic [7:0] req_right_addr_s1;
     logic req_stage_last_s1;
@@ -89,11 +89,13 @@ module forward_ntt_core (
     logic meta_pop;
     logic meta_near_full;
 
-    assign start_accept = start_i && !running_q;
+    assign start_accept =
+        start_i && !running_q && !host_re_i && !host_we_i;
     assign busy_o = running_q;
     assign host_ready_o = !running_q;
     assign stage_o = scheduler_stage;
     assign stage_barrier_o = barrier_q;
+    assign active_bank_o = memory_active_bank;
 
     assign meta_near_full = meta_count_q >= META_STOP_LEVEL;
     assign scheduler_ready = running_q && !barrier_q && !meta_near_full;
@@ -102,6 +104,8 @@ module forward_ntt_core (
     assign butterfly_input_valid = twiddle_valid && req_valid_s2;
     assign meta_push = butterfly_input_valid;
     assign meta_pop = butterfly_output_valid;
+    assign memory_swap =
+        meta_pop && meta_stage_last[meta_read_ptr_q];
 
     forward_ntt_scheduler u_scheduler (
         .clk_i             (clk_i),
@@ -124,22 +128,28 @@ module forward_ntt_core (
         .transform_last_o  (scheduler_transform_last)
     );
 
-    coefficient_memory_256x16 u_coefficient_memory (
+    coefficient_pingpong_memory_256x16 u_coefficient_memory (
         .clk_i          (clk_i),
         .rst_ni         (rst_ni),
+        .host_re_i      (host_re_i && host_ready_o),
         .host_we_i      (host_we_i && host_ready_o),
         .host_addr_i    (host_addr_i),
         .host_wdata_i   (host_wdata_i),
+        .host_rvalid_o  (host_rvalid_o),
         .host_rdata_o   (host_rdata_o),
+        .core_re_i      (scheduler_fire),
         .left_raddr_i   (scheduler_left_addr),
         .right_raddr_i  (scheduler_right_addr),
+        .core_rvalid_o  (memory_rvalid),
         .left_rdata_o   (memory_left_data),
         .right_rdata_o  (memory_right_data),
         .core_we_i      (meta_pop),
         .left_waddr_i   (meta_left_addr[meta_read_ptr_q]),
         .right_waddr_i  (meta_right_addr[meta_read_ptr_q]),
         .left_wdata_i   (butterfly_left_data),
-        .right_wdata_i  (butterfly_right_data)
+        .right_wdata_i  (butterfly_right_data),
+        .swap_i         (memory_swap),
+        .active_bank_o  (memory_active_bank)
     );
 
     twiddle_rom_3329 u_twiddle_rom (
@@ -163,12 +173,13 @@ module forward_ntt_core (
         .b_o     (butterfly_right_data)
     );
 
+    // One scheduler request launches synchronous coefficient and twiddle reads.
+    // Request metadata is held for one cycle, then paired with the registered
+    // coefficient outputs. twiddle_valid has the same latency as memory_rvalid.
     always_ff @(posedge clk_i) begin
         if (!rst_ni) begin
             req_valid_s1          <= 1'b0;
             req_valid_s2          <= 1'b0;
-            req_left_data_s1      <= '0;
-            req_right_data_s1     <= '0;
             req_left_addr_s1      <= '0;
             req_right_addr_s1     <= '0;
             req_stage_last_s1     <= 1'b0;
@@ -181,20 +192,18 @@ module forward_ntt_core (
             req_transform_last_s2 <= 1'b0;
         end else begin
             req_valid_s1 <= scheduler_fire;
-            req_valid_s2 <= req_valid_s1;
+            req_valid_s2 <= memory_rvalid;
 
             if (scheduler_fire) begin
-                req_left_data_s1      <= memory_left_data;
-                req_right_data_s1     <= memory_right_data;
                 req_left_addr_s1      <= scheduler_left_addr;
                 req_right_addr_s1     <= scheduler_right_addr;
                 req_stage_last_s1     <= scheduler_stage_last;
                 req_transform_last_s1 <= scheduler_transform_last;
             end
 
-            if (req_valid_s1) begin
-                req_left_data_s2      <= req_left_data_s1;
-                req_right_data_s2     <= req_right_data_s1;
+            if (memory_rvalid) begin
+                req_left_data_s2      <= memory_left_data;
+                req_right_data_s2     <= memory_right_data;
                 req_left_addr_s2      <= req_left_addr_s1;
                 req_right_addr_s2     <= req_right_addr_s1;
                 req_stage_last_s2     <= req_stage_last_s1;
@@ -215,8 +224,11 @@ module forward_ntt_core (
             done_o <= 1'b0;
 
             if (start_accept) begin
-                running_q <= 1'b1;
-                barrier_q <= 1'b0;
+                running_q        <= 1'b1;
+                barrier_q        <= 1'b0;
+                meta_write_ptr_q <= '0;
+                meta_read_ptr_q  <= '0;
+                meta_count_q     <= '0;
             end
 
             if (scheduler_fire && scheduler_stage_last)
@@ -242,24 +254,28 @@ module forward_ntt_core (
                 end
             end
 
-            case ({meta_push, meta_pop})
-                2'b10: meta_count_q <= meta_count_q + 1'b1;
-                2'b01: meta_count_q <= meta_count_q - 1'b1;
-                default: meta_count_q <= meta_count_q;
-            endcase
+            if (!start_accept) begin
+                case ({meta_push, meta_pop})
+                    2'b10: meta_count_q <= meta_count_q + 1'b1;
+                    2'b01: meta_count_q <= meta_count_q - 1'b1;
+                    default: meta_count_q <= meta_count_q;
+                endcase
+            end
         end
     end
 
 `ifndef SYNTHESIS
     always_ff @(posedge clk_i) begin
         if (rst_ni) begin
+            assert (memory_rvalid == req_valid_s1)
+                else $error(
+                    "forward_ntt_core: coefficient read-valid misalignment");
             assert (twiddle_valid == req_valid_s2)
                 else $error(
                     "forward_ntt_core: twiddle/request pipeline misalignment");
 
             assert (!(meta_push && (meta_count_q == META_DEPTH)))
                 else $error("forward_ntt_core: metadata FIFO overflow");
-
             assert (!(meta_pop && (meta_count_q == 0)))
                 else $error("forward_ntt_core: metadata FIFO underflow");
 
@@ -287,6 +303,12 @@ module forward_ntt_core (
                     else $error(
                         "forward_ntt_core: non-canonical right result %0d",
                         butterfly_right_data);
+            end
+
+            if (memory_swap) begin
+                assert (barrier_q)
+                    else $error(
+                        "forward_ntt_core: coefficient banks swapped outside barrier");
             end
         end
     end

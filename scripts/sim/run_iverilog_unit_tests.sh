@@ -59,6 +59,11 @@ run_test tb_forward_ntt_scheduler \
     "${ROOT_DIR}/rtl/ntt/forward_ntt_scheduler.sv" \
     "${ROOT_DIR}/tb/unit/tb_forward_ntt_scheduler.sv"
 
+run_test tb_coefficient_pingpong_memory_256x16 \
+    "${ROOT_DIR}/rtl/ntt/true_dual_port_ram_256x16.sv" \
+    "${ROOT_DIR}/rtl/ntt/coefficient_pingpong_memory_256x16.sv" \
+    "${ROOT_DIR}/tb/unit/tb_coefficient_pingpong_memory_256x16.sv"
+
 run_test tb_forward_ntt_core \
     "${ROOT_DIR}/rtl/arithmetic/mod_add.sv" \
     "${ROOT_DIR}/rtl/arithmetic/mod_sub.sv" \
@@ -66,7 +71,8 @@ run_test tb_forward_ntt_core \
     "${ROOT_DIR}/rtl/ntt/ntt_butterfly_pipe.sv" \
     "${ROOT_DIR}/rtl/ntt/twiddle_rom_3329.sv" \
     "${ROOT_DIR}/rtl/ntt/forward_ntt_scheduler.sv" \
-    "${ROOT_DIR}/rtl/ntt/coefficient_memory_256x16.sv" \
+    "${ROOT_DIR}/rtl/ntt/true_dual_port_ram_256x16.sv" \
+    "${ROOT_DIR}/rtl/ntt/coefficient_pingpong_memory_256x16.sv" \
     "${ROOT_DIR}/rtl/ntt/forward_ntt_core.sv" \
     "${ROOT_DIR}/tb/integration/tb_forward_ntt_core.sv"
 
