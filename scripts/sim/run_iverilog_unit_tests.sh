@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/build/sim"
 
 mkdir -p "${BUILD_DIR}"
+cd "${ROOT_DIR}"
 
 run_test() {
     local top="$1"
@@ -43,5 +44,9 @@ run_test tb_ntt_butterfly_pipe \
     "${ROOT_DIR}/rtl/arithmetic/mod_mul_3329_pipe.sv" \
     "${ROOT_DIR}/rtl/ntt/ntt_butterfly_pipe.sv" \
     "${ROOT_DIR}/tb/unit/tb_ntt_butterfly_pipe.sv"
+
+run_test tb_twiddle_rom_3329 \
+    "${ROOT_DIR}/rtl/ntt/twiddle_rom_3329.sv" \
+    "${ROOT_DIR}/tb/unit/tb_twiddle_rom_3329.sv"
 
 echo "PASS: all RTL unit tests completed"
