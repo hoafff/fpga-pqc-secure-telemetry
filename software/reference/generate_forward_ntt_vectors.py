@@ -18,7 +18,7 @@ import argparse
 import random
 from pathlib import Path
 
-from generate_forward_ntt_schedule import build_schedule
+from generate_forward_ntt_schedule import generate_schedule
 from generate_twiddles_3329 import Q, derive_standard_twiddles
 
 N = 256
@@ -59,7 +59,7 @@ def forward_ntt_flat(
 ) -> list[int]:
     """Apply the independently generated flattened scheduler stream."""
     values = [value % Q for value in coefficients]
-    for item in build_schedule():
+    for item in generate_schedule():
         left = item.left
         right = item.right
         t = (values[right] * twiddles[item.zeta_addr]) % Q
