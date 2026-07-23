@@ -35,13 +35,12 @@ yosys -ql "${MEMORY_LOG}" -p "
     memory_collect;
     select -assert-count 1 true_dual_port_ram_256x16/memory;
     select -clear;
-    check;
     stat;
 "
 
-# Also run a complete technology-independent synthesis to catch hierarchy,
-# driver and lowering failures. The resulting generic cell count is not an FPGA
-# utilization estimate.
+# Run check after complete synthesis. Yosys 0.33 can emit false undriven-wire
+# warnings when check is run immediately after memory_collect, even though the
+# same memory ports are valid after the normal synthesis flow.
 yosys -ql "${SYNTH_LOG}" -p "
     ${READ_RTL};
     hierarchy -check -top forward_ntt_core;
