@@ -64,16 +64,26 @@ run_test tb_coefficient_pingpong_memory_256x16 \
     "${ROOT_DIR}/rtl/ntt/coefficient_pingpong_memory_256x16.sv" \
     "${ROOT_DIR}/tb/unit/tb_coefficient_pingpong_memory_256x16.sv"
 
+COMMON_NTT_SOURCES=(
+    "${ROOT_DIR}/rtl/arithmetic/mod_add.sv"
+    "${ROOT_DIR}/rtl/arithmetic/mod_sub.sv"
+    "${ROOT_DIR}/rtl/arithmetic/mod_mul_3329_pipe.sv"
+    "${ROOT_DIR}/rtl/ntt/ntt_butterfly_pipe.sv"
+    "${ROOT_DIR}/rtl/ntt/twiddle_rom_3329.sv"
+    "${ROOT_DIR}/rtl/ntt/forward_ntt_scheduler.sv"
+    "${ROOT_DIR}/rtl/ntt/true_dual_port_ram_256x16.sv"
+    "${ROOT_DIR}/rtl/ntt/coefficient_pingpong_memory_256x16.sv"
+    "${ROOT_DIR}/rtl/ntt/forward_ntt_core.sv"
+)
+
 run_test tb_forward_ntt_core \
-    "${ROOT_DIR}/rtl/arithmetic/mod_add.sv" \
-    "${ROOT_DIR}/rtl/arithmetic/mod_sub.sv" \
-    "${ROOT_DIR}/rtl/arithmetic/mod_mul_3329_pipe.sv" \
-    "${ROOT_DIR}/rtl/ntt/ntt_butterfly_pipe.sv" \
-    "${ROOT_DIR}/rtl/ntt/twiddle_rom_3329.sv" \
-    "${ROOT_DIR}/rtl/ntt/forward_ntt_scheduler.sv" \
-    "${ROOT_DIR}/rtl/ntt/true_dual_port_ram_256x16.sv" \
-    "${ROOT_DIR}/rtl/ntt/coefficient_pingpong_memory_256x16.sv" \
-    "${ROOT_DIR}/rtl/ntt/forward_ntt_core.sv" \
+    "${COMMON_NTT_SOURCES[@]}" \
     "${ROOT_DIR}/tb/integration/tb_forward_ntt_core.sv"
+
+run_test tb_forward_ntt_board_selftest \
+    "${COMMON_NTT_SOURCES[@]}" \
+    "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/forward_ntt_ramp_expected_rom.sv" \
+    "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/forward_ntt_board_selftest.sv" \
+    "${ROOT_DIR}/tb/integration/tb_forward_ntt_board_selftest.sv"
 
 echo "PASS: all RTL unit and integration tests completed"

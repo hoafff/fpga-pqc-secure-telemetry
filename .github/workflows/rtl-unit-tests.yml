@@ -25,6 +25,9 @@ jobs:
       - name: Verify forward NTT integration models
         run: python3 software/reference/generate_forward_ntt_vectors.py --check
 
+      - name: Verify Kiwi Primer 20K board self-test vector
+        run: python3 software/reference/generate_kiwi_primer20k_selftest.py --check
+
       - name: Run exhaustive Python arithmetic check
         run: python3 software/reference/check_barrett_3329.py
 
@@ -41,10 +44,15 @@ jobs:
           bash scripts/sim/run_iverilog_unit_tests.sh \
             > build/sim/rtl-unit-tests.log 2>&1
 
-      - name: Run Yosys memory and synthesis checks
-        id: synth_check
+      - name: Run Yosys memory and core synthesis checks
+        id: core_synth_check
         continue-on-error: true
         run: bash scripts/synth/check_forward_ntt_core_yosys.sh
+
+      - name: Run Kiwi Primer 20K board-top synthesis check
+        id: board_synth_check
+        continue-on-error: true
+        run: bash scripts/synth/check_kiwi_primer20k_selftest_yosys.sh
 
       - name: Upload verification logs
         if: always()
@@ -55,10 +63,11 @@ jobs:
             build/sim/rtl-unit-tests.log
             build/synth/yosys-forward-ntt-memory.log
             build/synth/yosys-forward-ntt-core.log
+            build/synth/yosys-kiwi-primer20k-selftest.log
           if-no-files-found: warn
 
       - name: Report verification failure
-        if: steps.rtl_tests.outcome == 'failure' || steps.synth_check.outcome == 'failure'
+        if: steps.rtl_tests.outcome == 'failure' || steps.core_synth_check.outcome == 'failure' || steps.board_synth_check.outcome == 'failure'
         run: |
           if [ -f build/sim/rtl-unit-tests.log ]; then
             cat build/sim/rtl-unit-tests.log
@@ -68,5 +77,8 @@ jobs:
           fi
           if [ -f build/synth/yosys-forward-ntt-core.log ]; then
             cat build/synth/yosys-forward-ntt-core.log
+          fi
+          if [ -f build/synth/yosys-kiwi-primer20k-selftest.log ]; then
+            cat build/synth/yosys-kiwi-primer20k-selftest.log
           fi
           exit 1
