@@ -41,9 +41,11 @@ The stages consume twiddle addresses as follows:
 - `start_i` is a one-cycle request pulse.
 - A request is accepted only while `busy_o == 0`.
 - Requests while busy are ignored.
-- Once started, `valid_o` remains high for 896 consecutive cycles.
-- There is no downstream backpressure in this scheduler version.
-- `done_o` pulses for one cycle immediately after the final valid transaction.
+- `valid_o` indicates that the current schedule transaction is available.
+- A transaction is consumed only on a rising edge where `valid_o && ready_i`.
+- When `ready_i == 0`, all transaction outputs remain stable.
+- With `ready_i` tied high, the scheduler sustains one transaction per cycle and completes after 896 handshakes.
+- `done_o` pulses for one cycle immediately after the final transaction handshake.
 - `rst_ni` is an active-low synchronous reset and aborts an in-flight transform.
 
 ## Address outputs
@@ -71,7 +73,7 @@ These flags allow the future memory/controller integration to identify writeback
 
 ## Timing interpretation
 
-The outputs are combinational views of registered scheduler state. A downstream synchronous block consumes a transaction on each rising edge for which `valid_o == 1`.
+The outputs are combinational views of registered scheduler state. A downstream synchronous block consumes a transaction on each rising edge for which `valid_o && ready_i` is true.
 
 The last transaction has:
 
@@ -79,7 +81,7 @@ The last transaction has:
 stage=6, length=2, left=253, right=255, zeta_addr=127
 ```
 
-After that transaction is consumed, `valid_o` and `busy_o` deassert and `done_o` pulses.
+After that transaction is accepted with `ready_i == 1`, `valid_o` and `busy_o` deassert and `done_o` pulses.
 
 ## Verification
 
@@ -99,4 +101,14 @@ The simulation runner generates the comparison vector at:
 build/sim/forward_ntt_schedule.hex
 ```
 
-The file is a build artifact rather than hand-maintained source. `tb/unit/tb_forward_ntt_scheduler.sv` compares every RTL transaction against that independently generated vector, tests a full-rate schedule, verifies that start requests are ignored while busy, aborts a run with reset, and confirms a clean restart.
+The file is a build artifact rather than hand-maintained source. `tb/unit/tb_forward_ntt_scheduler.sv` compares every accepted RTL transaction against that independently generated vector, tests a full-rate schedule, verifies stable outputs under deterministic random backpressure, checks that start requests are ignored while busy, aborts a run with reset, and confirms a clean restart.
+
+## Integration constraint
+
+The scheduler deliberately exposes `ready_i` because the pipelined butterfly and an in-place coefficient memory may require a drain barrier between NTT stages. A future top-level controller must either:
+
+- deassert `ready_i` until previous-stage writebacks have completed;
+- use ping-pong memories; or
+- provide explicit forwarding for read-after-write hazards.
+
+Running all 896 handshakes without a stage barrier is valid only when the selected memory architecture guarantees that the next stage observes the completed results of the previous stage.
