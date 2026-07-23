@@ -199,8 +199,7 @@ module tb_forward_ntt_scheduler;
         wait_for_completed_run();
 
         $display(
-            "PASS: forward_ntt_scheduler completed two full 896-entry runs "
-            "and one reset-aborted run");
+            "PASS: forward_ntt_scheduler completed two full 896-entry runs and one reset-aborted run");
         $finish;
     end
 endmodule
