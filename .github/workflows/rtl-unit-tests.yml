@@ -19,6 +19,9 @@ jobs:
       - name: Verify generated ML-KEM twiddles
         run: python3 software/reference/generate_twiddles_3329.py --check
 
+      - name: Verify forward NTT schedule
+        run: python3 software/reference/generate_forward_ntt_schedule.py --check
+
       - name: Run exhaustive Python arithmetic check
         run: python3 software/reference/check_barrett_3329.py
 
