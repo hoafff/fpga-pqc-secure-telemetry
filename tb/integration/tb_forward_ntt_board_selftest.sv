@@ -49,8 +49,8 @@ module tb_forward_ntt_board_selftest;
 
     always @(posedge clk) begin
         if (!rst_n) begin
-            done_count      = 0;
-            barrier_count   = 0;
+            done_count       = 0;
+            barrier_count    = 0;
             previous_barrier = 1'b0;
         end else begin
             if (done_o)
@@ -92,10 +92,6 @@ module tb_forward_ntt_board_selftest;
                 mismatch_addr_o, mismatch_observed_o, mismatch_expected_o);
         if (running_o || core_busy_o)
             $fatal(1, "board self-test remained busy after completion");
-        if (done_count != expected_done_count)
-            $fatal(1,
-                "expected done_count=%0d observed=%0d",
-                expected_done_count, done_count);
         if (barrier_count != expected_barrier_count)
             $fatal(1,
                 "expected barrier_count=%0d observed=%0d",
@@ -105,10 +101,15 @@ module tb_forward_ntt_board_selftest;
                 "expected active bank=%0d observed=%0d",
                 expected_bank, core_active_bank_o);
 
+        // The monitor observes the registered done pulse on the following edge.
         @(posedge clk);
         #1;
         if (done_o)
             $fatal(1, "self-test done_o must be a one-cycle pulse");
+        if (done_count != expected_done_count)
+            $fatal(1,
+                "expected done_count=%0d observed=%0d",
+                expected_done_count, done_count);
     end
     endtask
 
