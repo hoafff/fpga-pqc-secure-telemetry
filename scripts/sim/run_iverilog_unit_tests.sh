@@ -7,6 +7,9 @@ BUILD_DIR="${ROOT_DIR}/build/sim"
 mkdir -p "${BUILD_DIR}"
 cd "${ROOT_DIR}"
 
+python3 "${ROOT_DIR}/software/reference/generate_forward_ntt_schedule.py" \
+    --output "${BUILD_DIR}/forward_ntt_schedule.hex"
+
 run_test() {
     local top="$1"
     shift
@@ -48,5 +51,9 @@ run_test tb_ntt_butterfly_pipe \
 run_test tb_twiddle_rom_3329 \
     "${ROOT_DIR}/rtl/ntt/twiddle_rom_3329.sv" \
     "${ROOT_DIR}/tb/unit/tb_twiddle_rom_3329.sv"
+
+run_test tb_forward_ntt_scheduler \
+    "${ROOT_DIR}/rtl/ntt/forward_ntt_scheduler.sv" \
+    "${ROOT_DIR}/tb/unit/tb_forward_ntt_scheduler.sv"
 
 echo "PASS: all RTL unit tests completed"

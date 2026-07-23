@@ -19,13 +19,35 @@ jobs:
       - name: Verify generated ML-KEM twiddles
         run: python3 software/reference/generate_twiddles_3329.py --check
 
+      - name: Verify forward NTT schedule
+        run: python3 software/reference/generate_forward_ntt_schedule.py --check
+
       - name: Run exhaustive Python arithmetic check
         run: python3 software/reference/check_barrett_3329.py
 
       - name: Install Icarus Verilog
         run: |
-          sudo apt-get update
-          sudo apt-get install -y iverilog
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq iverilog
 
       - name: Run SystemVerilog unit tests
-        run: bash scripts/sim/run_iverilog_unit_tests.sh
+        id: rtl_tests
+        continue-on-error: true
+        run: |
+          mkdir -p build/sim
+          bash scripts/sim/run_iverilog_unit_tests.sh \
+            > build/sim/rtl-unit-tests.log 2>&1
+
+      - name: Upload RTL test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rtl-unit-tests-log
+          path: build/sim/rtl-unit-tests.log
+          if-no-files-found: error
+
+      - name: Report RTL test failure
+        if: steps.rtl_tests.outcome == 'failure'
+        run: |
+          cat build/sim/rtl-unit-tests.log
+          exit 1
