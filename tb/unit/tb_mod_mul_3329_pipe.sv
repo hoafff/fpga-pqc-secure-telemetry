@@ -12,9 +12,9 @@ module tb_mod_mul_3329_pipe;
     logic        valid_o;
     logic [15:0] y_o;
 
-    logic        expected_valid_s1;
-    logic        expected_valid_s2;
-    logic        expected_valid_now;
+    logic expected_valid_s1;
+    logic expected_valid_s2;
+    logic expected_valid_now;
     logic [15:0] expected_y [0:MAX_EXPECTED-1];
 
     integer unsigned head;
@@ -22,6 +22,8 @@ module tb_mod_mul_3329_pipe;
     integer unsigned sent_count;
     integer unsigned recv_count;
     integer unsigned i;
+    integer unsigned a_rand;
+    integer unsigned b_rand;
     logic [31:0] prng;
 
     mod_mul_3329_pipe dut (
@@ -40,15 +42,26 @@ module tb_mod_mul_3329_pipe;
     end
 
     task automatic drive_case(
-        input logic        drive_valid,
+        input logic drive_valid,
         input integer unsigned a_val,
         input integer unsigned b_val
     );
+        integer unsigned expected;
     begin
         @(negedge clk);
         valid_i = drive_valid;
         a_i     = a_val[15:0];
         b_i     = b_val[15:0];
+
+        if (drive_valid) begin
+            if (tail >= MAX_EXPECTED)
+                $fatal(1, "tb_mod_mul_3329_pipe: expected queue overflow");
+
+            expected         = (a_val * b_val) % Q;
+            expected_y[tail] = expected[15:0];
+            tail             = tail + 1;
+            sent_count       = sent_count + 1;
+        end
     end
     endtask
 
@@ -62,11 +75,11 @@ module tb_mod_mul_3329_pipe;
 
     always @(posedge clk) begin
         if (!rst_n) begin
-            expected_valid_s1 = 1'b0;
-            expected_valid_s2 = 1'b0;
+            expected_valid_s1  = 1'b0;
+            expected_valid_s2  = 1'b0;
             expected_valid_now = 1'b0;
-            head = 0;
-            tail = 0;
+            head       = 0;
+            tail       = 0;
             sent_count = 0;
             recv_count = 0;
         end else begin
@@ -74,15 +87,6 @@ module tb_mod_mul_3329_pipe;
             expected_valid_now = expected_valid_s2;
             expected_valid_s2  = expected_valid_s1;
             expected_valid_s1  = valid_i;
-
-            if (valid_i) begin
-                if (tail >= MAX_EXPECTED)
-                    $fatal(1, "tb_mod_mul_3329_pipe: expected queue overflow");
-
-                expected_y[tail] = (a_i * b_i) % Q;
-                tail = tail + 1;
-                sent_count = sent_count + 1;
-            end
 
             #1;
 
@@ -100,7 +104,7 @@ module tb_mod_mul_3329_pipe;
                         "mod_mul_3329_pipe data mismatch: index=%0d got=%0d expected=%0d",
                         head, y_o, expected_y[head]);
 
-                head = head + 1;
+                head       = head + 1;
                 recv_count = recv_count + 1;
             end
         end
@@ -134,8 +138,6 @@ module tb_mod_mul_3329_pipe;
             if (prng[2:0] == 3'b000) begin
                 drive_case(1'b0, 0, 0);
             end else begin
-                integer unsigned a_rand;
-                integer unsigned b_rand;
                 a_rand = prng % Q;
                 prng_next();
                 b_rand = prng % Q;
