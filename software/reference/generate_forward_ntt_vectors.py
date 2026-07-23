@@ -7,15 +7,15 @@ current RTL datapath. Two independent implementations are compared:
 1. the nested-loop reference structure;
 2. the flattened scheduler transaction stream.
 
-The committed input/output files are consumed by the SystemVerilog integration
-testbench.
+The SystemVerilog integration testbench consumes build-time vector files emitted
+with ``--output-dir``. CI also runs ``--check`` to exercise both software models
+without depending on committed generated data.
 """
 
 from __future__ import annotations
 
 import argparse
 import random
-import sys
 from pathlib import Path
 
 from generate_forward_ntt_schedule import build_schedule
@@ -87,36 +87,7 @@ def render_hex(vectors: list[list[int]]) -> str:
     return "".join(f"{value:04x}\n" for vector in vectors for value in vector)
 
 
-def write_or_check(path: Path, expected: str, check_only: bool) -> bool:
-    if check_only:
-        if not path.exists():
-            print(f"ERROR: missing generated file: {path}", file=sys.stderr)
-            return False
-        actual = path.read_text(encoding="utf-8")
-        if actual != expected:
-            print(
-                f"ERROR: generated file is stale: {path}\n"
-                "Run: python3 software/reference/"
-                "generate_forward_ntt_vectors.py --write",
-                file=sys.stderr,
-            )
-            return False
-        return True
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(expected, encoding="utf-8")
-    print(f"WROTE: {path}")
-    return True
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--write", action="store_true", help="regenerate vectors")
-    mode.add_argument("--check", action="store_true", help="verify vectors")
-    args = parser.parse_args()
-
-    repo_root = Path(__file__).resolve().parents[2]
+def build_and_cross_check() -> tuple[list[list[int]], list[list[int]]]:
     twiddles = derive_standard_twiddles()
     inputs = build_cases()
     expected: list[list[int]] = []
@@ -138,24 +109,39 @@ def main() -> int:
             raise AssertionError(f"non-canonical output in case {case_index}")
         expected.append(direct)
 
-    targets = (
-        (
-            repo_root / "tb/vectors/forward_ntt_core_inputs.hex",
-            render_hex(inputs),
-        ),
-        (
-            repo_root / "tb/vectors/forward_ntt_core_expected.hex",
-            render_hex(expected),
-        ),
+    return inputs, expected
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="cross-check the two software models",
     )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help="write build-time input and expected-output hex files",
+    )
+    args = parser.parse_args()
 
-    ok = all(write_or_check(path, text, args.check) for path, text in targets)
-    if not ok:
-        return 1
+    if not args.check and args.output_dir is None:
+        parser.error("specify --check and/or --output-dir")
 
-    action = "verified" if args.check else "generated"
+    inputs, expected = build_and_cross_check()
+
+    if args.output_dir is not None:
+        args.output_dir.mkdir(parents=True, exist_ok=True)
+        input_path = args.output_dir / "forward_ntt_core_inputs.hex"
+        expected_path = args.output_dir / "forward_ntt_core_expected.hex"
+        input_path.write_text(render_hex(inputs), encoding="utf-8")
+        expected_path.write_text(render_hex(expected), encoding="utf-8")
+        print(f"WROTE: {input_path}")
+        print(f"WROTE: {expected_path}")
+
     print(
-        f"PASS: {action} {CASE_COUNT} forward-NTT vectors "
+        f"PASS: verified {CASE_COUNT} forward-NTT vectors "
         f"({CASE_COUNT * N} coefficients); direct and flattened models agree"
     )
     return 0
