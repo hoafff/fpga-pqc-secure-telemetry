@@ -60,21 +60,18 @@ module ntt_butterfly_pipe (
 
     always_ff @(posedge clk_i) begin
         if (!rst_ni) begin
-            a_s1   <= '0;
-            a_s2   <= '0;
-            a_s3   <= '0;
+            a_s1    <= '0;
+            a_s2    <= '0;
+            a_s3    <= '0;
             valid_o <= 1'b0;
             a_o     <= '0;
             b_o     <= '0;
         end else begin
-            if (valid_i)
-                a_s1 <= a_i;
-
-            if (u_mod_mul_pipe.valid_s1)
-                a_s2 <= a_s1;
-
-            if (u_mod_mul_pipe.valid_s2)
-                a_s3 <= a_s2;
+            // Delay a_i by the same three register stages as the multiplier.
+            // Data shifts every cycle; valid_o marks which cycles are meaningful.
+            a_s1 <= a_i;
+            a_s2 <= a_s1;
+            a_s3 <= a_s2;
 
             valid_o <= mul_valid;
 
