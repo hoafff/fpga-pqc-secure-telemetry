@@ -195,7 +195,7 @@ J2-16 / R11 : Tiny zeroize_n
 J2-18 / T11 : heartbeat -> Tiny
 ```
 
-Không được nối chung `CS_N` của hai Primer. Nếu dùng chung SCK/MOSI/MISO bus, firmware/physical harness phải bảo đảm chỉ board được chọn lái MISO và từng endpoint có đường select/IRQ được phân biệt đúng.
+Không được nối chung `CS_N` của hai Primer. Nếu dùng chung SCK/MOSI/MISO bus, firmware/physical harness phải bảo đảm chỉ board được chọn lái MISO và từng endpoint có đường select/IRQ được phân biệt đúng. Shared `btp_spi_slave` đã được sửa để MISO về high-impedance khi CS không chọn endpoint; regression Primer #1 và Primer #2 đều qua sau thay đổi này.
 
 CST chỉ khóa **FPGA-side** pin mapping. SN32/Tiny-side GPIO assignment và continuity measurement phải được ghi trong harness profile trước hardware sign-off.
 
@@ -208,27 +208,29 @@ bash scripts/sim/run_primer2_deployment_tests.sh
 bash scripts/synth/check_kiwi_primer20k_fpst_rx_deployment_yosys.sh
 ```
 
-`run_primer2_deployment_tests.sh` chạy Ascon decrypt KAT/quarantine test và compile toàn deployment hierarchy với Icarus Verilog.
+`run_primer2_deployment_tests.sh` hiện chạy ba gate:
 
-Generic Yosys synthesis chỉ là structural/synthesizability smoke gate. Nó không thay Gowin exact-device synthesis/place-and-route/timing.
+```text
+Ascon-AEAD128 decrypt KAT / quarantine
+Primer #1 STP TX -> Primer #2 STP RX cross-endpoint policy regression
+complete Primer #2 deployment hierarchy compile
+```
 
-Các evidence bắt buộc trước board sign-off:
+Cross-endpoint regression đã bắt được và dẫn tới sửa một lỗi streaming có thật ở `primer1_stp_tx`: ciphertext có thể được Ascon xuất ngay trong lúc wrapper còn feed block plaintext tiếp theo, nên TX phải capture `core_out_valid` trong toàn transaction chứ không chỉ ở `ST_WAIT_CRYPTO`.
 
-- official Ascon decrypt KAT/differential PASS;
-- malformed/session/replay/gap/auth-failure tests;
-- không có plaintext output khi tag sai;
-- zeroize/reset ở mọi reachable receive state;
-- 3-consecutive-auth-failure fatal behavior;
-- complete BTP request/response and retry tests;
+GitHub Actions run #369 (`218028bf...`) đã PASS toàn bộ regression và generic synthesis gates, bao gồm Primer #1 sau sửa streaming và Primer #2 secure RX; final `Report verification failure` được skip, nên không có `continue-on-error` raw failure bị che. Generic Yosys synthesis chỉ là structural/synthesizability smoke gate và không thay Gowin exact-device synthesis/place-and-route/timing.
+
+Các evidence còn bắt buộc trước board sign-off:
+
 - Gowin synthesis + P&R + timing cho `GW2A-LV18PG256C8/I7`;
 - continuity/common-ground check;
 - logic-analyzer validation bắt đầu ở SPI Mode 0, 1 MHz;
-- programmed-board end-to-end telemetry TX -> RX -> commit/retry/zeroize test.
+- programmed-board end-to-end telemetry TX -> RX -> commit/retry/zeroize/fault test.
 
 ## 10. Trạng thái hiện tại
 
 ```text
-IMPLEMENTED ON primer2-deployment-v1:
+IMPLEMENTED + CI-VERIFIED ON primer2-deployment-v1:
   secure RX top + BTP endpoint
   receive session context / expected_sequence
   STP precheck + replay/gap guard
@@ -236,17 +238,19 @@ IMPLEMENTED ON primer2-deployment-v1:
   plaintext quarantine / verify-before-release
   auth-failure threshold -> fault request
   response cache and commit/reconcile response
+  shared-SPI MISO tri-state behavior
   CST/SDC + source manifest
-  decrypt KAT/quarantine regression source
-  Icarus hierarchy compile script
-  Yosys smoke-check script
+  decrypt KAT/quarantine regression
+  Primer1-TX -> Primer2-RX cross-endpoint regression
+  replay / sequence-gap / bad-tag x3 threshold regression
+  Icarus complete hierarchy compile
+  Primer #1 and Primer #2 generic Yosys deployment synthesis
 
 NOT YET HARDWARE-SIGNED-OFF:
-  local/CI execution evidence for the new Primer #2 tests
   Gowin exact-device P&R/timing
   generated/programmed *.fs
   physical Primer #2 harness continuity and logic-analyzer evidence
   SN32 system-level client/harness extension for the second endpoint
 ```
 
-Không tạo bitstream giả và không gọi target là hardware-ready chỉ vì RTL đã tồn tại.
+Không tạo bitstream giả và không gọi target là hardware-ready chỉ vì RTL/CI đã pass.
