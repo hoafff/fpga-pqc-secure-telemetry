@@ -77,6 +77,14 @@ if(FPST_ENABLE_MLKEM_NATIVE)
     target_link_libraries(test_mlkem_native_wrapper PRIVATE
         fpst_mlkem_native_upstream
         fpst_mlkem_native_reference)
+
+    # Source-level SRAM regression guard for the dominant persistent objects.
+    # This supplements, but never replaces, the ARM Compiler 6 map/stack gate.
+    add_executable(test_mlkem_memory_preflight
+        tests/test_mlkem_memory_preflight.c)
+    target_link_libraries(test_mlkem_memory_preflight PRIVATE fpst_firmware_core)
+    target_compile_options(test_mlkem_memory_preflight PRIVATE
+        -Wall -Wextra -Werror -Wpedantic)
 endif()
 
 add_executable(test_firmware_core tests/test_firmware_core.c)
@@ -105,4 +113,5 @@ add_test(NAME telemetry COMMAND test_telemetry)
 add_test(NAME mlkem_session_sink COMMAND test_mlkem_session_sink)
 if(FPST_ENABLE_MLKEM_NATIVE)
     add_test(NAME mlkem_native_wrapper COMMAND test_mlkem_native_wrapper)
+    add_test(NAME mlkem_memory_preflight COMMAND test_mlkem_memory_preflight)
 endif()
