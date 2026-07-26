@@ -2,17 +2,39 @@
 
 #include <string.h>
 
+static fpst_result_t bind_tx(fpst_pair_bridge_t *bridge) {
+    if (!bridge->routed_shared_link) return FPST_OK;
+    return fpst_fpga_link_rebind(bridge->tx_session->link,
+                                 bridge->tx_platform);
+}
+
+static fpst_result_t bind_rx(fpst_pair_bridge_t *bridge) {
+    if (!bridge->routed_shared_link) return FPST_OK;
+    return fpst_fpga_link_rebind(bridge->rx_link,
+                                 bridge->rx_platform);
+}
+
 static fpst_result_t forward_retained_once(
     fpst_pair_bridge_t *bridge,
     fpst_primer2_rx_result_t *rx_result,
     bool *retry_same_packet) {
     *retry_same_packet = false;
 
-    fpst_result_t rc = fpst_primer2_stp_rx_packet(
+    fpst_result_t rc = bind_rx(bridge);
+    if (rc != FPST_OK) return rc;
+
+    rc = fpst_primer2_stp_rx_packet(
         bridge->rx_link,
         bridge->retained_packet,
         FPST_STP_RETAINED_BYTES,
         rx_result);
+
+    /* All TX commit/reconciliation operations below require Primer #1 bound. */
+    const fpst_result_t bind_tx_rc = bind_tx(bridge);
+    if (bind_tx_rc != FPST_OK) {
+        bridge->tx_session->state = FPST_SESSION_ERROR;
+        return bind_tx_rc;
+    }
 
     if (rc == FPST_OK) {
         if (!rx_result->commit_accepted || !rx_result->sequence_valid ||
@@ -66,7 +88,30 @@ fpst_result_t fpst_pair_bridge_init(fpst_pair_bridge_t *bridge,
     memset(bridge, 0, sizeof(*bridge));
     bridge->tx_session = tx_session;
     bridge->rx_link = rx_link;
+    bridge->tx_platform = tx_session->link->platform;
+    bridge->rx_platform = rx_link->platform;
+    bridge->routed_shared_link = false;
     return FPST_OK;
+}
+
+fpst_result_t fpst_pair_bridge_init_routed(
+    fpst_pair_bridge_t *bridge,
+    fpst_session_manager_t *tx_session,
+    const fpst_platform_t *primer1_platform,
+    const fpst_platform_t *primer2_platform) {
+    if (bridge == NULL || tx_session == NULL || tx_session->link == NULL ||
+        !fpst_platform_is_valid(primer1_platform) ||
+        !fpst_platform_is_valid(primer2_platform)) {
+        return FPST_ERR_ARGUMENT;
+    }
+
+    memset(bridge, 0, sizeof(*bridge));
+    bridge->tx_session = tx_session;
+    bridge->rx_link = tx_session->link;
+    bridge->tx_platform = primer1_platform;
+    bridge->rx_platform = primer2_platform;
+    bridge->routed_shared_link = true;
+    return bind_tx(bridge);
 }
 
 void fpst_pair_bridge_forget_local_copy(fpst_pair_bridge_t *bridge) {
@@ -119,12 +164,16 @@ fpst_result_t fpst_pair_bridge_send_sample(
     if (bridge->retained_valid)
         return FPST_ERR_BUSY;
 
+    fpst_result_t rc = bind_tx(bridge);
+    if (rc != FPST_OK) return rc;
+
     fpst_primer1_telemetry_result_t tx_result;
-    fpst_result_t rc = fpst_primer1_telemetry_tx_sample(
+    rc = fpst_primer1_telemetry_tx_sample(
         bridge->tx_session->link, sample, &tx_result);
     if (rc != FPST_OK) return rc;
     if (tx_result.packet_len != FPST_STP_RETAINED_BYTES ||
         tx_result.sequence != bridge->tx_session->next_sequence) {
+        fpst_secure_zero(&tx_result, sizeof(tx_result));
         return FPST_ERR_TRANSACTION;
     }
 
