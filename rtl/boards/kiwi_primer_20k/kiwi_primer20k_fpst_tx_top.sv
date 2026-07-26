@@ -115,7 +115,7 @@ module kiwi_primer20k_fpst_tx_top (
         .response_txn_o          (spi_response_txn)
     );
 
-    primer1_btp_endpoint u_endpoint (
+    primer1_btp_endpoint_v2 u_endpoint (
         .clk_i                   (sys_clk_i),
         .rst_ni                  (internal_rst_n),
         .zeroize_i               (zeroize),
