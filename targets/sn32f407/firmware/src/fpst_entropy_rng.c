@@ -97,7 +97,7 @@ static void condition_seed(const uint8_t *domain, size_t domain_len,
                            const uint8_t seed[FPST_ENTROPY_SEED_BYTES],
                            const uint8_t prior_state[FPST_ENTROPY_SEED_BYTES],
                            uint8_t out[FPST_ENTROPY_SEED_BYTES]) {
-    uint8_t input[64];
+    uint8_t input[96];
     size_t used = 0u;
 
     if (domain_len > 24u) domain_len = 24u;
@@ -107,11 +107,8 @@ static void condition_seed(const uint8_t *domain, size_t domain_len,
     used += FPST_ENTROPY_SEED_BYTES;
 
     if (prior_state != NULL) {
-        const size_t room = sizeof(input) - used;
-        const size_t take = room < FPST_ENTROPY_SEED_BYTES
-                          ? room : FPST_ENTROPY_SEED_BYTES;
-        memcpy(&input[used], prior_state, take);
-        used += take;
+        memcpy(&input[used], prior_state, FPST_ENTROPY_SEED_BYTES);
+        used += FPST_ENTROPY_SEED_BYTES;
     }
 
     fpst_shake256(input, used, out, FPST_ENTROPY_SEED_BYTES);
