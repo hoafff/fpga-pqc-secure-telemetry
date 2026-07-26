@@ -6,10 +6,12 @@ BUILD_DIR="${ROOT_DIR}/build/sim"
 mkdir -p "${BUILD_DIR}"
 cd "${ROOT_DIR}"
 
+# Icarus has a copy-back corner case when a variable-indexed unpacked-array
+# element (response[k]) is passed directly as the output of a nested automatic
+# task. Generate an equivalent simulation copy that receives into a scalar byte
+# and assigns the array element explicitly. No DUT/source behavior is changed.
 python3 - <<'PY'
 from pathlib import Path
-
-# Icarus copy-back workaround for nested task -> variable-indexed array element.
 src = Path("tb/integration/tb_primer1_deployment_pqc.sv").read_text()
 src = src.replace(
     "        integer response_payload_len;\n",
@@ -32,21 +34,6 @@ src = src.replace(
     1,
 )
 Path("build/sim/tb_primer1_deployment_pqc_iverilog.sv").write_text(src)
-
-# Diagnostic-only copy of the PQC endpoint. Show exactly what the case statement
-# sees, including the imported package constants, without changing production RTL.
-ep = Path("rtl/boards/kiwi_primer_20k/primer1_pqc_btp_endpoint_v2.sv").read_text()
-needle = "                        end else begin\n                            case (request_opcode_i)\n"
-replacement = "                        end else begin\n                            $display(\"P1DISPATCH opcode=%02x constants=%02x/%02x/%02x/%02x/%02x/%02x/%02x/%02x/%02x txid=%04x len=%0d\", request_opcode_i, OP_PQC_WRITE_COEFF, OP_PQC_READ_COEFF, OP_PQC_LOAD_POLY, OP_PQC_READ_POLY, OP_PQC_START_NTT, OP_PQC_START_INTT, OP_PQC_POINTWISE_MUL, OP_PQC_POLY_ADD_SUB, OP_PQC_GET_RESULT, request_transaction_id_i, request_payload_len_i);\n                            case (request_opcode_i)\n"
-if needle not in ep:
-    raise SystemExit("PQC dispatch insertion point not found")
-ep = ep.replace(needle, replacement, 1)
-ep = ep.replace(
-    "                                default: begin\n                                    request_accept_o <= 1'b1;\n                                    queue_response(ERR_UNSUPPORTED_OPCODE,16'h0,RESP_GENERIC,16'd0,1'b1);\n                                end\n",
-    "                                default: begin\n                                    $display(\"P1DISPATCH DEFAULT opcode=%02x poly_add_const=%02x\", request_opcode_i, OP_PQC_POLY_ADD_SUB);\n                                    request_accept_o <= 1'b1;\n                                    queue_response(ERR_UNSUPPORTED_OPCODE,16'h0,RESP_GENERIC,16'd0,1'b1);\n                                end\n",
-    1,
-)
-Path("build/sim/primer1_pqc_btp_endpoint_trace.sv").write_text(ep)
 PY
 
 iverilog -g2012 -Wall -s tb_primer1_deployment_pqc \
@@ -75,7 +62,7 @@ iverilog -g2012 -Wall -s tb_primer1_deployment_pqc \
     rtl/boards/kiwi_primer_20k/forward_ntt_core_disabled.sv \
     rtl/boards/kiwi_primer_20k/primer1_request_semantic_guard.sv \
     rtl/boards/kiwi_primer_20k/primer1_btp_endpoint_deploy.sv \
-    "${BUILD_DIR}/primer1_pqc_btp_endpoint_trace.sv" \
+    rtl/boards/kiwi_primer_20k/primer1_pqc_btp_endpoint.sv \
     rtl/boards/kiwi_primer_20k/primer1_endpoint_router_v2.sv \
     rtl/boards/kiwi_primer_20k/kiwi_primer20k_fpst_tx_top.sv \
     "${BUILD_DIR}/tb_primer1_deployment_pqc_iverilog.sv"
