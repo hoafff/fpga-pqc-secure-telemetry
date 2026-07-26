@@ -57,12 +57,13 @@ module fpst_spi_mem_slave #(
         SPI_WRITE_DATA,
         SPI_WRITE_CRC_HI,
         SPI_WRITE_CRC_LO,
+        SPI_WRITE_REJECT_DRAIN,
         SPI_WRITE_STATUS,
         SPI_READ_STATUS,
         SPI_READ_DATA,
         SPI_READ_CRC_HI,
         SPI_READ_CRC_LO,
-        SPI_DISCARD
+        SPI_READ_REJECT_STATUS
     } spi_state_t;
 
     typedef enum logic [2:0] {
@@ -78,16 +79,16 @@ module fpst_spi_mem_slave #(
     logic [7:0] response_mailbox_q      [0:MAX_FRAME_BYTES-1];
     logic       request_active_bank_q;
 
-    logic [2:0] sclk_sync_q;
-    logic [2:0] cs_sync_q;
-    logic [2:0] mosi_sync_q;
+    (* ASYNC_REG = "TRUE" *) logic [2:0] sclk_sync_q;
+    (* ASYNC_REG = "TRUE" *) logic [2:0] cs_sync_q;
+    (* ASYNC_REG = "TRUE" *) logic [2:0] mosi_sync_q;
 
     logic [2:0] bit_count_q;
     logic [7:0] rx_shift_q;
     logic [7:0] tx_shift_q;
     logic [7:0] tx_next_byte_q;
 
-    spi_state_t   state_q;
+    spi_state_t    state_q;
     write_target_t write_target_q;
 
     logic [2:0]  header_index_q;
@@ -105,11 +106,14 @@ module fpst_spi_mem_slave #(
     logic [15:0] read_crc_q;
     logic [15:0] read_index_q;
 
-    wire sclk_rise = (sclk_sync_q[2:1] == 2'b01);
-    wire sclk_fall = (sclk_sync_q[2:1] == 2'b10);
-    wire cs_assert = (cs_sync_q[2:1] == 2'b10);
+    logic [16:0] reject_remaining_q;
+    logic [7:0]  reject_status_q;
+
+    wire sclk_rise  = (sclk_sync_q[2:1] == 2'b01);
+    wire sclk_fall  = (sclk_sync_q[2:1] == 2'b10);
+    wire cs_assert  = (cs_sync_q[2:1] == 2'b10);
     wire cs_release = (cs_sync_q[2:1] == 2'b01);
-    wire cs_active = !cs_sync_q[2];
+    wire cs_active  = !cs_sync_q[2];
     wire [7:0] rx_byte_now = {rx_shift_q[6:0], mosi_sync_q[2]};
 
     function automatic logic [15:0] crc16_byte(
@@ -127,6 +131,20 @@ module fpst_spi_mem_slave #(
                     crc = crc << 1;
             end
             crc16_byte = crc;
+        end
+    endfunction
+
+    function automatic logic write_range_valid(
+        input logic [15:0] address,
+        input logic [15:0] length
+    );
+        begin
+            write_range_valid =
+                (address == REG_CONTROL     && length == 16'd4) ||
+                (address == REG_REQUEST_LEN && length == 16'd2) ||
+                (address == REG_REQUEST_ID  && length == 16'd2) ||
+                (address == REQUEST_BASE && length > 16'd0 &&
+                 length <= MAX_FRAME_BYTES);
         end
     endfunction
 
@@ -219,35 +237,37 @@ module fpst_spi_mem_slave #(
 
     always_ff @(posedge clk_i) begin
         integer i;
-        logic [15:0] payload_crc_next;
         logic [31:0] control_value;
-        logic [7:0] read_data_byte;
-        logic [16:0] request_end;
+        logic [15:0] payload_crc_next;
+        logic [7:0]  read_data_byte;
+        logic [7:0]  reject_status;
 
         if (!rst_ni) begin
-            state_q                    <= SPI_IDLE;
-            write_target_q             <= WR_NONE;
-            bit_count_q                <= 3'd0;
-            rx_shift_q                 <= 8'h00;
-            tx_shift_q                 <= 8'h00;
-            tx_next_byte_q             <= 8'h00;
-            header_index_q             <= 3'd0;
-            command_q                  <= 8'h00;
-            address_q                  <= 16'h0000;
-            length_q                   <= 16'h0000;
-            header_crc_hi_q            <= 8'h00;
-            header_crc_q               <= 16'hFFFF;
-            write_crc_q                <= 16'hFFFF;
-            observed_payload_crc_hi_q  <= 8'h00;
-            write_index_q              <= 16'd0;
-            read_crc_q                 <= 16'hFFFF;
-            read_index_q               <= 16'd0;
-            request_active_bank_q      <= 1'b0;
-            request_len_o              <= 16'd0;
-            request_id_o               <= 16'd0;
-            request_doorbell_o         <= 1'b0;
-            response_ack_o             <= 1'b0;
-            link_reset_o               <= 1'b0;
+            state_q                   <= SPI_IDLE;
+            write_target_q            <= WR_NONE;
+            bit_count_q               <= 3'd0;
+            rx_shift_q                <= 8'h00;
+            tx_shift_q                <= 8'h00;
+            tx_next_byte_q            <= 8'h00;
+            header_index_q            <= 3'd0;
+            command_q                 <= 8'h00;
+            address_q                 <= 16'h0000;
+            length_q                  <= 16'h0000;
+            header_crc_hi_q           <= 8'h00;
+            header_crc_q              <= 16'hFFFF;
+            write_crc_q               <= 16'hFFFF;
+            observed_payload_crc_hi_q <= 8'h00;
+            write_index_q             <= 16'd0;
+            read_crc_q                <= 16'hFFFF;
+            read_index_q              <= 16'd0;
+            reject_remaining_q        <= 17'd0;
+            reject_status_q           <= BURST_OK;
+            request_active_bank_q     <= 1'b0;
+            request_len_o             <= 16'd0;
+            request_id_o              <= 16'd0;
+            request_doorbell_o        <= 1'b0;
+            response_ack_o            <= 1'b0;
+            link_reset_o              <= 1'b0;
             for (i = 0; i < 4; i = i + 1)
                 small_write_q[i] <= 8'h00;
         end else begin
@@ -267,23 +287,25 @@ module fpst_spi_mem_slave #(
                 header_index_q <= 3'd0;
                 write_target_q <= WR_NONE;
             end else if (cs_assert) begin
-                state_q                    <= SPI_HEADER;
-                write_target_q             <= WR_NONE;
-                bit_count_q                <= 3'd0;
-                rx_shift_q                 <= 8'h00;
-                tx_shift_q                 <= 8'h00;
-                tx_next_byte_q             <= 8'h00;
-                header_index_q             <= 3'd0;
-                command_q                  <= 8'h00;
-                address_q                  <= 16'h0000;
-                length_q                   <= 16'h0000;
-                header_crc_hi_q            <= 8'h00;
-                header_crc_q               <= 16'hFFFF;
-                write_crc_q                <= 16'hFFFF;
-                observed_payload_crc_hi_q  <= 8'h00;
-                write_index_q              <= 16'd0;
-                read_crc_q                 <= 16'hFFFF;
-                read_index_q               <= 16'd0;
+                state_q                   <= SPI_HEADER;
+                write_target_q            <= WR_NONE;
+                bit_count_q               <= 3'd0;
+                rx_shift_q                <= 8'h00;
+                tx_shift_q                <= 8'h00;
+                tx_next_byte_q            <= 8'h00;
+                header_index_q            <= 3'd0;
+                command_q                 <= 8'h00;
+                address_q                 <= 16'h0000;
+                length_q                  <= 16'h0000;
+                header_crc_hi_q           <= 8'h00;
+                header_crc_q              <= 16'hFFFF;
+                write_crc_q               <= 16'hFFFF;
+                observed_payload_crc_hi_q <= 8'h00;
+                write_index_q             <= 16'd0;
+                read_crc_q                <= 16'hFFFF;
+                read_index_q              <= 16'd0;
+                reject_remaining_q        <= 17'd0;
+                reject_status_q           <= BURST_OK;
             end else if (cs_active) begin
                 if (sclk_fall) begin
                     if (bit_count_q == 3'd0)
@@ -331,60 +353,57 @@ module fpst_spi_mem_slave #(
                                     end
                                     3'd6: begin
                                         header_index_q <= 3'd0;
-                                        if ({header_crc_hi_q, rx_byte_now} != header_crc_q) begin
-                                            state_q        <= SPI_DISCARD;
-                                            tx_next_byte_q <= BURST_CRC;
-                                        end else if (command_q == CMD_MEM_WRITE) begin
-                                            write_index_q <= 16'd0;
-                                            write_crc_q   <= 16'hFFFF;
 
-                                            if (address_q == REG_CONTROL && length_q == 16'd4) begin
-                                                write_target_q <= WR_CONTROL;
-                                            end else if (address_q == REG_REQUEST_LEN && length_q == 16'd2) begin
-                                                write_target_q <= WR_REQUEST_LEN;
-                                            end else if (address_q == REG_REQUEST_ID && length_q == 16'd2) begin
-                                                write_target_q <= WR_REQUEST_ID;
-                                            end else if (address_q == REQUEST_BASE &&
-                                                         length_q > 16'd0 &&
-                                                         length_q <= MAX_FRAME_BYTES) begin
-                                                write_target_q <= WR_REQUEST_MAILBOX;
-                                            end else begin
-                                                write_target_q <= WR_NONE;
-                                            end
+                                        if (command_q == CMD_MEM_WRITE) begin
+                                            reject_status = BURST_OK;
+                                            if ({header_crc_hi_q, rx_byte_now} != header_crc_q)
+                                                reject_status = BURST_CRC;
+                                            else if (!write_range_valid(address_q, length_q))
+                                                reject_status = BURST_RANGE;
+                                            else if ((address_q != REG_CONTROL) &&
+                                                     (endpoint_busy_i || response_valid_i || endpoint_fatal_i))
+                                                reject_status = BURST_BUSY;
 
-                                            if (!((address_q == REG_CONTROL && length_q == 16'd4) ||
-                                                  (address_q == REG_REQUEST_LEN && length_q == 16'd2) ||
-                                                  (address_q == REG_REQUEST_ID && length_q == 16'd2) ||
-                                                  (address_q == REQUEST_BASE && length_q > 16'd0 &&
-                                                   length_q <= MAX_FRAME_BYTES))) begin
-                                                state_q        <= SPI_DISCARD;
-                                                tx_next_byte_q <= BURST_RANGE;
-                                            end else if ((address_q != REG_CONTROL) &&
-                                                         (endpoint_busy_i || response_valid_i || endpoint_fatal_i)) begin
-                                                state_q        <= SPI_DISCARD;
-                                                tx_next_byte_q <= BURST_BUSY;
+                                            if (reject_status != BURST_OK) begin
+                                                reject_status_q    <= reject_status;
+                                                reject_remaining_q <= {1'b0, length_q} + 17'd2;
+                                                state_q            <= SPI_WRITE_REJECT_DRAIN;
                                             end else begin
-                                                state_q <= (length_q == 16'd0)
-                                                    ? SPI_WRITE_CRC_HI : SPI_WRITE_DATA;
+                                                write_index_q <= 16'd0;
+                                                write_crc_q   <= 16'hFFFF;
+                                                if (address_q == REG_CONTROL)
+                                                    write_target_q <= WR_CONTROL;
+                                                else if (address_q == REG_REQUEST_LEN)
+                                                    write_target_q <= WR_REQUEST_LEN;
+                                                else if (address_q == REG_REQUEST_ID)
+                                                    write_target_q <= WR_REQUEST_ID;
+                                                else
+                                                    write_target_q <= WR_REQUEST_MAILBOX;
+
+                                                if (length_q == 16'd0)
+                                                    state_q <= SPI_WRITE_CRC_HI;
+                                                else
+                                                    state_q <= SPI_WRITE_DATA;
                                             end
                                         end else if (command_q == CMD_MEM_READ) begin
-                                            if (!read_range_valid(address_q, length_q)) begin
-                                                state_q        <= SPI_DISCARD;
+                                            if ({header_crc_hi_q, rx_byte_now} != header_crc_q) begin
+                                                tx_next_byte_q <= BURST_CRC;
+                                                state_q <= SPI_READ_REJECT_STATUS;
+                                            end else if (!read_range_valid(address_q, length_q)) begin
                                                 tx_next_byte_q <= BURST_RANGE;
+                                                state_q <= SPI_READ_REJECT_STATUS;
                                             end else begin
-                                                state_q        <= SPI_READ_STATUS;
                                                 tx_next_byte_q <= BURST_OK;
                                                 read_index_q   <= 16'd0;
                                                 read_crc_q     <= 16'hFFFF;
+                                                state_q        <= SPI_READ_STATUS;
                                             end
                                         end else begin
-                                            state_q        <= SPI_DISCARD;
                                             tx_next_byte_q <= BURST_RANGE;
+                                            state_q <= SPI_READ_REJECT_STATUS;
                                         end
                                     end
-                                    default: begin
-                                        state_q <= SPI_IDLE;
-                                    end
+                                    default: state_q <= SPI_IDLE;
                                 endcase
                             end
 
@@ -413,8 +432,7 @@ module fpst_spi_mem_slave #(
                             end
 
                             SPI_WRITE_CRC_LO: begin
-                                payload_crc_next = write_crc_q;
-                                if ({observed_payload_crc_hi_q, rx_byte_now} != payload_crc_next) begin
+                                if ({observed_payload_crc_hi_q, rx_byte_now} != write_crc_q) begin
                                     tx_next_byte_q <= BURST_CRC;
                                 end else begin
                                     control_value = {small_write_q[0], small_write_q[1],
@@ -457,8 +475,20 @@ module fpst_spi_mem_slave #(
                                 state_q <= SPI_WRITE_STATUS;
                             end
 
+                            SPI_WRITE_REJECT_DRAIN: begin
+                                if (reject_remaining_q <= 17'd1) begin
+                                    reject_remaining_q <= 17'd0;
+                                    tx_next_byte_q <= reject_status_q;
+                                    state_q <= SPI_WRITE_STATUS;
+                                end else begin
+                                    reject_remaining_q <= reject_remaining_q - 17'd1;
+                                end
+                            end
+
                             SPI_WRITE_STATUS: begin
-                                state_q <= SPI_WRITE_STATUS;
+                                // The byte being sampled here is the master's final dummy.
+                                // Hold the status value until CS rises.
+                                tx_next_byte_q <= tx_next_byte_q;
                             end
 
                             SPI_READ_STATUS: begin
@@ -485,9 +515,7 @@ module fpst_spi_mem_slave #(
                                     state_q <= SPI_READ_CRC_HI;
                                 end else begin
                                     read_index_q <= read_index_q + 16'd1;
-                                    tx_next_byte_q <= mapped_read_byte(
-                                        address_q + read_index_q + 16'd1
-                                    );
+                                    tx_next_byte_q <= mapped_read_byte(address_q + read_index_q + 16'd1);
                                 end
                             end
 
@@ -500,13 +528,11 @@ module fpst_spi_mem_slave #(
                                 tx_next_byte_q <= 8'h00;
                             end
 
-                            SPI_DISCARD: begin
+                            SPI_READ_REJECT_STATUS: begin
                                 tx_next_byte_q <= tx_next_byte_q;
                             end
 
-                            default: begin
-                                state_q <= SPI_IDLE;
-                            end
+                            default: state_q <= SPI_IDLE;
                         endcase
                     end else begin
                         bit_count_q <= bit_count_q + 3'd1;
