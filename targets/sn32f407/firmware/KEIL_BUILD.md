@@ -1,36 +1,39 @@
 # SN32F407F Keil build and programming
 
-## Evidence / target lock
+## 1. Locked target
 
-The organizer package contains the SONiX SN32F4 DFP and official SN32F400 examples. The verified Keil target is:
+Use the organizer SONiX device support, not an STM32 target:
 
 ```text
-Device      : SN32F407F
-CPU         : Cortex-M0
-IROM        : 0x00000000 .. 0x00007FFF (32 KiB)
-IRAM        : 0x20000000 .. 0x20001FFF (8 KiB)
-Default HCLK: 12 MHz IHRC
-Programmer  : SN-LINK-V3
+Device       : SONiX SN32F407F
+CPU          : Cortex-M0
+Flash        : 32 KiB  (0x00000000 .. 0x00007FFF)
+SRAM         : 8 KiB   (0x20000000 .. 0x20001FFF)
+Default HCLK : 12 MHz IHRC
+Programmer   : SN-LINK-V3
+DFP baseline : SONiX.SN32F4_DFP.1.1.1.pack
 ```
 
-Use `SONiX.SN32F4_DFP.1.1.1.pack` from the organizer package (or a compatible newer SONiX pack). Do not select STM32F407: this target is SONiX `SN32F407F`.
+The organizer examples resolve `SN32F400.h`, `SN32F400_Def.h` and
+`system_SN32F400.h` from that DFP. Do not select STMicroelectronics STM32F407.
 
-## 1. Install device support
+## 2. Install device support
 
-1. Install Keil MDK 5/6.
-2. Install `SONiX.SN32F4_DFP.1.1.1.pack`.
-3. Install the supplied SN-LINK Keil driver package.
-4. Verify that uVision can select `SONiX -> SN32F407F`.
+1. Install Keil MDK/uVision with ARM Compiler 6.
+2. Install `SONiX.SN32F4_DFP.1.1.1.pack` supplied by the organizer.
+3. Install the supplied SN-LINK Keil driver.
+4. Create/select a target for `SONiX -> SN32F407F`.
+5. Let the DFP provide the CMSIS startup/system files for SN32F407F.
 
-## 2. Obtain the locked ML-KEM dependency
+## 3. Locked ML-KEM dependency
 
-The firmware ML-KEM path is intentionally not a handwritten FIPS-203 implementation. It uses the exact source recorded in:
+The firmware uses the exact source recorded in:
 
 ```text
 software/third_party/mlkem-native/LOCK.md
 ```
 
-Required source lock:
+Current lock:
 
 ```text
 repository : pq-code-package/mlkem-native
@@ -39,20 +42,19 @@ commit     : 048fc2a7a7b4ba0ad4c989c1ac82491aa94d5bfa
 parameter  : ML-KEM-512
 ```
 
-Recommended checkout:
+Checkout example:
 
 ```bash
 git clone https://github.com/pq-code-package/mlkem-native.git software/third_party/mlkem-native/src
 git -C software/third_party/mlkem-native/src checkout 048fc2a7a7b4ba0ad4c989c1ac82491aa94d5bfa
 ```
 
-Do not update the dependency or apply local patches without updating `LOCK.md` and re-running the differential gate.
+Do not update or patch that dependency without updating `LOCK.md` and rerunning
+the differential test.
 
-## 3. Create the project
+## 4. Sources to add to the Keil target
 
-Create a new uVision project and select `SN32F407F`. Let the DFP add the CMSIS startup/system components for the device.
-
-Add these project sources:
+Add these FPST sources:
 
 ```text
 targets/sn32f407/firmware/src/fpst_crc32.c
@@ -64,13 +66,19 @@ targets/sn32f407/firmware/src/fpst_fpga_link.c
 targets/sn32f407/firmware/src/fpst_primer1.c
 targets/sn32f407/firmware/src/fpst_session.c
 targets/sn32f407/firmware/src/fpst_csprng.c
+targets/sn32f407/firmware/src/fpst_entropy_rng.c
+targets/sn32f407/firmware/src/fpst_telemetry.c
+targets/sn32f407/firmware/src/fpst_mlkem512_lowram.c
 targets/sn32f407/firmware/src/fpst_mlkem512_wrapper.c
 targets/sn32f407/firmware/src/fpst_mlkem_session.c
+
 targets/sn32f407/firmware/platform/sn32f407/fpst_sn32f407_port.c
 targets/sn32f407/firmware/platform/sn32f407/fpst_sn32f407_main.c
 
 software/third_party/mlkem-native/src/mlkem/mlkem_native.c
 ```
+
+Do **not** add files under `tests/` to the board image.
 
 Add include paths:
 
@@ -80,145 +88,286 @@ targets/sn32f407/firmware/platform/sn32f407
 software/third_party/mlkem-native/src/mlkem
 ```
 
-For the FPST firmware sources define:
+## 5. Required compiler defines
+
+For the full target define:
 
 ```text
 FPST_MLKEM_NATIVE_ENABLED=1
+MLK_CONFIG_FILE=\"fpst_mlkem512_config.h\"
 ```
 
-For `mlkem_native.c`, add the per-file compiler define:
+The second define is required not only by `mlkem_native.c` but also by the
+SN32 low-RAM sender scheduler, which intentionally calls pinned mlkem-native
+internal primitives.
+
+After, and only after, continuity-checking the physical SN32 ↔ Primer #1
+harness and common ground, add:
 
 ```text
-MLK_CONFIG_FILE="fpst_mlkem512_config.h"
+FPST_SN32F407_HARNESS_VERIFIED=1
 ```
 
-`fpst_mlkem512_config.h` selects ML-KEM-512 and enables only the qualified Primer #1 forward-NTT arithmetic hook. INTT remains the upstream C implementation because the frozen BTP domain tagging does not permit a transparent arbitrary-NTT-image upload followed by `PQC_START_INTT`.
+Without that define the production source defaults the guard to `0` and BTP
+SPI transactions are intentionally blocked. This is a physical sign-off gate,
+not a software test bypass.
 
-## 4. Compiler/output settings
+## 6. Compiler/linker settings
 
 Recommended bring-up settings:
 
 ```text
 ARM Compiler : 6
-Language     : C11/C99 compatible
-Optimization : -O2 for the full ML-KEM image
+Language     : C11/C99-compatible
+Optimization : -O2
 Create HEX   : enabled
-Target IROM  : start 0x00000000, size 0x00008000
-Target IRAM  : start 0x20000000, size 0x00002000
+IROM start   : 0x00000000
+IROM size    : 0x00008000
+IRAM start   : 0x20000000
+IRAM size    : 0x00002000
+Heap         : 0 unless another application component actually requires malloc
+Stack target : start with 0x800 (2 KiB), then verify from map/call graph
 ```
 
-Enable a linker map/call graph and keep unused-section elimination enabled. The exact SN32F407F build is a mandatory size gate: **do not program a full ML-KEM image until the linker report proves that all load regions fit in 32 KiB Flash and all RW/ZI + configured stack/heap fit in 8 KiB SRAM.** Host CMake success is not evidence of MCU memory fit.
+Enable function/data sectioning and unused-section elimination. This matters
+because the pinned upstream monolithic source contains APIs the sender image
+does not call; unused key-generation/decapsulation code should not be retained
+merely because it resides in the same upstream source file.
 
-The ML-KEM APIs use caller-provided public-key/secret-key/ciphertext buffers. Do not allocate `pk[800] + sk[1632] + ct[768]` plus large scratch copies on the SN32 stack merely for convenience.
-
-## 5. CSPRNG requirement
-
-The runtime wrapper never uses `rand()`, timers, counters, or an invented entropy source. It accepts an explicit `fpst_csprng_t` provider and internally calls the deterministic FIPS-203 `*_derand` APIs.
-
-The current SN32F407 platform port does **not** claim a qualified board CSPRNG. Therefore:
+Generate and keep:
 
 ```text
-ML-KEM deterministic KAT/differential path : implemented and CI-tested
-live cryptographic entropy provider         : hardware/system sign-off required
+.map / linker memory report
+call graph / stack-usage report when available
+.hex output
+full build log
 ```
 
-Do not expose a `keygen` or live `encaps` CLI command until a qualified provider is bound. The shared secret is never printed or returned by the session orchestration helper.
+A host-CMake pass is **not** evidence that the 32 KiB/8 KiB device image fits.
+Do not program a release image until the map proves both Flash and SRAM fit.
 
-## 6. Frozen direct-BTP SPI profile
+## 7. Why the sender uses a low-RAM ML-KEM schedule
 
-The old A1/A2 memory-mailbox transport is obsolete for Primer #1 deployment. The current wire contract is:
+The unmodified upstream K-PKE encryption routine materializes matrix/vector
+objects whose simultaneous polynomial storage is too large for an 8 KiB MCU.
+The SN32 sender therefore uses `fpst_mlkem512_lowram.c`.
+
+It does not change ML-KEM mathematics. It calls primitives from the exact
+pinned `mlkem-native v1.0.0` source but schedules matrix rows and temporary
+polynomials sequentially. CI compares its deterministic ciphertext/shared
+secret byte-for-byte with an independent pure-C instance of the same upstream
+revision.
+
+Direct persistent KEM workspace is approximately:
 
 ```text
-SPI Mode 0, MSB first
-bring-up SCK = 1 MHz
-one complete BTP frame per CS_N assertion
-request and response are separate CS transactions
-SOF = A5 5A
-version = 01
-CRC = CRC-32/ISO-HDLC over version..payload
-max payload = 1024 bytes
+sp[2]          1024 B
+matrix/pk row  1024 B
+mul cache       512 B
+work poly       512 B
+---------------------
+nominal         3072 B
 ```
 
-Retries reuse the same byte-identical request and transaction ID so Primer #1 can return its cached response without re-executing side effects.
+It is static, not placed on the Cortex-M0 stack.
 
-## 7. Current SN32 EVK routing
+The 768-byte ML-KEM ciphertext also does not get a separate board buffer. The
+sender reuses `fpst_fpga_link_t.response_buf[32..799]`; the following
+KEY_LOAD/SESSION_ACTIVATE responses are only 26-byte generic no-data frames and
+therefore cannot overwrite that ciphertext region. The ciphertext is released
+to UART only after Primer #1 has atomically committed and activated the session.
 
-The selected board-visible SPI0 route is:
+## 8. Entropy profile used by this competition/research image
+
+The EVK schematic exposes an onboard potentiometer on:
 
 ```text
-P1.0  SPI0_SCK   -> Primer #1 J2-3  / P16
-P1.1  SPI0_MISO  <- Primer #1 J2-7  / T15
-P1.2  SPI0_MOSI  -> Primer #1 J2-5  / P15
-P2.1  P1_CS_N    -> Primer #1 J2-8  / R14
-P2.3  P1_IRQ_N   <- Primer #1 J2-10 / T14
+P2.0 / AIN0 / ADC_P20
 ```
 
-The onboard W25Q16 shares the selected SCK/MISO/MOSI bus; firmware holds its CE# (`P1.8`) inactive while Primer traffic is active.
-
-UART host console remains:
+The board firmware uses repeated 12-bit ADC measurements as the physical source
+for the competition/research CSPRNG path:
 
 ```text
-P0.10 UART0_TX
-P0.11 UART0_RX
-115200 8N1
+ADC_P20 measurements
+    -> repetition/adaptive health checks
+    -> Von-Neumann debiasing
+    -> 256-bit seed
+    -> SHAKE256 conditioning/state update
+    -> fpst_csprng_t
+    -> ML-KEM *_derand coins
 ```
 
-`board_profile.h` deliberately keeps:
+The firmware fails closed if the ADC source is stuck or fails the health checks.
+There is no fallback to `rand()`, a fixed seed, timer value or counter.
 
-```c
-#define FPST_SN32F407_HARNESS_VERIFIED 0
+This is intentionally described as a **research/competition conditioned entropy
+source**, not as a certified production TRNG or as a quantified production
+min-entropy claim. A production deployment would still require formal entropy
+characterization/qualification.
+
+Useful UART commands before starting ML-KEM:
+
+```text
+adc
+rng-status
+rng-reseed
 ```
 
-until the exact point-to-point jumper wiring above and common ground are continuity-checked on the physical boards. Do not change it merely to make `ping` run.
+## 9. Frozen direct-BTP SPI profile
 
-## 8. First boot / bring-up
+```text
+SN32 role                  : SPI master
+Primer #1 role             : SPI slave
+SPI mode                   : 0
+bit order                  : MSB first
+bring-up SCK               : 1 MHz
+Primer implementation max  : 5 MHz envelope
+request/response           : separate CS assertions
+one BTP frame              : per CS_N assertion
+SOF                        : A5 5A
+version                    : 01
+CRC                        : CRC-32/ISO-HDLC
+maximum BTP payload        : 1024 bytes
+retry                      : same txid + byte-identical request
+```
 
-Program the generated HEX through SN-LINK-V3 and connect UART0 through a 3.3 V USB-UART adapter with common ground.
+The obsolete A1/A2 memory mailbox + CRC-16 profile is not used by this image.
 
-Expected banner:
+## 10. EVK wiring used by the firmware
+
+SPI/data and Primer control:
+
+```text
+SN32 P1.0  SPI0_SCK   -> Primer #1 J2-3  / P16 spi_sck_i
+SN32 P1.2  SPI0_MOSI  -> Primer #1 J2-5  / P15 spi_mosi_i
+SN32 P1.1  SPI0_MISO  <- Primer #1 J2-7  / T15 spi_miso_o
+SN32 P2.1  GPIO CS_N  -> Primer #1 J2-8  / R14 spi_cs_ni
+SN32 P2.3  GPIO IRQ_N <- Primer #1 J2-10 / T14 irq_no
+GND                      common ground
+```
+
+Other board bindings:
+
+```text
+P1.8   onboard W25Q16 CE#; firmware keeps it high during Primer traffic
+P2.0   ADC_P20/AIN0 entropy/demo analog node
+P2.9   MCU heartbeat output, toggled from SysTick every 100 ms
+P0.10  UART0_TX
+P0.11  UART0_RX
+```
+
+UART is `115200 8N1`, 3.3 V logic.
+
+## 11. First boot
+
+With the harness guard still `0`, the image should boot and provide UART/ADC/RNG
+diagnostics but must report that BTP is blocked.
+
+Expected banner includes:
 
 ```text
 FPST SN32F407F control firmware
 baseline=FPST-SYS-SPEC-001-v1.1 Primer1-BTP-v1
 host=UART0-115200 link=SPI0-1MHz-mode0-direct-BTP
+entropy=EVK ADC_P20/AIN0 + health-check + VN + SHAKE256
+mlkem=512 sender low-RAM + Primer1 forward-NTT
 ```
 
-Current non-secret bring-up commands:
+After continuity is recorded and the target is rebuilt with
+`FPST_SN32F407_HARNESS_VERIFIED=1`, run:
 
 ```text
-help
 wiring
 ping
-id
+discover
+selftest
 status
 error
-key-status
 pqc-status
-zeroize
-reset
+rng-status
 ```
 
-`reset` reports unavailable because final reset/zeroize sidebands are supervisor-owned. No command prints K, NP, ML-KEM shared secret, secret key, or other secret material.
+No CLI command prints ML-KEM shared secret, K_TX, NP_TX or secret key.
 
-## 9. Verification gates before calling the subsystem hardware-ready
+## 12. ML-KEM session bring-up from PC
 
-Host/CI gates:
+The board command is:
 
-1. portable SN32 firmware tests pass;
-2. pinned `mlkem-native v1.0.0` revision is verified;
-3. ML-KEM-512 hooked implementation matches an independent pure-C build byte-for-byte for deterministic keygen/encaps/decaps;
-4. CSPRNG failure path wipes KEM outputs;
-5. ML-KEM ciphertext-to-session composition test passes;
-6. Primer #1 BTP/PQC RTL regression and generic synthesis pass.
+```text
+kem-session SSSSSSSS CCCCCCCC
+```
 
-Exact-device/physical gates still required:
+where:
 
-1. Keil/ARM Compiler 6 full image builds cleanly for `SN32F407F`;
-2. linker map proves Flash/RAM/stack fit within 32 KiB / 8 KiB;
-3. a qualified CSPRNG/entropy provider is selected and tested;
-4. SN32 ↔ Primer #1 jumper continuity is recorded and `FPST_SN32F407_HARNESS_VERIFIED` is changed to `1` only from that evidence;
-5. Primer #1 exact-device Gowin P&R/timing and `.fs` generation pass;
-6. logic analyzer verifies Mode 0 at 1 MHz, CS-bounded two-transaction BTP, IRQ timing, CRC/retry behavior;
-7. real-board PING/key-load/session/NTT/telemetry/zeroize/fault tests pass.
+```text
+SSSSSSSS = non-zero 32-bit session ID in hexadecimal
+CCCCCCCC = CRC-32/ISO-HDLC of the exact 800-byte receiver ML-KEM-512 public key
+```
 
-Until those physical gates are complete, the branch is functionally integrated and host-verified but must remain a draft hardware-qualification PR.
+The MCU then accepts exactly 1600 hexadecimal digits (= 800 bytes). It verifies
+CRC before invoking ML-KEM. ESC or Ctrl-C aborts public-key loading.
+
+On success, and only after Primer #1 key commit/session activation, UART emits:
+
+```text
+KEM_CT_BEGIN session=0x........ len=0x0300 crc32=0x........
+KEM_CT_HEX=<1536 hex digits>
+KEM_CT_END
+kem-session=ACTIVE session=0x........
+```
+
+Use the repository helper rather than pasting manually:
+
+```bash
+pip install pyserial
+python tools/sn32_uart_session.py \
+    --port COM5 \
+    --public-key receiver_mlkem512_pk.bin \
+    --session-id 0x10203040 \
+    --ciphertext-out session.ct
+```
+
+The helper verifies both the public-key input CRC and the returned ciphertext
+CRC/length/session ID.
+
+## 13. Telemetry bring-up
+
+Once `key-status` reports an active session:
+
+```text
+telemetry
+```
+
+builds the canonical 24-byte telemetry format using 64-bit SysTick uptime,
+sensor ID, demonstration temperature/humidity values derived from ADC_P20, and
+a monotonic sample counter. ADC_P20 is only a competition/demo control here;
+the firmware does not claim it is a physical temperature/humidity sensor.
+
+Primer #1 retains the encrypted STP packet. The MCU does not advance the TX
+sequence merely because it read the retained packet; release/sequence advance
+still requires the receiver-acknowledgement commit path.
+
+## 14. Hardware-ready gates
+
+Already automated/host-verified on this branch:
+
+1. portable firmware/BTP/session/PQC/telemetry tests;
+2. conditioned entropy source health/fail-closed/reseed tests;
+3. pinned `mlkem-native v1.0.0` revision;
+4. low-RAM ML-KEM-512 deterministic differential test against pure C;
+5. Primer #1 NTT hook integration;
+6. committed-ciphertext sink and rollback regression;
+7. Primer #1 RTL/PQC regressions and generic synthesis checks.
+
+Still requires physical/exact-device evidence:
+
+1. clean Keil/ARM Compiler 6 full-image build for SN32F407F;
+2. linker map proving Flash/RW/ZI/stack fit within 32 KiB / 8 KiB;
+3. physical continuity record, then build with `FPST_SN32F407_HARNESS_VERIFIED=1`;
+4. SN-LINK programmed HEX evidence;
+5. Primer #1 exact-device Gowin P&R/timing and `.fs` generation;
+6. logic-analyzer confirmation of SPI Mode 0, 1 MHz, CS/IRQ and retry behavior;
+7. real-board PING → ML-KEM session → telemetry → commit/retry/zeroize/fault tests;
+8. production entropy characterization only if the project wants to claim more
+   than the documented research/competition entropy profile.
