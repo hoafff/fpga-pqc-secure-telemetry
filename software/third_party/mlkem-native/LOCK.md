@@ -20,7 +20,7 @@ The upstream source is not silently copied or rewritten. A build that enables th
 
 ## Build profile
 
-The project uses the upstream portable C frontend for FIPS 203 encoding/control and the project-owned arithmetic backend interface only where an FPGA hook has been qualified.
+The project uses the pinned upstream portable C primitives and public API for the ML-KEM-512 implementation baseline, with project-owned integration code only where the SN32F407F/Primer #1 deployment requires a hardware adapter or a bounded-memory execution schedule.
 
 ```text
 MLK_CONFIG_PARAMETER_SET        = 512
@@ -29,15 +29,23 @@ MLK_CONFIG_USE_NATIVE_BACKEND_ARITH = enabled
 MLK_CONFIG_ARITH_BACKEND_FILE   = fpst_mlkem512_backend.h
 ```
 
-Current qualified hook scope:
+Current qualified acceleration hook scope:
 
 ```text
 forward NTT -> Kiwi Primer #1 BTP PQC path
 ```
 
-The upstream C implementation remains authoritative for INTT, base multiplication, polynomial reduction/conversion, byte encoding and all KEM control until the corresponding FPGA adapter passes differential/KAT verification.
+The upstream C implementation remains authoritative for INTT, base multiplication, polynomial reduction/conversion, byte encoding, key generation and decapsulation. In particular, Primer #1 returns canonical standard-domain INTT output, while mlkem-native's `invntt_tomont` contract expects the Montgomery-scaled result. The INTT hook therefore stays disabled until the conversion is independently verified.
 
-In particular, Primer #1 returns canonical standard-domain INTT output, while mlkem-native's `invntt_tomont` contract expects the Montgomery-scaled result. The INTT hook therefore stays disabled until the conversion is independently verified.
+### SN32F407F low-RAM sender encapsulation schedule
+
+The unmodified upstream `K-PKE.Encrypt` implementation materializes matrix/vector temporaries whose simultaneous polynomial storage alone exceeds the SN32F407F 8 KiB SRAM budget. The board sender therefore uses the project-owned `fpst_mlkem512_lowram.c` schedule for ML-KEM-512 encapsulation.
+
+This is **not** a patch to the vendored upstream checkout and does not change the ML-KEM wire format or mathematics. It calls internal primitives from the exact pinned revision, processes matrix rows/error polynomials sequentially, and uses the same qualified Primer #1 forward-NTT hook. Its deterministic ciphertext and shared secret are required by CI to match an independent, unmodified pure-C instance of `mlkem-native v1.0.0` byte-for-byte.
+
+The low-RAM schedule is locked to ML-KEM-512 (`K=2`) with compile-time assertions and a 3072-byte persistent KEM workspace. CI also runs a source-level SRAM preflight that reserves 2 KiB for target stack. This preflight is not a substitute for the final ARM Compiler 6 linker map and stack-high-water evidence.
+
+Any change to this schedule, its upstream internal API use, or its RAM assumptions requires architecture review and rerunning the differential/KAT and SRAM gates.
 
 ## Acquisition / verification
 
