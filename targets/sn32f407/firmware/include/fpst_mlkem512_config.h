@@ -17,4 +17,22 @@
 #define MLK_CONFIG_USE_NATIVE_BACKEND_ARITH
 #define MLK_CONFIG_ARITH_BACKEND_FILE "fpst_mlkem512_backend.h"
 
+/*
+ * FPST exposes only the deterministic ML-KEM entry points from its wrapper and
+ * supplies randomness through fpst_csprng_t before calling *_derand.  Keep the
+ * upstream random API fail-closed: an accidental call records a backend error
+ * instead of silently substituting a weak/random-looking source.
+ */
+#define MLK_CONFIG_CUSTOM_RANDOMBYTES
+#if !defined(__ASSEMBLER__)
+#include <stddef.h>
+#include <stdint.h>
+#include "sys.h"
+void fpst_mlkem512_upstream_randombytes_forbidden(uint8_t *out, size_t len);
+static MLK_INLINE void mlk_randombytes(uint8_t *out, size_t len)
+{
+    fpst_mlkem512_upstream_randombytes_forbidden(out, len);
+}
+#endif
+
 #endif
