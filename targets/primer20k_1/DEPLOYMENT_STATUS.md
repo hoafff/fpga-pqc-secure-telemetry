@@ -36,7 +36,7 @@ bash scripts/sim/run_primer1_pqc_wire_test.sh
 bash scripts/synth/check_kiwi_primer20k_fpst_deployment_yosys.sh
 ```
 
-The final promotion commit must have a green GitHub Actions verification run: SystemVerilog unit/integration tests, complete PQC SPI wire regression, arithmetic/memory synthesis, NTT and Ascon board-top synthesis, and complete Primer #1 deployment-top Yosys synthesis all pass; the aggregate failure-report step must be skipped.
+Promotion requires a green GitHub Actions verification run on the exact commit: SystemVerilog unit/integration tests, complete PQC SPI wire regression, arithmetic/memory synthesis, NTT and Ascon board-top synthesis, and complete Primer #1 deployment-top Yosys synthesis must all pass; the aggregate failure-report step must be skipped.
 
 ## Remaining before hardware-ready claim
 
