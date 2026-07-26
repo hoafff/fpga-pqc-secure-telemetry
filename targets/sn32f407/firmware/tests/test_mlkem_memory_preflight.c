@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 
 #include "fpst_entropy_rng.h"
@@ -26,6 +27,26 @@ enum {
     SN32_MISC_STATIC_RESERVE_BYTES = 256u,
     EXPECTED_LOWRAM_KEM_WORKSPACE_BYTES = 3072u
 };
+
+/*
+ * fpst_mlkem512_lowram.c is one translation unit: asking for its workspace size
+ * also makes the linker retain its encapsulation routine and therefore the
+ * pinned monolithic mlkem-native object. The real board callbacks live in
+ * fpst_mlkem512_wrapper.c, but this size-only test must not pull the hardware
+ * integration path merely to inspect static memory. These link-only traps make
+ * any accidental crypto execution fail immediately while satisfying the two
+ * callback symbols referenced by the pinned upstream object.
+ */
+void fpst_mlkem512_upstream_randombytes_forbidden(uint8_t *out, size_t len) {
+    (void)out;
+    (void)len;
+    assert(!"memory preflight must not request random bytes");
+}
+
+void fpst_mlkem512_backend_ntt(int16_t data[256]) {
+    (void)data;
+    assert(!"memory preflight must not execute the NTT backend");
+}
 
 int main(void) {
     const size_t kem_workspace = fpst_mlkem512_lowram_workspace_bytes();
