@@ -122,19 +122,17 @@ fpst_result_t fpst_session_establish_pair(
         return rc;
     }
 
-    /* Confirm both endpoints expose the same committed metadata before success. */
     fpst_primer1_key_status_t tx_status;
     fpst_primer2_key_status_t rx_status;
     rc = fpst_primer1_key_status(tx_session->link, &tx_status);
     if (rc == FPST_OK)
         rc = fpst_primer2_key_status(primer2_link, &rx_status);
-    if (rc == FPST_OK) {
-        if (!tx_status.key_valid || !tx_status.session_active ||
-            !rx_status.key_valid || !rx_status.session_active ||
-            tx_status.session_id != session_id || rx_status.session_id != session_id ||
-            tx_status.tx_sequence != 0u || rx_status.expected_sequence != 0u) {
-            rc = FPST_ERR_TRANSACTION;
-        }
+    if (rc == FPST_OK &&
+        (!tx_status.key_valid || !tx_status.session_active ||
+         !rx_status.key_valid || !rx_status.session_active ||
+         tx_status.session_id != session_id || rx_status.session_id != session_id ||
+         tx_status.tx_sequence != 0u || rx_status.expected_sequence != 0u)) {
+        rc = FPST_ERR_TRANSACTION;
     }
 
     if (rc != FPST_OK) {
@@ -144,10 +142,70 @@ fpst_result_t fpst_session_establish_pair(
             tx_session->state = FPST_SESSION_ERROR;
             return rx_wipe != FPST_OK ? rx_wipe : tx_wipe;
         }
-        return rc;
+    }
+    return rc;
+}
+
+fpst_result_t fpst_session_establish_pair_routed(
+    fpst_session_manager_t *tx_session,
+    const fpst_platform_t *primer1_platform,
+    const fpst_platform_t *primer2_platform,
+    const uint8_t shared_secret[FPST_SHARED_SECRET_BYTES],
+    uint32_t session_id) {
+    if (tx_session == NULL || tx_session->link == NULL ||
+        !fpst_platform_is_valid(primer1_platform) ||
+        !fpst_platform_is_valid(primer2_platform) ||
+        shared_secret == NULL || session_id == 0u) {
+        return FPST_ERR_ARGUMENT;
     }
 
-    return FPST_OK;
+    fpst_fpga_link_t *link = tx_session->link;
+    fpst_result_t rc = fpst_fpga_link_rebind(link, primer1_platform);
+    if (rc != FPST_OK) return rc;
+
+    rc = fpst_session_establish(tx_session, shared_secret, session_id, 0u, 0u);
+    if (rc != FPST_OK) return rc;
+
+    rc = fpst_fpga_link_rebind(link, primer2_platform);
+    if (rc == FPST_OK)
+        rc = fpst_primer2_establish_rx(link, shared_secret, session_id);
+    if (rc != FPST_OK) goto fail_pair;
+
+    fpst_primer1_key_status_t tx_status;
+    fpst_primer2_key_status_t rx_status;
+
+    rc = fpst_fpga_link_rebind(link, primer1_platform);
+    if (rc == FPST_OK)
+        rc = fpst_primer1_key_status(link, &tx_status);
+    if (rc == FPST_OK)
+        rc = fpst_fpga_link_rebind(link, primer2_platform);
+    if (rc == FPST_OK)
+        rc = fpst_primer2_key_status(link, &rx_status);
+    if (rc == FPST_OK &&
+        (!tx_status.key_valid || !tx_status.session_active ||
+         !rx_status.key_valid || !rx_status.session_active ||
+         tx_status.session_id != session_id || rx_status.session_id != session_id ||
+         tx_status.tx_sequence != 0u || rx_status.expected_sequence != 0u)) {
+        rc = FPST_ERR_TRANSACTION;
+    }
+    if (rc != FPST_OK) goto fail_pair;
+
+    return fpst_fpga_link_rebind(link, primer1_platform);
+
+fail_pair: {
+        fpst_result_t rx_wipe = FPST_ERR_STATE;
+        fpst_result_t tx_wipe = FPST_ERR_STATE;
+        if (fpst_fpga_link_rebind(link, primer2_platform) == FPST_OK)
+            rx_wipe = fpst_primer2_zeroize(link, 0u);
+        if (fpst_fpga_link_rebind(link, primer1_platform) == FPST_OK)
+            tx_wipe = fpst_session_zeroize(tx_session);
+        (void)fpst_fpga_link_rebind(link, primer1_platform);
+        if (rx_wipe != FPST_OK || tx_wipe != FPST_OK) {
+            tx_session->state = FPST_SESSION_ERROR;
+            return rx_wipe != FPST_OK ? rx_wipe : tx_wipe;
+        }
+        return rc;
+    }
 }
 
 fpst_result_t fpst_session_commit_tx(fpst_session_manager_t *m,
@@ -193,7 +251,6 @@ fpst_result_t fpst_session_zeroize(fpst_session_manager_t *m) {
     if (m->link != NULL)
         rc = fpst_primer1_zeroize(m->link, 0u);
 
-    /* MCU-side metadata is invalid regardless of remote-link health. */
     m->session_id = 0u;
     m->next_sequence = 0u;
     m->state = (rc == FPST_OK) ? FPST_SESSION_NO_KEY : FPST_SESSION_ERROR;
@@ -209,6 +266,35 @@ fpst_result_t fpst_session_zeroize_pair(fpst_session_manager_t *tx_session,
     if (rx_rc != FPST_OK || tx_rc != FPST_OK) {
         tx_session->state = FPST_SESSION_ERROR;
         return rx_rc != FPST_OK ? rx_rc : tx_rc;
+    }
+    return FPST_OK;
+}
+
+fpst_result_t fpst_session_zeroize_pair_routed(
+    fpst_session_manager_t *tx_session,
+    const fpst_platform_t *primer1_platform,
+    const fpst_platform_t *primer2_platform) {
+    if (tx_session == NULL || tx_session->link == NULL ||
+        !fpst_platform_is_valid(primer1_platform) ||
+        !fpst_platform_is_valid(primer2_platform)) {
+        return FPST_ERR_ARGUMENT;
+    }
+
+    fpst_fpga_link_t *link = tx_session->link;
+    fpst_result_t rx_rc = fpst_fpga_link_rebind(link, primer2_platform);
+    if (rx_rc == FPST_OK)
+        rx_rc = fpst_primer2_zeroize(link, 0u);
+
+    fpst_result_t tx_rc = fpst_fpga_link_rebind(link, primer1_platform);
+    if (tx_rc == FPST_OK)
+        tx_rc = fpst_session_zeroize(tx_session);
+
+    const fpst_result_t restore_rc = fpst_fpga_link_rebind(link, primer1_platform);
+    if (rx_rc != FPST_OK || tx_rc != FPST_OK || restore_rc != FPST_OK) {
+        tx_session->state = FPST_SESSION_ERROR;
+        if (rx_rc != FPST_OK) return rx_rc;
+        if (tx_rc != FPST_OK) return tx_rc;
+        return restore_rc;
     }
     return FPST_OK;
 }
