@@ -107,10 +107,10 @@ module tb_primer1_session_manager;
         repeat (3) @(negedge clk);
         rst_n = 1;
 
-        /* Bad direction must not create staging state. */
+        /* Bad direction must not create staging state. Event is a one-cycle pulse. */
         pulse_begin(32'h01020304, 8'h02, 16'd24);
-        @(posedge clk); #1;
-        if (staging_valid || event_code != 16'h0203)
+        #1;
+        if (staging_valid || !event_valid || event_code != 16'h0203)
             $fatal(1, "bad direction not rejected");
 
         pulse_begin(32'h01020304, 8'h01, 16'd24);
