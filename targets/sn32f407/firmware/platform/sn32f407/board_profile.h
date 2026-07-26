@@ -21,6 +21,14 @@
  *   SN32 P2.3 IRQ_N <- Primer J2-10 / T14 irq_no
  *   common 3.3 V logic ground is mandatory.
  *
+ * The EVK schematic also provides an onboard potentiometer on ADC_P20,
+ * connected directly to P2.0/AIN0. The research/competition entropy profile
+ * samples this existing node; no external RNG component is required.
+ *
+ * P2.9 is left free by the Primer #1 link and is assigned to the MCU heartbeat
+ * output. Its final wire to Tiny 1P5 is still evidence-dependent and does not
+ * change the frozen Primer #1 contract.
+ *
  * This is the intended wiring contract, not continuity evidence. Keep the
  * harness guard zero until the assembled jumper harness is measured.
  */
@@ -66,8 +74,16 @@
 #define FPST_SN32F407_P1_IRQ_N_PIN             3u
 #define FPST_SN32F407_P2_IRQ_N_PORT            2u
 #define FPST_SN32F407_P2_IRQ_N_PIN             8u
-#define FPST_SN32F407_J7_RESERVE_PORT          2u
-#define FPST_SN32F407_J7_RESERVE_PIN           9u
+
+/* Existing EVK analog demo node: ADC_P20 -> P2.0/AIN0. */
+#define FPST_SN32F407_ENTROPY_ADC_PORT          2u
+#define FPST_SN32F407_ENTROPY_ADC_PIN           0u
+#define FPST_SN32F407_ENTROPY_ADC_CHANNEL       0u
+
+/* MCU heartbeat is generated from SysTick, independently of the main loop. */
+#define FPST_SN32F407_MCU_HEARTBEAT_PORT        2u
+#define FPST_SN32F407_MCU_HEARTBEAT_PIN         9u
+#define FPST_SN32F407_MCU_HEARTBEAT_PERIOD_MS 100u
 
 #define FPST_SN32F407_UART_TX_PORT              0u
 #define FPST_SN32F407_UART_TX_PIN              10u
