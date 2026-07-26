@@ -1,5 +1,7 @@
 #include "fpst_sn32f407_port.h"
+#include "fpst_crc32.h"
 #include "fpst_fpga_link.h"
+#include "fpst_mlkem_session.h"
 #include "fpst_primer1.h"
 #include "fpst_session.h"
 #include "fpst_profile.h"
@@ -12,6 +14,11 @@
 #include <stdint.h>
 #include <string.h>
 
+typedef enum {
+    FPST_HOST_COMMAND_MODE = 0,
+    FPST_HOST_KEM_PUBLIC_KEY_HEX_MODE
+} fpst_host_input_mode_t;
+
 static fpst_platform_t g_platform;
 static fpst_fpga_link_t g_link;
 static fpst_session_manager_t g_session;
@@ -20,6 +27,19 @@ static fpst_telemetry_source_t g_telemetry;
 static bool g_link_initialized;
 static bool g_rng_initialized;
 
+/*
+ * The receiver public key must coexist with the 3 KiB low-RAM KEM workspace.
+ * Keep it static so it does not consume the Cortex-M0 stack. It is public data
+ * but is still wiped immediately after the session attempt to keep RAM reuse
+ * deterministic and avoid stale host material.
+ */
+static uint8_t g_receiver_public_key[FPST_MLKEM512_PUBLIC_KEY_BYTES];
+static fpst_host_input_mode_t g_input_mode;
+static uint32_t g_pending_session_id;
+static uint32_t g_pending_public_key_crc;
+static size_t g_public_key_bytes;
+static int8_t g_public_key_high_nibble;
+
 static void console(const char *s) {
     fpst_sn32f407_uart0_write_cstr(s);
 }
@@ -27,6 +47,11 @@ static void console(const char *s) {
 static void console_hex_nibble(uint8_t value) {
     const char digit = (char)(value < 10u ? ('0' + value) : ('A' + value - 10u));
     fpst_sn32f407_uart0_write((const uint8_t *)&digit, 1u);
+}
+
+static void console_hex8(uint8_t value) {
+    console_hex_nibble((uint8_t)(value >> 4));
+    console_hex_nibble((uint8_t)(value & 0x0Fu));
 }
 
 static void console_hex16(uint16_t value) {
@@ -42,6 +67,26 @@ static void console_hex32(uint32_t value) {
 static void console_hex64(uint64_t value) {
     console_hex32((uint32_t)(value >> 32));
     console_hex32((uint32_t)value);
+}
+
+static int hex_value(char ch) {
+    if (ch >= '0' && ch <= '9') return ch - '0';
+    if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
+    if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
+    return -1;
+}
+
+static bool parse_hex32_exact(const char *text, uint32_t *out) {
+    if (text == NULL || out == NULL) return false;
+    uint32_t value = 0u;
+    for (unsigned i = 0u; i < 8u; ++i) {
+        const int nibble = hex_value(text[i]);
+        if (nibble < 0) return false;
+        value = (value << 4) | (uint32_t)nibble;
+    }
+    if (text[8] != '\0' && text[8] != ' ') return false;
+    *out = value;
+    return true;
 }
 
 static void print_result(fpst_result_t rc) {
@@ -63,6 +108,12 @@ static void print_result(fpst_result_t rc) {
 static bool require_link(void) {
     if (g_link_initialized) return true;
     console("BLOCKED: Primer #1 harness is not verified/initialized.\r\n");
+    return false;
+}
+
+static bool require_rng(void) {
+    if (g_rng_initialized && fpst_sn32f407_csprng_ready()) return true;
+    console("BLOCKED: conditioned ADC entropy is not ready.\r\n");
     return false;
 }
 
@@ -142,9 +193,144 @@ static void handle_telemetry(void) {
     console("; release requires receiver commit acknowledgement\r\n");
 }
 
+static fpst_result_t uart_ciphertext_sink(
+    void *ctx,
+    const uint8_t ciphertext[FPST_MLKEM512_CIPHERTEXT_BYTES],
+    size_t len) {
+    if (ciphertext == NULL || len != FPST_MLKEM512_CIPHERTEXT_BYTES)
+        return FPST_ERR_ARGUMENT;
+
+    const uint32_t session_id = ctx != NULL ? *(const uint32_t *)ctx : 0u;
+    const uint32_t crc = fpst_crc32_iso_hdlc(ciphertext, len);
+
+    console("KEM_CT_BEGIN session=0x");
+    console_hex32(session_id);
+    console(" len=0x");
+    console_hex16((uint16_t)len);
+    console(" crc32=0x");
+    console_hex32(crc);
+    console("\r\nKEM_CT_HEX=");
+    for (size_t i = 0u; i < len; ++i) console_hex8(ciphertext[i]);
+    console("\r\nKEM_CT_END\r\n");
+    return FPST_OK;
+}
+
+static void reset_public_key_input(void) {
+    fpst_secure_zero(g_receiver_public_key, sizeof(g_receiver_public_key));
+    g_public_key_bytes = 0u;
+    g_public_key_high_nibble = -1;
+    g_pending_session_id = 0u;
+    g_pending_public_key_crc = 0u;
+    g_input_mode = FPST_HOST_COMMAND_MODE;
+}
+
+static void abort_public_key_input(const char *reason) {
+    console("\r\nKEM_PK_ABORT: ");
+    console(reason);
+    console("\r\n");
+    reset_public_key_input();
+    console("> ");
+}
+
+static void finish_public_key_input(void) {
+    const uint32_t actual_crc = fpst_crc32_iso_hdlc(
+        g_receiver_public_key, sizeof(g_receiver_public_key));
+    if (actual_crc != g_pending_public_key_crc) {
+        console("\r\nKEM_PK_CRC_FAIL expected=0x");
+        console_hex32(g_pending_public_key_crc);
+        console(" actual=0x");
+        console_hex32(actual_crc);
+        console("\r\n");
+        reset_public_key_input();
+        console("> ");
+        return;
+    }
+
+    console("\r\nKEM_PK_OK; establishing ML-KEM-512 TX session...\r\n");
+    const uint32_t session_id = g_pending_session_id;
+    fpst_result_t rc = fpst_mlkem_session_establish_tx_to_sink(
+        &g_session, g_receiver_public_key, session_id, &g_csprng,
+        uart_ciphertext_sink, &session_id);
+    fpst_secure_zero(g_receiver_public_key, sizeof(g_receiver_public_key));
+    g_public_key_bytes = 0u;
+    g_public_key_high_nibble = -1;
+    g_pending_session_id = 0u;
+    g_pending_public_key_crc = 0u;
+    g_input_mode = FPST_HOST_COMMAND_MODE;
+
+    if (rc == FPST_OK) {
+        console("kem-session=ACTIVE session=0x");
+        console_hex32(session_id);
+        console("\r\n");
+    } else {
+        console("kem-session=FAILED ");
+        print_result(rc);
+    }
+    console("> ");
+}
+
+static void consume_public_key_hex_byte(uint8_t ch) {
+    if (ch == 0x03u || ch == 0x1Bu) {
+        abort_public_key_input("operator abort");
+        return;
+    }
+    if (ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n') return;
+
+    const int nibble = hex_value((char)ch);
+    if (nibble < 0) {
+        abort_public_key_input("non-hex input");
+        return;
+    }
+
+    if (g_public_key_high_nibble < 0) {
+        g_public_key_high_nibble = (int8_t)nibble;
+        return;
+    }
+
+    if (g_public_key_bytes >= sizeof(g_receiver_public_key)) {
+        abort_public_key_input("public key overflow");
+        return;
+    }
+
+    g_receiver_public_key[g_public_key_bytes++] =
+        (uint8_t)(((uint8_t)g_public_key_high_nibble << 4) | (uint8_t)nibble);
+    g_public_key_high_nibble = -1;
+
+    if (g_public_key_bytes == sizeof(g_receiver_public_key))
+        finish_public_key_input();
+}
+
+static bool begin_kem_session_command(const char *line) {
+    static const char prefix[] = "kem-session ";
+    if (strncmp(line, prefix, sizeof(prefix) - 1u) != 0) return false;
+
+    if (!require_link() || !require_rng()) return true;
+
+    const char *args = line + sizeof(prefix) - 1u;
+    uint32_t session_id = 0u;
+    uint32_t public_key_crc = 0u;
+    if (!parse_hex32_exact(args, &session_id) || session_id == 0u ||
+        args[8] != ' ' || !parse_hex32_exact(&args[9], &public_key_crc) ||
+        args[17] != '\0') {
+        console("usage: kem-session SSSSSSSS CCCCCCCC\r\n");
+        console("  S = nonzero session_id hex, C = CRC32/ISO-HDLC of 800-byte public key\r\n");
+        return true;
+    }
+
+    reset_public_key_input();
+    g_pending_session_id = session_id;
+    g_pending_public_key_crc = public_key_crc;
+    g_input_mode = FPST_HOST_KEM_PUBLIC_KEY_HEX_MODE;
+    console("KEM_PK_READY bytes=800 encoding=hex; send exactly 1600 hex digits; ESC/Ctrl-C aborts\r\n");
+    return true;
+}
+
 static void handle_command(const char *line) {
+    if (begin_kem_session_command(line)) return;
+
     if (strcmp(line, "help") == 0) {
-        console("help wiring adc rng-status rng-reseed ping discover selftest id status error key-status pqc-status telemetry fault zeroize reset\r\n");
+        console("help wiring adc rng-status rng-reseed ping discover selftest id status error key-status pqc-status kem-session telemetry fault zeroize reset\r\n");
+        console("kem-session SSSSSSSS CCCCCCCC -> receive 800-byte ML-KEM-512 public key as hex\r\n");
         return;
     }
     if (strcmp(line, "wiring") == 0) {
@@ -274,6 +460,7 @@ static void handle_command(const char *line) {
         fpst_sn32f407_csprng_zeroize();
         memset(&g_csprng, 0, sizeof(g_csprng));
         g_rng_initialized = false;
+        reset_public_key_input();
         print_result(rc);
         return;
     }
@@ -296,10 +483,12 @@ int main(void) {
         }
     }
 
+    reset_public_key_input();
     console("\r\nFPST SN32F407F control firmware\r\n");
     console("baseline=FPST-SYS-SPEC-001-v1.1 Primer1-BTP-v1\r\n");
     console("host=UART0-115200 link=SPI0-1MHz-mode0-direct-BTP\r\n");
     console("entropy=EVK ADC_P20/AIN0 + health-check + VN + SHAKE256\r\n");
+    console("mlkem=512 sender low-RAM + Primer1 forward-NTT\r\n");
 
     fpst_telemetry_source_init(&g_telemetry, 1u);
     memset(&g_csprng, 0, sizeof(g_csprng));
@@ -326,12 +515,14 @@ int main(void) {
     for (;;) {
         uint8_t ch;
         if (fpst_sn32f407_uart0_read_byte(&ch)) {
-            if (ch == '\r' || ch == '\n') {
+            if (g_input_mode == FPST_HOST_KEM_PUBLIC_KEY_HEX_MODE) {
+                consume_public_key_hex_byte(ch);
+            } else if (ch == '\r' || ch == '\n') {
                 if (used != 0u) {
                     line[used] = '\0';
                     handle_command(line);
                     used = 0u;
-                    console("> ");
+                    if (g_input_mode == FPST_HOST_COMMAND_MODE) console("> ");
                 }
             } else if (ch == 0x08u || ch == 0x7Fu) {
                 if (used != 0u) --used;
