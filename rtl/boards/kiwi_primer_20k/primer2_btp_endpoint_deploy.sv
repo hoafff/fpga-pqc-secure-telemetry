@@ -44,7 +44,7 @@ module primer2_btp_endpoint_deploy #(
     localparam integer CACHE_COUNT_W = $clog2(CACHE_CYCLES + 1);
     localparam integer MAX_STP_PACKET_BYTES = 168;
 
-    localparam logic [15:0] DETAIL_COMMIT_ACCEPTED = 16'h0001;
+    localparam logic [15:0] DETAIL_COMMIT_ACCEPTED   = 16'h0001;
     localparam logic [15:0] DETAIL_EXPECTED_SEQUENCE = 16'h0002;
 
     typedef enum logic [4:0] {
@@ -87,14 +87,15 @@ module primer2_btp_endpoint_deploy #(
         RESP_PING,
         RESP_RX_COMMIT,
         RESP_RX_SEQUENCE,
-        RESP_COUNTERS
+        RESP_COUNTERS,
+        RESP_ERROR_CODE
     } response_kind_t;
 
     state_t state_q;
     arg_kind_t arg_kind_q;
     response_kind_t response_kind_q;
 
-    logic [7:0] current_opcode_q;
+    logic [7:0]  current_opcode_q;
     logic [15:0] current_transaction_id_q;
     logic [15:0] current_payload_len_q;
     logic [31:0] current_request_crc32_q;
@@ -104,19 +105,19 @@ module primer2_btp_endpoint_deploy #(
     logic [3:0] arg_expected_q;
 
     logic [15:0] chunk_base_q;
-    logic [5:0] chunk_index_q;
-    logic [7:0] rx_copy_index_q;
+    logic [5:0]  chunk_index_q;
+    logic [7:0]  rx_copy_index_q;
 
     logic [15:0] response_status_q;
     logic [15:0] response_detail_q;
     logic [31:0] response_device_state_q;
     logic [31:0] response_data_len_q;
     logic [15:0] response_payload_len_q;
-    logic response_error_q;
-    logic response_accept_after_fill_q;
-    logic response_cache_capture_q;
-    logic [9:0] response_fill_index_q;
-    logic [7:0] response_fill_byte;
+    logic        response_error_q;
+    logic        response_accept_after_fill_q;
+    logic        response_cache_capture_q;
+    logic [9:0]  response_fill_index_q;
+    logic [7:0]  response_fill_byte;
 
     logic builder_payload_wr_en;
     logic [9:0] builder_payload_wr_addr;
@@ -181,6 +182,9 @@ module primer2_btp_endpoint_deploy #(
     logic [31:0] accepted_counter_base_q;
     logic [31:0] replay_counter_base_q;
     logic [31:0] auth_counter_base_q;
+    logic [31:0] accepted_counter_visible;
+    logic [31:0] replay_counter_visible;
+    logic [31:0] auth_counter_visible;
     logic [7:0] clear_counter_mask_q;
 
     logic [31:0] device_state_now;
@@ -188,10 +192,28 @@ module primer2_btp_endpoint_deploy #(
 
     integer i;
 
+    function automatic logic [7:0] be32_byte(
+        input logic [31:0] value,
+        input logic [1:0] byte_index
+    );
+        begin
+            case (byte_index)
+                2'd0: be32_byte = value[31:24];
+                2'd1: be32_byte = value[23:16];
+                2'd2: be32_byte = value[15:8];
+                default: be32_byte = value[7:0];
+            endcase
+        end
+    endfunction
+
     assign irq_pending_o = tx_frame_ready_i;
     assign busy_o = (state_q != ST_IDLE) || builder_busy || rx_busy;
     assign last_error_code_o = last_error_code_q;
     assign auth_threshold_fault_o = rx_fatal_request;
+
+    assign accepted_counter_visible = rx_accepted_count - accepted_counter_base_q;
+    assign replay_counter_visible   = rx_replay_count   - replay_counter_base_q;
+    assign auth_counter_visible     = rx_auth_fail_count - auth_counter_base_q;
 
     always_comb begin
         device_state_now = 32'h0;
@@ -206,20 +228,21 @@ module primer2_btp_endpoint_deploy #(
         device_state_now[31] = fatal_latched_i;
     end
 
-    assign session_load_begin = (state_q == ST_KEY_BEGIN_PULSE);
-    assign session_load_chunk = (state_q == ST_KEY_CHUNK_DATA);
+    assign session_load_begin  = (state_q == ST_KEY_BEGIN_PULSE);
+    assign session_load_chunk  = (state_q == ST_KEY_CHUNK_DATA);
     assign session_load_commit = (state_q == ST_KEY_COMMIT_PULSE);
-    assign session_load_abort = (state_q == ST_KEY_ABORT_PULSE);
-    assign session_activate = (state_q == ST_SESSION_PULSE);
+    assign session_load_abort  = (state_q == ST_KEY_ABORT_PULSE);
+    assign session_activate    = (state_q == ST_SESSION_PULSE);
 
-    /* Self-detected auth threshold invalidates the RX key immediately but keeps BTP alive. */
-    assign session_zeroize = transport_zeroize_i || fatal_latched_i || rx_fatal_request ||
+    /* Keep BTP alive on a locally detected auth threshold, but invalidate secrets. */
+    assign session_zeroize = transport_zeroize_i || fatal_latched_i ||
+                             rx_fatal_request ||
                              (state_q == ST_SECRET_ZEROIZE_PULSE);
 
-    assign rx_packet_wr_en = (state_q == ST_RX_COPY);
+    assign rx_packet_wr_en   = (state_q == ST_RX_COPY);
     assign rx_packet_wr_addr = rx_copy_index_q;
     assign rx_packet_wr_data = request_payload_rd_data_i;
-    assign rx_start = (state_q == ST_RX_START) && rx_ready;
+    assign rx_start          = (state_q == ST_RX_START) && rx_ready;
 
     always_comb begin
         request_payload_rd_addr_o = 10'd0;
@@ -250,16 +273,16 @@ module primer2_btp_endpoint_deploy #(
         rx_release_rd_addr = 8'h00;
 
         case (response_fill_index_q)
-            10'd0: response_fill_byte = response_status_q[15:8];
-            10'd1: response_fill_byte = response_status_q[7:0];
-            10'd2: response_fill_byte = response_detail_q[15:8];
-            10'd3: response_fill_byte = response_detail_q[7:0];
-            10'd4: response_fill_byte = response_device_state_q[31:24];
-            10'd5: response_fill_byte = response_device_state_q[23:16];
-            10'd6: response_fill_byte = response_device_state_q[15:8];
-            10'd7: response_fill_byte = response_device_state_q[7:0];
-            10'd8: response_fill_byte = response_data_len_q[31:24];
-            10'd9: response_fill_byte = response_data_len_q[23:16];
+            10'd0:  response_fill_byte = response_status_q[15:8];
+            10'd1:  response_fill_byte = response_status_q[7:0];
+            10'd2:  response_fill_byte = response_detail_q[15:8];
+            10'd3:  response_fill_byte = response_detail_q[7:0];
+            10'd4:  response_fill_byte = response_device_state_q[31:24];
+            10'd5:  response_fill_byte = response_device_state_q[23:16];
+            10'd6:  response_fill_byte = response_device_state_q[15:8];
+            10'd7:  response_fill_byte = response_device_state_q[7:0];
+            10'd8:  response_fill_byte = response_data_len_q[31:24];
+            10'd9:  response_fill_byte = response_data_len_q[23:16];
             10'd10: response_fill_byte = response_data_len_q[15:8];
             10'd11: response_fill_byte = response_data_len_q[7:0];
             default: begin
@@ -335,18 +358,18 @@ module primer2_btp_endpoint_deploy #(
 
                     RESP_COUNTERS: begin
                         case (response_fill_index_q - 10'd12)
-                            10'd0: response_fill_byte = (rx_accepted_count-accepted_counter_base_q)[31:24];
-                            10'd1: response_fill_byte = (rx_accepted_count-accepted_counter_base_q)[23:16];
-                            10'd2: response_fill_byte = (rx_accepted_count-accepted_counter_base_q)[15:8];
-                            10'd3: response_fill_byte = (rx_accepted_count-accepted_counter_base_q)[7:0];
-                            10'd4: response_fill_byte = (rx_replay_count-replay_counter_base_q)[31:24];
-                            10'd5: response_fill_byte = (rx_replay_count-replay_counter_base_q)[23:16];
-                            10'd6: response_fill_byte = (rx_replay_count-replay_counter_base_q)[15:8];
-                            10'd7: response_fill_byte = (rx_replay_count-replay_counter_base_q)[7:0];
-                            10'd8: response_fill_byte = (rx_auth_fail_count-auth_counter_base_q)[31:24];
-                            10'd9: response_fill_byte = (rx_auth_fail_count-auth_counter_base_q)[23:16];
-                            10'd10: response_fill_byte = (rx_auth_fail_count-auth_counter_base_q)[15:8];
-                            10'd11: response_fill_byte = (rx_auth_fail_count-auth_counter_base_q)[7:0];
+                            10'd0,10'd1,10'd2,10'd3:
+                                response_fill_byte = be32_byte(
+                                    accepted_counter_visible,
+                                    (response_fill_index_q - 10'd12));
+                            10'd4,10'd5,10'd6,10'd7:
+                                response_fill_byte = be32_byte(
+                                    replay_counter_visible,
+                                    (response_fill_index_q - 10'd16));
+                            10'd8,10'd9,10'd10,10'd11:
+                                response_fill_byte = be32_byte(
+                                    auth_counter_visible,
+                                    (response_fill_index_q - 10'd20));
                             10'd12: response_fill_byte = expected_sequence_o[63:56];
                             10'd13: response_fill_byte = expected_sequence_o[55:48];
                             10'd14: response_fill_byte = expected_sequence_o[47:40];
@@ -358,16 +381,24 @@ module primer2_btp_endpoint_deploy #(
                         endcase
                     end
 
-                    default: response_fill_byte = 8'h00;
+                    RESP_ERROR_CODE: begin
+                        if (response_fill_index_q == 10'd12)
+                            response_fill_byte = last_error_code_q[15:8];
+                        else
+                            response_fill_byte = last_error_code_q[7:0];
+                    end
+
+                    default:
+                        response_fill_byte = 8'h00;
                 endcase
             end
         endcase
     end
 
-    assign builder_payload_wr_en = (state_q == ST_RESP_FILL);
+    assign builder_payload_wr_en   = (state_q == ST_RESP_FILL);
     assign builder_payload_wr_addr = response_fill_index_q;
     assign builder_payload_wr_data = response_fill_byte;
-    assign builder_start = (state_q == ST_RESP_START);
+    assign builder_start           = (state_q == ST_RESP_START);
 
     btp_response_builder #(
         .MAX_PAYLOAD_BYTES(1024),
@@ -395,11 +426,11 @@ module primer2_btp_endpoint_deploy #(
 
     always_comb begin
         if (state_q == ST_CACHE_RESTORE) begin
-            tx_wr_en_o = 1'b1;
+            tx_wr_en_o   = 1'b1;
             tx_wr_addr_o = cache_restore_index_q;
             tx_wr_data_o = cache_mem[cache_restore_index_q];
         end else begin
-            tx_wr_en_o = builder_tx_wr_en;
+            tx_wr_en_o   = builder_tx_wr_en;
             tx_wr_addr_o = builder_tx_wr_addr;
             tx_wr_data_o = builder_tx_wr_data;
         end
@@ -611,15 +642,16 @@ module primer2_btp_endpoint_deploy #(
 
                                 OP_GET_STATUS: begin
                                     request_accept_o <= 1'b1;
-                                    queue_response(request_payload_len_i==0 ? ERR_OK : ERR_ARGUMENT,
+                                    queue_response(
+                                        request_payload_len_i == 0 ? ERR_OK : ERR_ARGUMENT,
                                         16'h0,RESP_GENERIC,16'd0,1'b0,1'b1);
                                 end
 
                                 OP_GET_ERROR: begin
                                     request_accept_o <= 1'b1;
                                     if (request_payload_len_i == 0)
-                                        queue_response(last_error_code_q,last_error_code_q,
-                                            RESP_GENERIC,16'd0,1'b0,1'b1);
+                                        queue_response(ERR_OK,16'h0,RESP_ERROR_CODE,
+                                            16'd2,1'b0,1'b1);
                                     else
                                         queue_response(ERR_ARGUMENT,16'h0,RESP_GENERIC,
                                             16'd0,1'b0,1'b1);
@@ -754,8 +786,8 @@ module primer2_btp_endpoint_deploy #(
 
                                 default: begin
                                     request_accept_o <= 1'b1;
-                                    queue_response(ERR_UNSUPPORTED_OPCODE,16'h0,RESP_GENERIC,
-                                        16'd0,1'b0,1'b1);
+                                    queue_response(ERR_UNSUPPORTED_OPCODE,16'h0,
+                                        RESP_GENERIC,16'd0,1'b0,1'b1);
                                 end
                             endcase
                         end
@@ -785,7 +817,8 @@ module primer2_btp_endpoint_deploy #(
                                 queue_response(ERR_SAFE_LOCKED,16'h0,RESP_GENERIC,
                                     16'd0,1'b0,1'b1);
                             else begin
-                                loading_session_id_q <= {arg_q[0],arg_q[1],arg_q[2],arg_q[3]};
+                                loading_session_id_q <=
+                                    {arg_q[0],arg_q[1],arg_q[2],arg_q[3]};
                                 loading_direction_q <= arg_q[4];
                                 loading_total_len_q <= {arg_q[5],arg_q[6]};
                                 state_q <= ST_KEY_BEGIN_PULSE;
@@ -793,12 +826,13 @@ module primer2_btp_endpoint_deploy #(
                         end
 
                         ARG_KEY_COMMIT: begin
-                            if ({arg_q[0],arg_q[1],arg_q[2],arg_q[3]} != loading_session_id_q ||
+                            if ({arg_q[0],arg_q[1],arg_q[2],arg_q[3]} !=
+                                    loading_session_id_q ||
                                 arg_q[4] != loading_direction_q ||
                                 {arg_q[5],arg_q[6]} != loading_total_len_q ||
                                 !session_staging_complete)
-                                queue_response(ERR_KEY_LOAD_INCOMPLETE,16'h0,RESP_GENERIC,
-                                    16'd0,1'b0,1'b1);
+                                queue_response(ERR_KEY_LOAD_INCOMPLETE,16'h0,
+                                    RESP_GENERIC,16'd0,1'b0,1'b1);
                             else
                                 state_q <= ST_KEY_COMMIT_PULSE;
                         end
@@ -859,9 +893,11 @@ module primer2_btp_endpoint_deploy #(
                         loading_session_id_q <= '0;
                         loading_direction_q <= '0;
                         loading_total_len_q <= '0;
-                        queue_response(ERR_OK,16'h0,RESP_GENERIC,16'd0,1'b0,1'b1);
+                        queue_response(ERR_OK,16'h0,RESP_GENERIC,
+                            16'd0,1'b0,1'b1);
                     end else if (session_commit_failed) begin
-                        queue_response(ERR_KEY_COMMIT,16'h0,RESP_GENERIC,16'd0,1'b0,1'b1);
+                        queue_response(ERR_KEY_COMMIT,16'h0,RESP_GENERIC,
+                            16'd0,1'b0,1'b1);
                     end
                 end
 
@@ -869,7 +905,8 @@ module primer2_btp_endpoint_deploy #(
                     loading_session_id_q <= '0;
                     loading_direction_q <= '0;
                     loading_total_len_q <= '0;
-                    queue_response(ERR_OK,16'h0,RESP_GENERIC,16'd0,1'b0,1'b1);
+                    queue_response(ERR_OK,16'h0,RESP_GENERIC,
+                        16'd0,1'b0,1'b1);
                 end
 
                 ST_SESSION_PULSE:
@@ -877,7 +914,8 @@ module primer2_btp_endpoint_deploy #(
 
                 ST_SESSION_WAIT: begin
                     if (session_active_o)
-                        queue_response(ERR_OK,16'h0,RESP_GENERIC,16'd0,1'b0,1'b1);
+                        queue_response(ERR_OK,16'h0,RESP_GENERIC,
+                            16'd0,1'b0,1'b1);
                     else
                         queue_response(ERR_INVALID_STATE,16'h0,RESP_GENERIC,
                             16'd0,1'b0,1'b1);
@@ -890,7 +928,8 @@ module primer2_btp_endpoint_deploy #(
                     accepted_counter_base_q <= rx_accepted_count;
                     replay_counter_base_q <= rx_replay_count;
                     auth_counter_base_q <= rx_auth_fail_count;
-                    queue_response(ERR_OK,16'h0,RESP_GENERIC,16'd0,1'b0,1'b1);
+                    queue_response(ERR_OK,16'h0,RESP_GENERIC,
+                        16'd0,1'b0,1'b1);
                 end
 
                 ST_RX_COPY: begin
@@ -907,7 +946,8 @@ module primer2_btp_endpoint_deploy #(
                     if (rx_ready)
                         state_q <= ST_RX_WAIT;
                     else
-                        queue_response(ERR_BUSY,16'h0,RESP_GENERIC,16'd0,1'b0,1'b1);
+                        queue_response(ERR_BUSY,16'h0,RESP_GENERIC,
+                            16'd0,1'b0,1'b1);
                 end
 
                 ST_RX_WAIT: begin
@@ -1036,5 +1076,6 @@ module primer2_btp_endpoint_deploy #(
 `endif
 
     logic unused_inputs;
-    always_comb unused_inputs = ^{request_flags_i,tx_frame_consumed_i,clear_counter_mask_q};
+    always_comb unused_inputs = ^{request_flags_i,tx_frame_consumed_i,
+                                  clear_counter_mask_q};
 endmodule
