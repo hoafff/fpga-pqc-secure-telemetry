@@ -1,191 +1,211 @@
 # FPST-MCU-FPGA-LINK-001 v1.1
 
-**Status:** implementation profile for `FPST-SYS-SPEC-001 v1.1`  
+**System baseline:** `FPST-SYS-SPEC-001 v1.1`  
 **Scope:** SONiX SN32F407F ↔ Kiwi Primer 20K #1  
-**Normative priority:** this profile does not replace the system specification. Review `docs/spec-delta/FPST-v1.1-implementation-decisions.md` whenever the system spec changes.
+**Status:** implementation control document; it does not replace the system specification.  
 
-## 1. Verified MCU baseline
+The previous A1/A2 memory-mailbox + CRC-16 proposal has been removed from the active implementation because FPST v1.1 already freezes a direct BTP frame carried by one CS assertion and a request/response exchange carried by two SPI transactions.
 
-Organizer-provided SONiX material identifies the target as `SN32F407F` (Cortex-M0, 32 KiB IROM, 8 KiB IRAM) and uses a 12 MHz IHRC default clock. The official PFPA table provides the selected SPI0/UART0 routes.
+## 1. Layer ownership
 
 ```text
+PC
+ |
+ | UART0 115200 8N1
+ v
 SN32F407F
-  HCLK = 12 MHz
-  UART0 = 115200 8N1
-  SPI0 = master, Mode 0, 3 MHz, MSB first
+ |  BTP master
+ |  SPI0 Mode 0 / 8-bit / MSB-first / 1 MHz bring-up
+ v
+Primer 20K #1
+    BTP slave
+       -> command dispatcher
+       -> atomic TX session context
+       -> forward NTT accelerator
+       -> Ascon-AEAD128 encrypt
+       -> STP v1 transmitter + retained packet
 ```
 
-The 3 MHz SPI rate is deliberate: SPI0 uses even clock divisors and `12 MHz / 4` avoids changing the organizer clock/UART profile during bring-up.
+Primer #1 owns the authoritative TX sequence. The MCU derives `K_TX`/`NP_TX`, stages them atomically, asks Primer #1 to encrypt a 24-byte telemetry record, and relays receiver commit evidence back to Primer #1.
 
-## 2. MCU-side pin profile
+## 2. Verified SN32F407F baseline
+
+Organizer material identifies the MCU as `SN32F407F`, Cortex-M0, with the project using the organizer 12 MHz default HCLK.
 
 ```text
-P0.0  SPI0_SCK
-P0.1  FPGA_SPI_CS_N (manual GPIO select)
-P0.2  SPI0_MISO
-P0.3  SPI0_MOSI
-P0.10 UART0_TX
-P0.11 UART0_RX
-
-P1.4  FPGA_READY      input, active high
-P1.5  FPGA_IRQ        input, active high
-P1.6  FPGA_RESET_N    output, active low
-P1.7  FPGA_ZEROIZE_N  output, active low
+HCLK  = 12 MHz
+UART0 = 115200 8N1
+SPI0  = master, Mode 0, 8-bit, MSB first
+BTP initial bring-up SCLK = 1 MHz
 ```
 
-The peripheral routes are verified from the SONiX PFPA tables. The point-to-point jumper mapping from these MCU pins to Primer #1 remains **PHYSICAL** until continuity and logic-analyzer checks are recorded.
+The 1 MHz rate is the FPST v1.1 bring-up baseline. On the 12 MHz SONiX clock profile it is generated with SPI divisor 12.
 
-All inter-board signals SHALL use compatible 3.3 V logic and a common ground.
+## 3. EVK V1.0 connector mapping verified from schematic
 
-## 3. SPI memory-burst protocol
+### 3.1 PC UART
 
-This section closes the byte-level primitive that v1.0 left open.
+The EVK `DB_UART` connector is routed to:
 
-### 3.1 Common header
+| Logical signal | MCU pin | EVK net |
+|---|---|---|
+| UART0_TX | P3.1 | `UTX_P31` |
+| UART0_RX | P3.2 | `URX_P32` |
 
-Each burst begins while `CS_N=0` with seven bytes:
+The selected UART0 PFPA value is `0x0A`.
+
+### 3.2 SPI data pins
+
+The EVK `DB_SPI` connector is shared with the onboard W25Q16 flash:
+
+| J12 pin | MCU pin | Function | Use for Primer #1 |
+|---:|---|---|---|
+| 1 | P1.8 | onboard Flash CE# | **NO** — keep high/deselected |
+| 2 | P1.0 | SPI0 SCK | yes: `FPGA_SCLK` |
+| 3 | P1.1 | SPI0 MISO | yes: `FPGA_MISO` |
+| 4 | P1.2 | SPI0 MOSI | yes: `FPGA_MOSI` |
+| 5 | — | GND | common ground |
+
+Using J12/P1.8 as Primer chip-select would also select the onboard flash and can cause MISO contention. The firmware therefore forces P1.8 high and uses a separate GPIO as Primer CS.
+
+SPI0 PFPA is `0x6A`: SCK/MISO/MOSI use the P1.x route; hardware SEL is routed away and disabled because CS is manual GPIO.
+
+### 3.3 Manual CS and sidebands on J7
+
+| J7 pin | MCU pin | Logical signal | Direction at MCU | Active level |
+|---:|---|---|---|---|
+| 1 | P2.1 | `FPGA_CS_N` | out | low |
+| 2 | P2.2 | `FPGA_BUSY` | in | high |
+| 3 | P2.3 | `FPGA_IRQ_N` | in | low |
+| 4 | P2.8 | `FPGA_RESET_N` | out | low |
+| 5 | P2.9 | `FPGA_ZEROIZE_N` | out | low |
+
+All inter-board signals use 3.3 V logic and a common ground.
+
+**Important:** MCU-side connector mapping is VERIFIED. The final point-to-point mapping to exact Primer #1 header/FPGA package pins remains PHYSICAL until the Primer connector pinout is locked in a `.cst` and continuity/logic-analyzer evidence is recorded.
+
+## 4. Normative BTP physical transaction model
+
+One BTP frame occupies exactly one `CS_N` assertion.
 
 ```text
-byte 0      command
-byte 1..2   address, big-endian
-byte 3..4   length, big-endian
-byte 5..6   CRC-16/CCITT-FALSE over bytes 0..4, big-endian
+transaction #1: MCU -> Primer #1 : BTP request frame
+CS_N high
+Primer processes operation
+IRQ_N asserted low
+transaction #2: Primer #1 -> MCU : BTP response frame
+CS_N high
 ```
 
-Commands:
+Rules:
+
+- Mode 0: SCLK idle low; sample on rising edge; change output on falling edge.
+- 8-bit transfers, MSB first.
+- initial bring-up rate: 1 MHz.
+- no CS assertion is held while waiting for NTT/Ascon completion.
+- MCU SHALL wait for `BUSY=0` before a new request.
+- Primer asserts `IRQ_N=0` only after the complete response is cached and ready.
+- incomplete transaction is discarded after CS rises.
+- retry reuses the same `transaction_id` and the identical request bytes.
+
+## 5. FPST v1.1 BTP frame
 
 ```text
-0xA1  MEM_WRITE
-0xA2  MEM_READ
+Offset  Size  Field
+0       2     SOF = A5 5A
+2       1     version = 01
+3       1     opcode
+4       1     flags
+5       1     reserved = 00
+6       2     transaction_id, big-endian
+8       2     payload_len, big-endian, 0..1024
+10      N     payload
+10+N    4     CRC-32/ISO-HDLC, big-endian on wire
 ```
 
-Burst status values:
+Flags:
 
 ```text
-0x00  OK
-0xE1  header/data CRC error
-0xE2  address/length outside implemented window
-0xE3  target busy/not ready
-0xEF  internal/link error
+bit0 RESPONSE
+bit1 ERROR
+bit2 MORE
+bit7:3 reserved = 0
 ```
 
-### 3.2 MEM_WRITE
+Request frames have `RESPONSE=0`. Response frames echo the request opcode and transaction ID and set `RESPONSE=1`.
+
+### 5.1 CRC-32/ISO-HDLC
 
 ```text
-A1 | addr[2] | len[2] | hdr_crc[2] | payload[len] | payload_crc[2] | dummy
-                                                                    ^
-                                                                    |
-                                                         slave returns status
+width   = 32
+poly    = 0x04C11DB7
+reflected implementation polynomial = 0xEDB88320
+init    = 0xFFFFFFFF
+refin   = true
+refout  = true
+xorout  = 0xFFFFFFFF
+check("123456789") = 0xCBF43926
 ```
 
-`payload_crc` is CRC-16/CCITT-FALSE over exactly `payload[len]`. For zero-length writes, CRC is computed over an empty payload.
+CRC covers exactly `version` through the final payload byte: frame offsets `2 .. 9+N`. SOF and the CRC field itself are not included.
 
-The slave SHALL commit the write only after both CRCs pass. A malformed burst must not partially modify architected mailbox/register state.
+The four CRC bytes are serialized big-endian.
 
-### 3.3 MEM_READ
+## 6. Response semantics and retry cache
+
+Every application response payload begins with:
 
 ```text
-master: A2 | addr[2] | len[2] | hdr_crc[2] | dummy | dummy ... | dummy dummy
-slave : -- | ------- | ------ | ---------- | status| data[len] | data_crc[2]
+remote_status_be16
+application_response_bytes...
 ```
 
-If `status != 0x00`, the master SHALL deassert `CS_N` and discard the transaction. `data_crc` covers exactly the returned data bytes.
+`remote_status=0x0000` means success. A non-zero status uses the project 16-bit error registry and sets `flags.ERROR`.
 
-### 3.4 Electrical/timing rules
+Primer #1 caches the most recently completed response together with the request identity. When a byte-identical request with the same transaction ID is received after response loss, it returns the cached response without repeating the operation.
 
-- SPI Mode 0.
-- MSB first.
-- 3 MHz initial bring-up rate.
-- Master controls `CS_N` manually.
-- No SPI transaction may remain selected while waiting for Ascon/NTT completion.
-- READY/IRQ are used for long operation synchronization.
-- Both ends may reset their local SPI FSM after `CS_N` rises following an incomplete burst.
+A reused transaction ID carrying a different opcode/request CRC is rejected with `ERR_BTP_TRANSACTION (0x0105)`.
 
-## 4. Mailbox register map
+This is essential for non-idempotent operations such as key commit, telemetry encryption and sequence commit.
 
-| Address | Width | Name | Direction |
-|---:|---:|---|---|
-| `0x0000` | 32 | CONTROL | MCU → FPGA |
-| `0x0004` | 32 | STATUS | FPGA → MCU |
-| `0x0008` | 16 | REQUEST_LEN | MCU → FPGA |
-| `0x000A` | 16 | RESPONSE_LEN | FPGA → MCU |
-| `0x000C` | 16 | REQUEST_ID | MCU → FPGA |
-| `0x000E` | 16 | RESPONSE_ID | FPGA → MCU |
-| `0x0010` | 16 | ERROR_CODE | FPGA → MCU |
-| `0x0100` | 269 max | REQUEST_MAILBOX | MCU → FPGA |
-| `0x0300` | 269 max | RESPONSE_MAILBOX | FPGA → MCU |
+## 7. Session/key command sequence
 
-All multi-byte register values are transferred big-endian at this link boundary.
+FPST v1.1 key-load opcodes used by Primer #1:
 
-CONTROL:
-
-```text
-bit 0 REQUEST_DOORBELL
-bit 1 RESPONSE_ACK
-bit 2 LINK_RESET
-```
-
-STATUS:
-
-```text
-bit 0 READY
-bit 1 BUSY
-bit 2 RESPONSE_VALID
-bit31 FATAL
-```
-
-## 5. Message frame inside the mailbox
-
-```text
-SOF0             1 byte  A5
-SOF1             1 byte  5A
-profile_version  1 byte  10
-opcode           1 byte
-flags            1 byte
-transaction_id   2 byte  big-endian
-payload_len      2 byte  big-endian, 0..256
-header_crc16     2 byte  CRC over version..payload_len
-payload          N byte
-payload_crc16    2 byte
-```
-
-The `profile_version` remains `0x10`; v1.1 closes the physical SPI burst without changing the mailbox frame itself.
-
-Responses use the same opcode, set `flags.bit0`, and begin payload with a 16-bit big-endian remote status. A retry SHALL reuse the same transaction ID. Primer #1 SHALL cache the last completed response sufficiently to avoid repeating non-idempotent operations.
-
-## 6. Opcodes
-
-| Opcode | Name | Owner |
+| Opcode | Name | Primer #1 behavior |
 |---:|---|---|
-| `0x01` | PING | link wrapper |
-| `0x02` | GET_CAPS | link wrapper |
-| `0x03` | GET_STATUS | endpoint wrapper |
-| `0x10` | STAGE_CONTEXT | session wrapper |
-| `0x11` | COMMIT_CONTEXT | session wrapper |
-| `0x12` | ZEROIZE | endpoint wrapper |
-| `0x20` | ASCON_ENCRYPT | telemetry TX wrapper |
-| `0x30` | NTT_LOAD | NTT accelerator wrapper |
-| `0x31` | NTT_START | NTT accelerator wrapper |
-| `0x32` | NTT_READ | NTT accelerator wrapper |
-| `0x7F` | LINK_RESET | link wrapper |
+| `0x40` | `KEY_LOAD_BEGIN` | create clean staging context |
+| `0x41` | `KEY_LOAD_CHUNK` | write staged key bytes with overlap consistency checking |
+| `0x42` | `KEY_LOAD_COMMIT` | atomically publish complete context |
+| `0x43` | `KEY_LOAD_ABORT` | wipe staging context |
+| `0x44` | `KEY_STATUS` | report key/session status |
+| `0x45` | `ZEROIZE` | wipe volatile session/key/TX packet state |
+| `0x46` | `SESSION_ACTIVATE` | enable the committed session when `secure_enable=1` |
 
-Unsupported operations SHALL return an explicit state/unavailable error; they must never silently report success.
-
-## 7. Atomic session context
-
-`STAGE_CONTEXT` payload is exactly 40 bytes:
+Repository payload clarification used by both MCU firmware and Primer RTL:
 
 ```text
-session_id_be       4
-K_TX               16
-NP_TX               8
-initial_sequence_be 8
-policy_flags_be     4
+KEY_LOAD_BEGIN:
+  session_id_be[4]
+  direction[1]        01 = TX
+  key_material_len[2] 0018 = K_TX[16] + NP_TX[8]
+
+KEY_LOAD_CHUNK:
+  offset_be[2]
+  bytes[N]
+
+KEY_LOAD_COMMIT:
+  session_id_be[4]
+  initial_sequence_be[8]
+  policy_flags_be[4]
+
+SESSION_ACTIVATE:
+  session_id_be[4]
 ```
 
-`COMMIT_CONTEXT` payload is `session_id_be[4]`. Primer #1 SHALL keep staging and active contexts separate. Partial writes never become active. Commit changes the complete context atomically.
+The `KEY_LOAD_COMMIT` byte layout is an implementation clarification that SHALL be promoted into the next system-spec revision if the normative v1.1 text does not already give the byte-level metadata encoding.
 
-## 8. KDF inherited from FPST v1.1
+KDF inherited unchanged from FPST v1.1:
 
 ```text
 D = ASCII("FPST-KDF-V1")
@@ -193,41 +213,113 @@ K_TX  = SHAKE256(D || 0x01 || shared_secret[32] || BE32(session_id), 16)
 NP_TX = SHAKE256(D || 0x02 || shared_secret[32] || BE32(session_id),  8)
 ```
 
-The 256-bit ML-KEM shared secret is never sent directly to Ascon. Temporary secret/KDF/staging buffers are wiped and must not be logged.
+The 32-byte ML-KEM shared secret is never sent directly to Primer #1.
 
-## 9. Timeout and recovery
+## 8. Secure telemetry command
+
+`0x60 TELEMETRY_TX_SAMPLE` request payload is exactly the 24-byte telemetry record. The MCU SHALL NOT prebuild ciphertext or a complete STP packet.
+
+Primer #1 performs:
+
+```text
+sequence = tx_sequence
+nonce = NP_TX || BE64(sequence)
+build 24-byte STP v1 header
+Ascon AD = header
+Ascon plaintext = telemetry_record[24]
+retain packet = header[24] || ciphertext[24] || tag[16]
+return sequence + packet bytes
+```
+
+The packet remains byte-identical in the retained buffer until commit acknowledgement, zeroize, reset or session invalidation.
+
+## 9. TX commit acknowledgement profile extension
+
+FPST v1.1 requires Primer #1 to advance its TX sequence only after receiver `COMMIT_ACCEPTED`, but the current frozen MCU↔Primer command registry does not provide a byte-level command carrying that evidence back to Primer #1.
+
+The repository therefore reserves:
+
+```text
+0x61 TX_COMMIT_ACCEPTED   payload = committed_sequence_be[8]
+```
+
+Primer #1 accepts it only when:
+
+```text
+retained_packet_valid = 1
+committed_sequence == retained_packet.sequence
+committed_sequence == current tx_sequence
+```
+
+On success it atomically:
+
+```text
+clear retained packet
+increment tx_sequence exactly once
+```
+
+Mismatch returns `ERR_SEQUENCE_DESYNC (0x0610)` or invalid-state error as appropriate.
+
+**This opcode is PROFILE, not claimed as normative FPST v1.1. It is an explicit candidate correction for the next spec revision.**
+
+## 10. Forward NTT access profile
+
+The frozen `forward_ntt_core` interface is not changed. The repository uses a small BTP data-window adapter for bring-up:
+
+```text
+0x20 PROFILE_NTT_WRITE_COEFF  addr_be16 | coeff_be16
+0x21 PROFILE_NTT_READ_COEFF   addr_be16
+0x22 PROFILE_NTT_LOAD_POLY    count_be16 | coeff[count] big-endian
+0x23 PROFILE_NTT_READ_POLY    count_be16
+0x24 PQC_START_NTT            4-byte transaction/options field
+```
+
+External coefficients are canonical `0..3328`; `count <= 256`.
+
+The 0x20..0x23 data-window opcodes are repository PROFILE commands around the verified existing NTT host interface. They are deliberately marked as implementation profile so a later spec revision can replace them without pretending they were already normative.
+
+`PQC_START_INTT`, pointwise/poly operations and result commands return explicit `ERR_UNSUPPORTED_OPCODE` until their RTL datapaths/adapters exist; they never return false success.
+
+## 11. Primer #1 asynchronous SPI handling
+
+Primer #1 runs at 27 MHz while SCLK is asynchronous. At the 1 MHz bring-up rate, `SCLK`, `CS_N` and `MOSI` pass through synchronizers and the SPI edge detector runs entirely in the 27 MHz domain. MISO is updated after the detected falling edge and is stable well before the following rising edge.
+
+This implementation avoids sampling a raw multi-bit data bus between independent clock domains. Any future increase in SPI rate must re-review this architecture; changing to a true SCLK-domain shifter + CDC FIFO is allowed only with updated timing/CDC evidence.
+
+## 12. Reset, zeroize and recovery
+
+Out-of-band `FPGA_ZEROIZE_N` has higher priority than BTP operation progress and does not depend on SPI being functional.
+
+Repository timeout profile:
 
 | Operation | Timeout |
 |---|---:|
-| READY/link access | 20 ms |
-| context/Ascon command | 50 ms |
+| link/busy access | 20 ms |
+| session/Ascon command | 50 ms |
 | NTT command | 500 ms |
 
-Maximum retry count: two. Retries keep the same transaction ID.
+Maximum transport retries: two. Every retry uses the same transaction ID and request bytes.
 
 Recovery order:
 
-1. deassert `CS_N` and reset local SPI FIFO/FSM;
-2. issue `LINK_RESET` when the mailbox is reachable;
-3. retry the same transaction ID;
-4. if the link remains wedged, pulse `FPGA_RESET_N`;
-5. invalidate the active session and require context re-establishment after a hard reset/fatal condition.
+1. deassert CS and reset the local SPI FIFO/FSM;
+2. retry identical request with same transaction ID;
+3. after the final failure, pulse `FPGA_RESET_N`;
+4. hard reset/fatal state invalidates the active session and requires new context establishment.
 
-`FPGA_ZEROIZE_N` is an out-of-band highest-priority wipe request and does not depend on SPI being functional.
+## 13. Hardware verification gate
 
-## 10. CDC requirement on Primer #1
+`FPST_SN32F407_HARNESS_VERIFIED` remains `0` until all of the following evidence exists:
 
-SPI SCK is asynchronous to the Primer 27 MHz system clock. The SPI slave SHALL keep bit shifting in the SPI clock domain and cross only completed commands/data/status using explicit CDC-safe handshakes or dual-clock storage. No raw multi-bit bus may be sampled directly across the two clocks.
+1. exact Primer #1 connector/package pins are chosen and locked in `.cst`;
+2. continuity check for SCLK/MOSI/MISO/CS_N/BUSY/IRQ_N/RESET_N/ZEROIZE_N and GND;
+3. confirm 3.3 V logic on both ends;
+4. logic-analyzer capture proves Mode 0, MSB-first, 1 MHz;
+5. PING and GET_CAPS pass on the real link;
+6. corrupted BTP CRC is rejected;
+7. key stage/commit/activate/zeroize pass;
+8. 24-byte telemetry sample returns the expected retained STP packet;
+9. repeated request with same transaction ID does not repeat a non-idempotent operation;
+10. timeout/recovery is bounded.
 
-## 11. Verification gates
-
-Before setting `FPST_SN32F407_HARNESS_VERIFIED=1`:
-
-1. continuity-check the selected EVK header pins;
-2. lock corresponding Primer #1 pins in a Gowin `.cst`;
-3. verify 3.3 V levels/common ground;
-4. scope/logic-analyzer-check Mode 0 at 3 MHz;
-5. inject bad header/data CRC and confirm rejection;
-6. pass PING/GET_CAPS;
-7. pass stage/commit/zeroize;
-8. force timeout and confirm bounded recovery.
+Until this gate is closed, source/simulation may be called **logically integrated**, but not **hardware-verified end-to-end**.
