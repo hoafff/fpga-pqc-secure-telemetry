@@ -49,7 +49,7 @@ STP packet TX   ---->  Ascon decrypt/verify
      supervisor/watchdog/tamper
 ```
 
-Giao tiếp vật lý MCU–FPGA chưa được coi là đóng băng cho đến khi pin và protocol được xác minh. Không tự giả định UART/SPI pin từ board khác.
+Đối với **SN32F407 ↔ Primer #1**, logical BTP/SPI contract và FPGA-side J2 constraint đã được khóa trên deployment branch. Điểm-to-điểm jumper thật vẫn chưa được coi là verified cho đến khi continuity/logic-analyzer evidence được ghi nhận. Không tự thay pin hoặc protocol bằng profile cũ.
 
 ## 3. Quy tắc tổ chức repository
 
@@ -72,8 +72,8 @@ rtl/                           RTL dùng chung, không gắn cứng một board
 tb/                            Unit/integration testbench, không nạp vào chip
 software/reference/            Golden model và vector generator, chạy trên PC
 software/host/                 Host application, chạy trên PC
-software/firmware/             Firmware reusable trước khi target hóa
-constraints/                   Constraint hiện có theo board
+software/third_party/          Dependency lock metadata / external checkout locations
+constraints/                   Constraint theo board
 docs/                          Spec, kiến trúc và quyết định thiết kế
 scripts/                       Simulation, synthesis và benchmark scripts
 results/                       Báo cáo kết quả
@@ -84,54 +84,70 @@ results/                       Báo cáo kết quả
 1. **RTL thuật toán dùng chung** chỉ có một bản trong `rtl/`.
 2. **Top-level, source manifest, constraint và hướng dẫn nạp** được quản lý theo từng thư mục `targets/<target>/`.
 3. Code trong `tb/` và `software/reference/` chỉ dùng để kiểm chứng trên PC, không được đưa vào bitstream sản phẩm.
-4. Mỗi target phải ghi rõ top module, device, clock, source list, constraint, output artifact và trạng thái triển khai.
+4. Mỗi target phải ghi rõ top module/device/clock/source/constraint/output artifact và trạng thái triển khai.
 5. Thay đổi interface phải được đối chiếu với FPST v1.1 và cập nhật tài liệu cùng commit.
+6. Third-party crypto source phải được pin revision và không được thay bằng bản copy/patch không ghi nhận.
 
 ## 4. Trạng thái hiện tại
 
-### Đã có và đã kiểm chứng trong repo
+### Primer #1 — functional deployment complete / hardware qualification pending
 
-- modular arithmetic cho ML-KEM modulus;
-- pipelined modular multiplier và NTT butterfly;
-- twiddle ROM và forward-NTT scheduler;
-- ping-pong coefficient RAM;
-- forward NTT 256 hệ số;
-- Python golden vector, testbench và synthesis checks;
-- board self-test cho **Kiwi Primer 20K #1**, báo PASS/FAIL bằng LED.
+Đã có và qua host regression/generic synthesis:
 
-### Chưa hoàn tất
+- BTP v1 direct SPI, CRC-32, retry cache và transaction collision protection;
+- complete ML-KEM polynomial path: NTT, INTT, `MultiplyNTTs`, add/sub, coefficient/poly load/read;
+- atomic K_TX/NP_TX context, session activation và zeroize;
+- Ascon-AEAD128 encrypt + STP TX + retained packet/commit sequence;
+- supervisor synchronization/heartbeat interface;
+- frozen Primer #1 CST/SDC deployment profile;
+- SystemVerilog regression, complete PQC wire test và Yosys deployment synthesis.
 
-- INTT hoàn chỉnh;
-- ML-KEM control tích hợp với accelerator;
-- Ascon encrypt RTL theo design spec mới;
-- Ascon decrypt/verify RTL;
-- STP TX/RX, retained packet và replay protection;
-- firmware SN32F407;
-- giao tiếp MCU–FPGA đã xác minh pin;
-- supervisor bitstream cho Tiny 1P5;
-- PC host application;
-- end-to-end demo và benchmark.
+Còn phải làm trên phần cứng: exact-device Gowin synthesis/P&R/timing, `.fs`, continuity và real-board logic-analyzer/fault/reset/zeroize tests.
 
-Không hiểu các thư mục target chưa có RTL là đã triển khai xong; README của từng target ghi rõ `CURRENT`, `PLANNED` và `TBD`.
+### SN32F407 — functional integration in progress / host-verified baseline
+
+Đã triển khai:
+
+- direct FPST BTP v1 master transport khớp Primer #1;
+- Primer #1 control/session/PQC/telemetry client;
+- SHAKE256 KDF và atomic key/session flow;
+- `mlkem-native v1.0.0` pinned dependency + ML-KEM-512 wrapper;
+- Primer #1 forward-NTT accelerator hook;
+- differential pure-C vs accelerator-hook KEM test;
+- explicit CSPRNG provider boundary;
+- ML-KEM encaps -> internal shared secret -> KDF -> Primer #1 session handoff;
+- real SN32F407 register-level UART/SPI bring-up port.
+
+Chưa được gọi hardware-ready cho đến khi: live CSPRNG được qualify, exact Keil image chứng minh fit 32 KiB Flash / 8 KiB RAM, harness continuity được đo, và board test thật pass.
+
+### Các khối khác còn mở
+
+- Primer #2 Ascon decrypt/verify + STP RX/replay integration;
+- Tiny 1P5 supervisor deployment bitstream;
+- PC host application hoàn chỉnh;
+- end-to-end two-Primer/supervisor demo và benchmark.
+
+Không hiểu “host test PASS” là “đã sẵn sàng nạp toàn hệ thống”. README của từng target và PR deployment phải ghi rõ functional verification và physical qualification là hai gate khác nhau.
 
 ## 5. Bắt đầu từ đâu?
 
-- Muốn nạp self-test NTT hiện tại: đọc [`targets/primer20k_1/README.md`](targets/primer20k_1/README.md).
-- Muốn viết Ascon encrypt: đọc [`targets/primer20k_1/README.md`](targets/primer20k_1/README.md) và design spec Ascon trong `docs/`.
-- Muốn viết receiver/decrypt: đọc [`targets/primer20k_2/README.md`](targets/primer20k_2/README.md).
-- Muốn viết supervisor: đọc [`targets/tiny1p5/README.md`](targets/tiny1p5/README.md).
-- Muốn viết firmware MCU: đọc [`targets/sn32f407/README.md`](targets/sn32f407/README.md).
-- Muốn viết chương trình máy tính/golden model: đọc [`targets/pc/README.md`](targets/pc/README.md).
-- Muốn xem toàn bộ mapping FPST v1.1: đọc [`docs/architecture/deployment-map-fpst-v1.1.md`](docs/architecture/deployment-map-fpst-v1.1.md).
+- Primer #1 deployment/hardware qualification: [`targets/primer20k_1/README.md`](targets/primer20k_1/README.md).
+- SN32F407 firmware/build: [`targets/sn32f407/README.md`](targets/sn32f407/README.md).
+- Primer #2 receiver/decrypt: [`targets/primer20k_2/README.md`](targets/primer20k_2/README.md).
+- Tiny supervisor: [`targets/tiny1p5/README.md`](targets/tiny1p5/README.md).
+- PC/golden model: [`targets/pc/README.md`](targets/pc/README.md).
+- Toàn bộ mapping FPST v1.1: [`docs/architecture/deployment-map-fpst-v1.1.md`](docs/architecture/deployment-map-fpst-v1.1.md).
 
 ## 6. Kiểm chứng bắt buộc
 
 - Mỗi module RTL có unit test trước khi tích hợp.
-- NTT/INTT so sánh với golden reference.
+- NTT/INTT so sánh với golden/reference behavior.
 - Ascon chạy KAT/differential test byte-for-byte.
-- Integration test phải có packet hợp lệ, tag sai, replay, timeout, reset và zeroize.
-- Vendor synthesis, place-and-route, timing và BRAM mapping phải được kiểm tra trên đúng part trước khi nạp board.
+- ML-KEM accelerator hook phải differential-test với cùng pinned portable-C source.
+- Integration test phải có packet hợp lệ, CRC/tag sai, retry/replay, timeout, reset/zeroize và fault path.
+- Firmware phải có exact target build + Flash/RAM/stack report trước khi gọi MCU image board-ready.
+- Vendor synthesis, place-and-route, timing và BRAM mapping phải được kiểm tra trên đúng FPGA part trước khi nạp board.
 
 ## 7. Cảnh báo bảo mật
 
-Đây là dự án nghiên cứu và thi đấu. Không dùng trực tiếp trong production trước khi có kiểm thử độc lập, đánh giá side-channel/fault injection, secure key storage và rà soát giao thức đầy đủ. Không commit secret key, seed bí mật, token hoặc log chứa bí mật.
+Đây là dự án nghiên cứu và thi đấu. Không dùng trực tiếp trong production trước khi có kiểm thử độc lập, đánh giá side-channel/fault injection, secure key storage/entropy source và rà soát giao thức đầy đủ. Không commit secret key, seed bí mật, token hoặc log chứa bí mật.
