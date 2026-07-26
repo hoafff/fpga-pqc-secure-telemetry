@@ -30,11 +30,10 @@ module btp_spi_slave #(
     output logic        overflow_o
 );
     /*
-     * The MCU starts at 1 MHz while this block runs at 27 MHz.  SCK/CS/MOSI are
-     * synchronized and edge-detected in the system-clock domain, so no raw
-     * multi-bit bus crosses a clock boundary.  This is the deliberately simple
-     * bring-up implementation; any future SPI-rate increase must re-run timing
-     * and error-rate characterization.
+     * The MCU starts at 1 MHz while this block runs at 27 MHz. SCK/CS/MOSI are
+     * synchronized and edge-detected in the system-clock domain. A complete
+     * request is latched at CS deassertion and remains readable while the next
+     * CS assertion clocks out its response.
      */
 
     logic [7:0] req_mem [0:MAX_FRAME_BYTES-1];
@@ -44,14 +43,15 @@ module btp_spi_slave #(
     logic cs_meta_q, cs_sync_q, cs_prev_q;
     logic mosi_meta_q, mosi_sync_q;
 
-    logic [7:0] rx_shift_q;
-    logic [2:0] rx_bit_count_q;
+    logic [7:0]  rx_shift_q;
+    logic [2:0]  rx_bit_count_q;
     logic [10:0] rx_byte_count_q;
+    logic [10:0] req_len_q;
 
     logic response_phase_q;
     logic [10:0] rsp_len_q;
     logic [10:0] tx_byte_index_q;
-    logic [2:0] tx_bit_index_q;
+    logic [2:0]  tx_bit_index_q;
     logic [10:0] tx_bytes_sampled_q;
 
     logic req_valid_q;
@@ -63,13 +63,13 @@ module btp_spi_slave #(
     wire cs_rise   = cs_sync_q && !cs_prev_q;
 
     assign req_valid_o = req_valid_q;
-    assign req_len_o = rx_byte_count_q;
+    assign req_len_o = req_len_q;
     assign req_rdata_o = (req_raddr_i < MAX_FRAME_BYTES) ?
                          req_mem[req_raddr_i] : 8'h00;
     assign rsp_pending_o = rsp_pending_q;
     assign irq_no = ~rsp_pending_q;
 
-    /* Release shared MISO immediately when the physical CS pin is inactive. */
+    /* Shared MISO is released immediately at the physical board boundary. */
     assign spi_miso_oe_o = ~spi_cs_ni;
 
     always_ff @(posedge clk_i) begin
@@ -99,6 +99,7 @@ module btp_spi_slave #(
             rx_shift_q          <= 8'h00;
             rx_bit_count_q      <= 3'd0;
             rx_byte_count_q     <= 11'd0;
+            req_len_q           <= 11'd0;
             response_phase_q    <= 1'b0;
             rsp_len_q           <= 11'd0;
             tx_byte_index_q     <= 11'd0;
@@ -112,8 +113,10 @@ module btp_spi_slave #(
         end else begin
             rsp_consumed_o <= 1'b0;
 
-            if (req_take_i)
+            if (req_take_i) begin
                 req_valid_q <= 1'b0;
+                req_len_q   <= 11'd0;
+            end
 
             if (rsp_we_i && (rsp_waddr_i < MAX_FRAME_BYTES))
                 rsp_mem[rsp_waddr_i] <= rsp_wdata_i;
@@ -190,10 +193,12 @@ module btp_spi_slave #(
                              (rx_byte_count_q != 0) &&
                              (rx_bit_count_q == 3'd0)) begin
                     /* One request per CS assertion. Endpoint owns validation. */
-                    if (!req_valid_q)
+                    if (!req_valid_q) begin
+                        req_len_q   <= rx_byte_count_q;
                         req_valid_q <= 1'b1;
-                    else
+                    end else begin
                         overflow_o <= 1'b1;
+                    end
                 end
                 response_phase_q <= 1'b0;
             end
