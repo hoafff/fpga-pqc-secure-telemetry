@@ -142,8 +142,15 @@ COMMON_PRIMER1_DEPLOY_SOURCES=(
     "${COMMON_ASCON_SOURCES[@]}"
     "${ROOT_DIR}/rtl/telemetry/primer1_stp_tx.sv"
     "${COMMON_NTT_SOURCES[@]}"
+    "${ROOT_DIR}/rtl/ntt/inverse_ntt_scheduler.sv"
+    "${ROOT_DIR}/rtl/ntt/ntt_intt_butterfly_pipe.sv"
+    "${ROOT_DIR}/rtl/ntt/mlkem_ntt_intt_core.sv"
+    "${ROOT_DIR}/rtl/ntt/mlkem_basemul_sequential.sv"
+    "${ROOT_DIR}/rtl/ntt/mlkem_pqc_accelerator.sv"
     "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/primer1_request_semantic_guard.sv"
     "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/primer1_btp_endpoint_deploy.sv"
+    "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/primer1_pqc_btp_endpoint.sv"
+    "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/primer1_endpoint_router.sv"
     "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/kiwi_primer20k_fpst_tx_top.sv"
 )
 
