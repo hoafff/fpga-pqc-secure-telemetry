@@ -156,6 +156,16 @@ fpst_result_t fpst_fpga_link_init(fpst_fpga_link_t *link,
                                   const fpst_platform_t *platform);
 
 /*
+ * Rebind one synchronous BTP link/buffer set to another physical endpoint.
+ * No transaction may be in progress. This deliberately preserves transaction
+ * numbering and buffer contents, allowing the 8 KiB SN32 target to time-share
+ * one link object across Primer #1 and Primer #2 instead of duplicating ~1.3 KiB
+ * of request/response storage.
+ */
+fpst_result_t fpst_fpga_link_rebind(fpst_fpga_link_t *link,
+                                    const fpst_platform_t *platform);
+
+/*
  * Execute one request/response exchange and return a view into response_buf.
  * Retries reuse the byte-identical request and transaction ID. The returned
  * view remains valid only until the next link exchange.
