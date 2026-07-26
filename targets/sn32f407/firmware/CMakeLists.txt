@@ -64,6 +64,7 @@ if(FPST_ENABLE_MLKEM_NATIVE)
         tests/test_mlkem_native_wrapper.c
         tests/mlkem_reference_randombytes_forbidden.c
         tests/mlkem_session_zeroize_mock.c
+        tests/mlkem_session_pair_link_mock.c
         src/fpst_csprng.c
         src/fpst_mlkem512_lowram.c
         src/fpst_mlkem512_wrapper.c
@@ -103,6 +104,7 @@ target_compile_options(test_telemetry PRIVATE -Wall -Wextra -Werror -Wpedantic)
 
 add_executable(test_mlkem_session_sink
     tests/test_mlkem_session_sink.c
+    tests/mlkem_session_pair_link_mock.c
     src/fpst_csprng.c
     src/fpst_mlkem_session.c)
 target_include_directories(test_mlkem_session_sink PRIVATE include)
