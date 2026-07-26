@@ -925,9 +925,12 @@ module primer2_btp_endpoint_deploy #(
                     loading_session_id_q <= '0;
                     loading_direction_q <= '0;
                     loading_total_len_q <= '0;
-                    accepted_counter_base_q <= rx_accepted_count;
-                    replay_counter_base_q <= rx_replay_count;
-                    auth_counter_base_q <= rx_auth_fail_count;
+                    /* RX raw counters zeroize on this same edge; reset the
+                     * visible epoch to zero as well so raw-base cannot wrap. */
+                    accepted_counter_base_q <= '0;
+                    replay_counter_base_q <= '0;
+                    auth_counter_base_q <= '0;
+                    clear_counter_mask_q <= '0;
                     queue_response(ERR_OK,16'h0,RESP_GENERIC,
                         16'd0,1'b0,1'b1);
                 end
@@ -1039,6 +1042,16 @@ module primer2_btp_endpoint_deploy #(
                 default:
                     state_q <= ST_IDLE;
             endcase
+
+            /* fatal_latched also zeroizes the RX raw counters. Keep the
+             * diagnostic epoch aligned without treating local auth-threshold
+             * as a counter clear; local threshold evidence remains visible. */
+            if (fatal_latched_i) begin
+                accepted_counter_base_q <= '0;
+                replay_counter_base_q <= '0;
+                auth_counter_base_q <= '0;
+                clear_counter_mask_q <= '0;
+            end
 
             if (transport_zeroize_i) begin
                 state_q <= ST_IDLE;
