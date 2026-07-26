@@ -1,5 +1,6 @@
 module kiwi_primer20k_fpst_tx_top #(
-    parameter integer HEARTBEAT_BIT = 23
+    parameter integer CLOCK_HZ = 27_000_000,
+    parameter integer HEARTBEAT_TOGGLE_CYCLES = 2_700_000
 ) (
     input  logic sys_clk_i,
     input  logic rst_ni,
@@ -30,12 +31,14 @@ module kiwi_primer20k_fpst_tx_top #(
 );
     localparam integer MAX_FRAME_BYTES = 1038;
     localparam integer COUNT_W = $clog2(MAX_FRAME_BYTES + 1);
-    localparam integer HEARTBEAT_WIDTH = HEARTBEAT_BIT + 1;
+    localparam integer HEARTBEAT_COUNT_W =
+        (HEARTBEAT_TOGGLE_CYCLES <= 1) ? 1 : $clog2(HEARTBEAT_TOGGLE_CYCLES);
 
     logic [1:0] reset_sync_q;
     logic internal_rst_n;
     logic transport_zeroize;
-    logic [HEARTBEAT_WIDTH-1:0] heartbeat_counter_q;
+    logic [HEARTBEAT_COUNT_W-1:0] heartbeat_counter_q;
+    logic heartbeat_q;
 
     logic rx_frame_valid;
     logic [COUNT_W-1:0] rx_frame_len;
@@ -96,13 +99,29 @@ module kiwi_primer20k_fpst_tx_top #(
     /* zeroize_ni is an active-low security sideband; effect occurs next sys clock. */
     assign transport_zeroize = !zeroize_ni;
 
+    /*
+     * FPST v1.1 requires a nominal heartbeat transition every 100 ms.  At the
+     * production 27 MHz clock this is exactly 2,700,000 cycles.  Use an explicit
+     * terminal-count divider rather than a counter bit: no power-of-two divider
+     * falls inside the required 100 ms +/-20% transition window at 27 MHz.
+     * HEARTBEAT_TOGGLE_CYCLES remains parameterized so simulation can accelerate
+     * this observable without changing production timing.
+     */
     always_ff @(posedge sys_clk_i) begin
-        if (!internal_rst_n || transport_zeroize || fatal_latched_i)
+        if (!internal_rst_n || transport_zeroize || fatal_latched_i) begin
             heartbeat_counter_q <= '0;
-        else
+            heartbeat_q <= 1'b0;
+        end else if (HEARTBEAT_TOGGLE_CYCLES <= 1) begin
+            heartbeat_counter_q <= '0;
+            heartbeat_q <= ~heartbeat_q;
+        end else if (heartbeat_counter_q == HEARTBEAT_TOGGLE_CYCLES-1) begin
+            heartbeat_counter_q <= '0;
+            heartbeat_q <= ~heartbeat_q;
+        end else begin
             heartbeat_counter_q <= heartbeat_counter_q + 1'b1;
+        end
     end
-    assign heartbeat_o = heartbeat_counter_q[HEARTBEAT_BIT];
+    assign heartbeat_o = heartbeat_q;
 
     btp_spi_slave #(
         .MAX_FRAME_BYTES(MAX_FRAME_BYTES),
@@ -188,7 +207,7 @@ module kiwi_primer20k_fpst_tx_top #(
      * signature so duplicate transaction IDs cannot cross endpoint boundaries.
      */
     primer1_endpoint_router #(
-        .CLOCK_HZ(27_000_000),
+        .CLOCK_HZ(CLOCK_HZ),
         .MAX_FRAME_BYTES(MAX_FRAME_BYTES),
         .COUNT_W(COUNT_W)
     ) u_endpoint_router (
@@ -241,6 +260,13 @@ module kiwi_primer20k_fpst_tx_top #(
     assign led7_no = ~(fatal_latched_i || (last_error_code != 16'h0000));
 
 `ifndef SYNTHESIS
+    initial begin
+        assert (CLOCK_HZ > 0)
+            else $error("kiwi_primer20k_fpst_tx_top: CLOCK_HZ must be positive");
+        assert (HEARTBEAT_TOGGLE_CYCLES > 0)
+            else $error("kiwi_primer20k_fpst_tx_top: HEARTBEAT_TOGGLE_CYCLES must be positive");
+    end
+
     always_ff @(posedge sys_clk_i) begin
         if (internal_rst_n) begin
             assert (!(session_active && !key_valid))
