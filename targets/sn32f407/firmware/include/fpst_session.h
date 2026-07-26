@@ -36,13 +36,25 @@ fpst_result_t fpst_session_establish(
     uint32_t policy_flags);
 
 /*
- * Normative unidirectional-MVP pair establishment. K_TX || NP_TX is loaded into
- * Primer #1 encrypt and Primer #2 decrypt before the caller may destroy the
- * shared secret. Any asymmetric commit/activation failure zeroizes both sides.
+ * Normative unidirectional-MVP pair establishment with independent link objects.
+ * K_TX || NP_TX is loaded into Primer #1 encrypt and Primer #2 decrypt before
+ * the caller may destroy the shared secret. Any asymmetric failure wipes both.
  */
 fpst_result_t fpst_session_establish_pair(
     fpst_session_manager_t *tx_session,
     fpst_fpga_link_t *primer2_link,
+    const uint8_t shared_secret[FPST_SHARED_SECRET_BYTES],
+    uint32_t session_id);
+
+/*
+ * Low-RAM SN32 form: time-share tx_session->link buffers between two physical
+ * platforms on the shared SPI bus. The function always restores Primer #1 as
+ * the bound endpoint before returning.
+ */
+fpst_result_t fpst_session_establish_pair_routed(
+    fpst_session_manager_t *tx_session,
+    const fpst_platform_t *primer1_platform,
+    const fpst_platform_t *primer2_platform,
     const uint8_t shared_secret[FPST_SHARED_SECRET_BYTES],
     uint32_t session_id);
 
@@ -69,5 +81,11 @@ fpst_result_t fpst_session_zeroize(fpst_session_manager_t *m);
 /* Zeroize both Primer endpoints; uncertainty on either endpoint is an error. */
 fpst_result_t fpst_session_zeroize_pair(fpst_session_manager_t *tx_session,
                                         fpst_fpga_link_t *primer2_link);
+
+/* Low-RAM routed pair zeroize; restores Primer #1 binding before return. */
+fpst_result_t fpst_session_zeroize_pair_routed(
+    fpst_session_manager_t *tx_session,
+    const fpst_platform_t *primer1_platform,
+    const fpst_platform_t *primer2_platform);
 
 #endif
