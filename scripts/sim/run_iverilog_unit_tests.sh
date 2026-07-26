@@ -104,10 +104,12 @@ run_test tb_ascon_encrypt_kat_selftest \
 DEPLOYMENT_SOURCES=(
     "${COMMON_NTT_SOURCES[@]}"
     "${COMMON_ASCON_SOURCES[@]}"
+    "${ROOT_DIR}/rtl/common/simple_dual_port_ram_2048x8.sv"
     "${ROOT_DIR}/rtl/protocol/btp_spi_slave.sv"
+    "${ROOT_DIR}/rtl/protocol/btp_response_builder.sv"
     "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/primer1_session_context.sv"
     "${ROOT_DIR}/rtl/telemetry/stp_tx_telemetry.sv"
-    "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/primer1_btp_endpoint.sv"
+    "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/primer1_btp_endpoint_v2.sv"
     "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/kiwi_primer20k_fpst_tx_top.sv"
 )
 
