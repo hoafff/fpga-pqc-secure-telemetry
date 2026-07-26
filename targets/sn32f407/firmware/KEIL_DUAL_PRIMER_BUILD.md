@@ -119,10 +119,19 @@ This avoids allocating a second roughly 1.3-KiB BTP buffer set on the 8-KiB
 SN32F407F. BTP calls are synchronous, so no endpoint transaction remains active
 when the link is rebound.
 
-The existing 768-byte ML-KEM public ciphertext scratch remains in
-`response_buf[32..799]`. P1/P2 key-load and activation responses are generic
-small responses below that tail, so both endpoints can be provisioned before the
-ciphertext is released without allocating another 768-byte array.
+The 768-byte ML-KEM public ciphertext scratch begins at byte 48:
+
+```text
+response_buf[0..41]   : maximum KEY_STATUS response footprint
+response_buf[42..47]  : guard/alignment margin
+response_buf[48..815] : ML-KEM-512 ciphertext scratch
+```
+
+`KEY_STATUS` is the largest P1/P2 session-control response used before ciphertext
+release: 10-byte BTP header + 12-byte generic envelope + 16-byte status data +
+4-byte CRC = 42 bytes. The 48-byte protected prefix is therefore enforced by a
+compile-time assertion and a regression test that writes a full 42-byte control
+response before checking that the ciphertext remains byte-identical.
 
 ## 6. Session order
 
