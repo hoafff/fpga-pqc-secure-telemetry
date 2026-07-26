@@ -103,6 +103,16 @@ run_test tb_mlkem_ntt_intt_core \
     "${COMMON_NTT_INTT_SOURCES[@]}" \
     "${ROOT_DIR}/tb/integration/tb_mlkem_ntt_intt_core.sv"
 
+COMMON_PQC_SOURCES=(
+    "${COMMON_NTT_INTT_SOURCES[@]}"
+    "${ROOT_DIR}/rtl/ntt/mlkem_basemul_sequential.sv"
+    "${ROOT_DIR}/rtl/ntt/mlkem_pqc_accelerator.sv"
+)
+
+run_test tb_mlkem_pqc_accelerator \
+    "${COMMON_PQC_SOURCES[@]}" \
+    "${ROOT_DIR}/tb/integration/tb_mlkem_pqc_accelerator.sv"
+
 COMMON_ASCON_SOURCES=(
     "${ROOT_DIR}/rtl/ascon/ascon_round.sv"
     "${ROOT_DIR}/rtl/ascon/ascon_permutation.sv"
