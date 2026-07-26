@@ -1,4 +1,7 @@
-module primer1_telemetry_tx (
+module primer1_telemetry_tx #(
+    parameter integer SYS_CLK_HZ = 27_000_000,
+    parameter integer ASCON_TIMEOUT_MS = 50
+) (
     input  logic         clk_i,
     input  logic         rst_ni,
     input  logic         zeroize_i,
@@ -28,6 +31,7 @@ module primer1_telemetry_tx (
     output logic         error_valid_o,
     output logic [15:0]  error_code_o
 );
+    localparam logic [15:0] ERR_ARGUMENT        = 16'h0203;
     localparam logic [15:0] ERR_BUSY            = 16'h0301;
     localparam logic [15:0] ERR_INVALID_STATE   = 16'h0302;
     localparam logic [15:0] ERR_NO_KEY          = 16'h0303;
@@ -35,7 +39,8 @@ module primer1_telemetry_tx (
     localparam logic [15:0] ERR_ASCON_TIMEOUT   = 16'h0503;
 
     localparam integer PACKET_BYTES = 64;
-    localparam integer ASCON_TIMEOUT_CYCLES = 27_000_000 / 20; /* 50 ms */
+    localparam integer ASCON_TIMEOUT_CYCLES =
+        (SYS_CLK_HZ / 1000) * ASCON_TIMEOUT_MS;
 
     typedef enum logic [2:0] {
         TX_IDLE,
@@ -48,13 +53,17 @@ module primer1_telemetry_tx (
 
     tx_state_t state_q;
 
-    logic [7:0] packet_mem [0:PACKET_BYTES-1];
-    logic [191:0] header_bus;
+    logic [7:0]   packet_mem [0:PACKET_BYTES-1];
+    logic [191:0] header_live;
+    logic [191:0] header_q;
     logic [191:0] telemetry_q;
+    logic [127:0] key_q;
+    logic [127:0] nonce_q;
     logic [5:0]   feed_index_q;
     logic [4:0]   ciphertext_index_q;
     logic [31:0]  timeout_count_q;
-    logic [127:0] nonce_bus;
+    logic [127:0] nonce_live;
+    logic [31:0]  humidity_value;
 
     logic core_start;
     logic core_ready;
@@ -76,21 +85,29 @@ module primer1_telemetry_tx (
         .flags_i      (stp_flags_i),
         .session_id_i (session_id_i),
         .sequence_i   (tx_sequence_i),
-        .header_o     (header_bus)
+        .header_o     (header_live)
     );
 
     always_comb begin
-        nonce_bus = '0;
+        /* Ascon external byte 0 lives in bits [7:0]. The nonce byte string is
+         * nonce_prefix[8] followed by BE64(sequence). */
+        nonce_live = '0;
         for (i = 0; i < 8; i = i + 1)
-            nonce_bus[8*i +: 8] = nonce_prefix_i[8*i +: 8];
-        nonce_bus[8*8  +: 8] = tx_sequence_i[63:56];
-        nonce_bus[8*9  +: 8] = tx_sequence_i[55:48];
-        nonce_bus[8*10 +: 8] = tx_sequence_i[47:40];
-        nonce_bus[8*11 +: 8] = tx_sequence_i[39:32];
-        nonce_bus[8*12 +: 8] = tx_sequence_i[31:24];
-        nonce_bus[8*13 +: 8] = tx_sequence_i[23:16];
-        nonce_bus[8*14 +: 8] = tx_sequence_i[15:8];
-        nonce_bus[8*15 +: 8] = tx_sequence_i[7:0];
+            nonce_live[8*i +: 8] = nonce_prefix_i[8*i +: 8];
+        nonce_live[8*8  +: 8] = tx_sequence_i[63:56];
+        nonce_live[8*9  +: 8] = tx_sequence_i[55:48];
+        nonce_live[8*10 +: 8] = tx_sequence_i[47:40];
+        nonce_live[8*11 +: 8] = tx_sequence_i[39:32];
+        nonce_live[8*12 +: 8] = tx_sequence_i[31:24];
+        nonce_live[8*13 +: 8] = tx_sequence_i[23:16];
+        nonce_live[8*14 +: 8] = tx_sequence_i[15:8];
+        nonce_live[8*15 +: 8] = tx_sequence_i[7:0];
+
+        /* telemetry_record is serialized big-endian with byte 0 at bits [7:0]. */
+        humidity_value = {
+            telemetry_i[8*16 +: 8], telemetry_i[8*17 +: 8],
+            telemetry_i[8*18 +: 8], telemetry_i[8*19 +: 8]
+        };
     end
 
     assign packet_rdata_o = (packet_raddr_i < PACKET_BYTES) ?
@@ -101,7 +118,7 @@ module primer1_telemetry_tx (
     assign core_start = (state_q == TX_CORE_START);
     assign core_in_valid = (state_q == TX_FEED);
     assign core_in_data = (feed_index_q < 6'd24)
-        ? header_bus[8*feed_index_q +: 8]
+        ? header_q[8*feed_index_q +: 8]
         : telemetry_q[8*(feed_index_q - 6'd24) +: 8];
     assign core_in_last = (feed_index_q == 6'd47);
 
@@ -113,8 +130,8 @@ module primer1_telemetry_tx (
         .zeroize_i      (zeroize_i),
         .start_i        (core_start),
         .ready_o        (core_ready),
-        .key_i          (traffic_key_i),
-        .nonce_i        (nonce_bus),
+        .key_i          (key_q),
+        .nonce_i        (nonce_q),
         .ad_len_i       (16'd24),
         .data_len_i     (16'd24),
         .in_valid_i     (core_in_valid),
@@ -136,7 +153,10 @@ module primer1_telemetry_tx (
     always_ff @(posedge clk_i) begin
         if (!rst_ni || zeroize_i) begin
             state_q               <= TX_IDLE;
+            header_q              <= '0;
             telemetry_q           <= '0;
+            key_q                 <= '0;
+            nonce_q               <= '0;
             feed_index_q          <= '0;
             ciphertext_index_q    <= '0;
             timeout_count_q       <= '0;
@@ -152,7 +172,12 @@ module primer1_telemetry_tx (
             error_valid_o <= 1'b0;
             error_code_o  <= 16'h0000;
 
-            if (release_retained_i) begin
+            if (start_i && (state_q != TX_IDLE)) begin
+                error_valid_o <= 1'b1;
+                error_code_o  <= ERR_BUSY;
+            end
+
+            if (release_retained_i && (state_q == TX_IDLE)) begin
                 retained_valid_o    <= 1'b0;
                 retained_sequence_o <= '0;
                 for (i = 0; i < PACKET_BYTES; i = i + 1)
@@ -195,16 +220,23 @@ module primer1_telemetry_tx (
                             end else if (!key_valid_i) begin
                                 error_valid_o <= 1'b1;
                                 error_code_o  <= ERR_NO_KEY;
-                            end else if (!session_active_i || !core_ready) begin
+                            end else if (!session_active_i || !core_ready ||
+                                         session_id_i == 32'h0000_0000) begin
                                 error_valid_o <= 1'b1;
                                 error_code_o  <= ERR_INVALID_STATE;
+                            end else if (humidity_value > 32'd100000) begin
+                                error_valid_o <= 1'b1;
+                                error_code_o  <= ERR_ARGUMENT;
                             end else begin
-                                telemetry_q         <= telemetry_i;
-                                feed_index_q        <= '0;
-                                ciphertext_index_q  <= '0;
-                                retained_sequence_o <= tx_sequence_i;
+                                header_q              <= header_live;
+                                telemetry_q           <= telemetry_i;
+                                key_q                 <= traffic_key_i;
+                                nonce_q               <= nonce_live;
+                                feed_index_q          <= '0;
+                                ciphertext_index_q    <= '0;
+                                retained_sequence_o   <= tx_sequence_i;
                                 for (i = 0; i < 24; i = i + 1)
-                                    packet_mem[i] <= header_bus[8*i +: 8];
+                                    packet_mem[i] <= header_live[8*i +: 8];
                                 state_q <= TX_CORE_START;
                             end
                         end
@@ -227,7 +259,13 @@ module primer1_telemetry_tx (
                         if (core_done) begin
                             if (ciphertext_index_q == 5'd24) begin
                                 retained_valid_o <= 1'b1;
-                                state_q <= TX_COMPLETE;
+                                /* Key/nonce/plaintext copies are not needed once
+                                 * the byte-identical retained packet exists. */
+                                header_q    <= '0;
+                                telemetry_q <= '0;
+                                key_q       <= '0;
+                                nonce_q     <= '0;
+                                state_q     <= TX_COMPLETE;
                             end else begin
                                 error_valid_o <= 1'b1;
                                 error_code_o  <= ERR_INVALID_STATE;
@@ -245,7 +283,10 @@ module primer1_telemetry_tx (
                         /* Do not expose a partial packet after a failed AEAD. */
                         retained_valid_o    <= 1'b0;
                         retained_sequence_o <= '0;
+                        header_q            <= '0;
                         telemetry_q         <= '0;
+                        key_q               <= '0;
+                        nonce_q             <= '0;
                         for (i = 0; i < PACKET_BYTES; i = i + 1)
                             packet_mem[i] <= 8'h00;
                         state_q <= TX_IDLE;
@@ -258,6 +299,11 @@ module primer1_telemetry_tx (
     end
 
 `ifndef SYNTHESIS
+    initial begin
+        assert (ASCON_TIMEOUT_CYCLES > 0)
+            else $error("primer1_telemetry_tx: invalid timeout parameter");
+    end
+
     always_ff @(posedge clk_i) begin
         if (rst_ni && !zeroize_i) begin
             assert (!retained_valid_o || (packet_len_o == 7'd64))
