@@ -20,6 +20,7 @@ add_library(fpst_firmware_core
     src/fpst_csprng.c
     src/fpst_entropy_rng.c
     src/fpst_telemetry.c
+    src/fpst_mlkem512_lowram.c
     src/fpst_mlkem512_wrapper.c
     src/fpst_mlkem_session.c)
 target_include_directories(fpst_firmware_core PUBLIC include)
@@ -33,7 +34,7 @@ if(FPST_ENABLE_MLKEM_NATIVE)
             "Pinned mlkem-native source not found. See software/third_party/mlkem-native/LOCK.md")
     endif()
 
-    # Production profile: upstream ML-KEM-512 frontend with the qualified
+    # Production profile: upstream ML-KEM-512 primitives with the qualified
     # Primer #1 forward-NTT backend hook.
     add_library(fpst_mlkem_native_upstream STATIC "${FPST_MLKEM_NATIVE_MONOLITHIC}")
     target_include_directories(fpst_mlkem_native_upstream PRIVATE
@@ -43,7 +44,9 @@ if(FPST_ENABLE_MLKEM_NATIVE)
         MLK_CONFIG_FILE=\"fpst_mlkem512_config.h\")
 
     target_include_directories(fpst_firmware_core PRIVATE "${FPST_MLKEM_NATIVE_API_DIR}")
-    target_compile_definitions(fpst_firmware_core PRIVATE FPST_MLKEM_NATIVE_ENABLED=1)
+    target_compile_definitions(fpst_firmware_core PRIVATE
+        FPST_MLKEM_NATIVE_ENABLED=1
+        MLK_CONFIG_FILE=\"fpst_mlkem512_config.h\")
     target_link_libraries(fpst_firmware_core PUBLIC fpst_mlkem_native_upstream)
 
     # Independent pure-C instance from the exact same upstream revision. It is
@@ -59,13 +62,15 @@ if(FPST_ENABLE_MLKEM_NATIVE)
         tests/test_mlkem_native_wrapper.c
         tests/mlkem_reference_randombytes_forbidden.c
         src/fpst_csprng.c
+        src/fpst_mlkem512_lowram.c
         src/fpst_mlkem512_wrapper.c
         src/fpst_mlkem_session.c)
     target_include_directories(test_mlkem_native_wrapper PRIVATE
         include
         "${FPST_MLKEM_NATIVE_API_DIR}")
     target_compile_definitions(test_mlkem_native_wrapper PRIVATE
-        FPST_MLKEM_NATIVE_ENABLED=1)
+        FPST_MLKEM_NATIVE_ENABLED=1
+        MLK_CONFIG_FILE=\"fpst_mlkem512_config.h\")
     target_compile_options(test_mlkem_native_wrapper PRIVATE
         -Wall -Wextra -Werror -Wpedantic)
     target_link_libraries(test_mlkem_native_wrapper PRIVATE
