@@ -1,0 +1,7 @@
+rtl/ascon/ascon_round.sv
+rtl/ascon/ascon_permutation.sv
+rtl/ascon/ascon_aead_encrypt.sv
+rtl/boards/kiwi_primer_20k/ascon_encrypt_kat_selftest.sv
+rtl/boards/kiwi_primer_20k/kiwi_primer20k_ascon_selftest_top.sv
+constraints/kiwi_primer_20k/kiwi_primer20k_ntt_selftest.cst
+constraints/kiwi_primer_20k/kiwi_primer20k_ntt_selftest.sdc
