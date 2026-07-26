@@ -41,6 +41,30 @@ jobs:
           cmake --build build/sn32f407-firmware-host
           ctest --test-dir build/sn32f407-firmware-host --output-on-failure
 
+      - name: Fetch pinned mlkem-native v1.0.0
+        run: |
+          git clone --depth 1 --branch v1.0.0 \
+            https://github.com/pq-code-package/mlkem-native.git \
+            build/third_party/mlkem-native
+          test "$(git -C build/third_party/mlkem-native rev-parse HEAD)" = \
+            "048fc2a7a7b4ba0ad4c989c1ac82491aa94d5bfa"
+
+      - name: Run SN32F407 ML-KEM Primer1 differential test
+        id: sn32_mlkem
+        continue-on-error: true
+        run: |
+          mkdir -p build/mlkem
+          cmake -S targets/sn32f407/firmware \
+                -B build/sn32f407-firmware-mlkem \
+                -DFPST_ENABLE_MLKEM_NATIVE=ON \
+                -DFPST_MLKEM_NATIVE_ROOT="$GITHUB_WORKSPACE/build/third_party/mlkem-native" \
+                > build/mlkem/configure.log 2>&1
+          cmake --build build/sn32f407-firmware-mlkem \
+                > build/mlkem/build.log 2>&1
+          ctest --test-dir build/sn32f407-firmware-mlkem \
+                -R mlkem_native_wrapper --output-on-failure \
+                > build/mlkem/test.log 2>&1
+
       - name: Install open-source HDL tools
         run: |
           sudo apt-get update -qq
@@ -88,6 +112,9 @@ jobs:
         with:
           name: verification-logs
           path: |
+            build/mlkem/configure.log
+            build/mlkem/build.log
+            build/mlkem/test.log
             build/sim/rtl-unit-tests.log
             build/sim/primer1-pqc-wire.log
             build/synth/yosys-forward-ntt-memory.log
@@ -98,8 +125,17 @@ jobs:
           if-no-files-found: warn
 
       - name: Report verification failure
-        if: steps.rtl_tests.outcome == 'failure' || steps.primer1_pqc_wire.outcome == 'failure' || steps.core_synth_check.outcome == 'failure' || steps.ntt_board_synth_check.outcome == 'failure' || steps.ascon_board_synth_check.outcome == 'failure' || steps.primer1_deploy_synth_check.outcome == 'failure'
+        if: steps.sn32_mlkem.outcome == 'failure' || steps.rtl_tests.outcome == 'failure' || steps.primer1_pqc_wire.outcome == 'failure' || steps.core_synth_check.outcome == 'failure' || steps.ntt_board_synth_check.outcome == 'failure' || steps.ascon_board_synth_check.outcome == 'failure' || steps.primer1_deploy_synth_check.outcome == 'failure'
         run: |
+          if [ -f build/mlkem/configure.log ]; then
+            cat build/mlkem/configure.log
+          fi
+          if [ -f build/mlkem/build.log ]; then
+            cat build/mlkem/build.log
+          fi
+          if [ -f build/mlkem/test.log ]; then
+            cat build/mlkem/test.log
+          fi
           if [ -f build/sim/rtl-unit-tests.log ]; then
             cat build/sim/rtl-unit-tests.log
           fi
