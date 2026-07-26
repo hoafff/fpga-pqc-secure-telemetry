@@ -6,13 +6,23 @@
 /*
  * FPST-SYS-SPEC-001 v1.1 implementation profile.
  * These constants are implementation decisions, not normative v1.1 text.
- * Change them only together with docs/interfaces/FPST-MCU-FPGA-LINK-001-v1.0.md.
+ * Change them only together with docs/interfaces/FPST-MCU-FPGA-LINK-001-v1.1.md
+ * and docs/spec-delta/FPST-v1.1-implementation-decisions.md.
  */
 #define FPST_LINK_PROFILE_VERSION          0x10u
+#define FPST_LINK_SPI_BURST_VERSION        0x01u
 #define FPST_LINK_MAX_PAYLOAD              256u
 #define FPST_LINK_MAX_FRAME                (11u + FPST_LINK_MAX_PAYLOAD + 2u)
-#define FPST_LINK_SPI_HZ                    4000000u
+
+/*
+ * Official SONiX examples default SN32F407F to HCLK=12 MHz. SPI0 supports even
+ * clock divisors; divisor 4 gives 3 MHz without changing the verified clock
+ * tree or the UART0 115200 settings used by the organizer SDK.
+ */
+#define FPST_LINK_SPI_HZ                    3000000u
 #define FPST_LINK_SPI_MODE                  0u
+#define FPST_LINK_SPI_DIVISOR               4u
+
 #define FPST_LINK_READY_TIMEOUT_MS          20u
 #define FPST_LINK_COMMAND_TIMEOUT_MS        50u
 #define FPST_LINK_NTT_TIMEOUT_MS            500u
