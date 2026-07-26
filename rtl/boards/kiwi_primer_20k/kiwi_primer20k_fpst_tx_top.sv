@@ -1,5 +1,6 @@
 module kiwi_primer20k_fpst_tx_top #(
-    parameter integer HEARTBEAT_BIT = 23
+    parameter integer CLOCK_HZ = 27_000_000,
+    parameter integer HEARTBEAT_TOGGLE_CYCLES = 2_700_000
 ) (
     input  logic sys_clk_i,
     input  logic rst_ni,
@@ -13,7 +14,7 @@ module kiwi_primer20k_fpst_tx_top #(
     output logic busy_o,
     output logic fault_o,
 
-    /* Supervisor security plane. Physical pin assignment remains TBC. */
+    /* Independent Tiny-1P5 security plane; asynchronous to sys_clk_i. */
     input  logic secure_enable_i,
     input  logic zeroize_ni,
     input  logic fatal_latched_i,
@@ -30,12 +31,19 @@ module kiwi_primer20k_fpst_tx_top #(
 );
     localparam integer MAX_FRAME_BYTES = 1038;
     localparam integer COUNT_W = $clog2(MAX_FRAME_BYTES + 1);
-    localparam integer HEARTBEAT_WIDTH = HEARTBEAT_BIT + 1;
+    localparam integer HEARTBEAT_COUNT_W =
+        (HEARTBEAT_TOGGLE_CYCLES <= 1) ? 1 : $clog2(HEARTBEAT_TOGGLE_CYCLES);
 
     logic [1:0] reset_sync_q;
+    logic [1:0] secure_enable_sync_q;
+    logic [1:0] zeroize_sync_q;
+    logic [1:0] fatal_sync_q;
     logic internal_rst_n;
+    logic secure_enable_sys;
     logic transport_zeroize;
-    logic [HEARTBEAT_WIDTH-1:0] heartbeat_counter_q;
+    logic fatal_latched_sys;
+    logic [HEARTBEAT_COUNT_W-1:0] heartbeat_counter_q;
+    logic heartbeat_q;
 
     logic rx_frame_valid;
     logic [COUNT_W-1:0] rx_frame_len;
@@ -79,10 +87,12 @@ module kiwi_primer20k_fpst_tx_top #(
     logic key_valid;
     logic session_active;
     logic retained_packet;
-    logic ntt_busy;
+    logic pqc_busy;
+    logic [1:0] pqc_domain;
+    logic pqc_complete;
     logic [15:0] last_error_code;
 
-    /* Asynchronous assertion, synchronous release for the 27 MHz domain. */
+    /* Asynchronous reset assertion, synchronous release in the 27 MHz domain. */
     always_ff @(posedge sys_clk_i or negedge rst_ni) begin
         if (!rst_ni)
             reset_sync_q <= 2'b00;
@@ -91,16 +101,66 @@ module kiwi_primer20k_fpst_tx_top #(
     end
     assign internal_rst_n = reset_sync_q[1];
 
-    /* zeroize_ni is an active-low security sideband; effect occurs next sys clock. */
-    assign transport_zeroize = !zeroize_ni;
-
+    /* secure_enable is fail-safe low until two system-clock samples agree. */
     always_ff @(posedge sys_clk_i) begin
-        if (!internal_rst_n || transport_zeroize || fatal_latched_i)
-            heartbeat_counter_q <= '0;
+        if (!internal_rst_n)
+            secure_enable_sync_q <= 2'b00;
         else
-            heartbeat_counter_q <= heartbeat_counter_q + 1'b1;
+            secure_enable_sync_q <= {secure_enable_sync_q[0],secure_enable_i};
     end
-    assign heartbeat_o = heartbeat_counter_q[HEARTBEAT_BIT];
+    assign secure_enable_sys = secure_enable_sync_q[1];
+
+    /*
+     * zeroize_n asserts asynchronously so secret invalidation starts without
+     * waiting for a clock edge.  Deassertion is deliberately synchronized and
+     * the level remains active for two clean system clocks after release.
+     */
+    always_ff @(posedge sys_clk_i or negedge zeroize_ni) begin
+        if (!zeroize_ni)
+            zeroize_sync_q <= 2'b00;
+        else if (!internal_rst_n)
+            zeroize_sync_q <= 2'b00;
+        else
+            zeroize_sync_q <= {zeroize_sync_q[0],1'b1};
+    end
+    assign transport_zeroize = !zeroize_sync_q[1];
+
+    /*
+     * fatal_latched is an active-high security indication.  Assertion sets the
+     * local synchronized copy asynchronously; release is shifted out only on
+     * clean system clocks.  This keeps the fail-safe direction fast.
+     */
+    always_ff @(posedge sys_clk_i or posedge fatal_latched_i) begin
+        if (fatal_latched_i)
+            fatal_sync_q <= 2'b11;
+        else if (!internal_rst_n)
+            fatal_sync_q <= 2'b00;
+        else
+            fatal_sync_q <= {fatal_sync_q[0],1'b0};
+    end
+    assign fatal_latched_sys = fatal_sync_q[1];
+
+    /*
+     * FPST v1.1 requires a nominal heartbeat transition every 100 ms. At the
+     * production 27 MHz clock this is exactly 2,700,000 cycles. Use an explicit
+     * terminal-count divider because no power-of-two counter bit meets the
+     * required 100 ms +/-20% transition window at 27 MHz.
+     */
+    always_ff @(posedge sys_clk_i) begin
+        if (!internal_rst_n || transport_zeroize || fatal_latched_sys) begin
+            heartbeat_counter_q <= '0;
+            heartbeat_q <= 1'b0;
+        end else if (HEARTBEAT_TOGGLE_CYCLES <= 1) begin
+            heartbeat_counter_q <= '0;
+            heartbeat_q <= ~heartbeat_q;
+        end else if (heartbeat_counter_q == HEARTBEAT_TOGGLE_CYCLES-1) begin
+            heartbeat_counter_q <= '0;
+            heartbeat_q <= ~heartbeat_q;
+        end else begin
+            heartbeat_counter_q <= heartbeat_counter_q + 1'b1;
+        end
+    end
+    assign heartbeat_o = heartbeat_q;
 
     btp_spi_slave #(
         .MAX_FRAME_BYTES(MAX_FRAME_BYTES),
@@ -157,10 +217,6 @@ module kiwi_primer20k_fpst_tx_top #(
     assign rx_frame_accept = parser_frame_accept;
     assign rx_rd_addr = parser_frame_rd_addr;
 
-    /*
-     * Keep BTP framing generic, then perform command-specific prevalidation
-     * before any command endpoint state can produce a side effect.
-     */
     primer1_request_semantic_guard u_request_guard (
         .clk_i                       (sys_clk_i),
         .rst_ni                      (internal_rst_n),
@@ -180,16 +236,16 @@ module kiwi_primer20k_fpst_tx_top #(
         .guarded_error_code_o        (guarded_request_error_code)
     );
 
-    primer1_btp_endpoint_deploy #(
-        .CLOCK_HZ(27_000_000),
+    primer1_endpoint_router #(
+        .CLOCK_HZ(CLOCK_HZ),
         .MAX_FRAME_BYTES(MAX_FRAME_BYTES),
         .COUNT_W(COUNT_W)
-    ) u_endpoint (
+    ) u_endpoint_router (
         .clk_i                     (sys_clk_i),
         .rst_ni                    (internal_rst_n),
         .transport_zeroize_i       (transport_zeroize),
-        .secure_enable_i           (secure_enable_i),
-        .fatal_latched_i           (fatal_latched_i),
+        .secure_enable_i           (secure_enable_sys),
+        .fatal_latched_i           (fatal_latched_sys),
         .request_valid_i           (guarded_request_valid),
         .request_accept_o          (guarded_request_accept),
         .request_opcode_i          (request_opcode),
@@ -213,25 +269,32 @@ module kiwi_primer20k_fpst_tx_top #(
         .key_valid_o               (key_valid),
         .session_active_o          (session_active),
         .retained_packet_o         (retained_packet),
-        .ntt_busy_o                (ntt_busy),
+        .pqc_busy_o                (pqc_busy),
+        .pqc_domain_o              (pqc_domain),
+        .pqc_complete_o            (pqc_complete),
         .last_error_code_o         (last_error_code)
     );
 
-    /* BTP IRQ is active low and remains asserted while a complete response is ready. */
     assign irq_no = ~endpoint_irq_pending;
     assign busy_o = endpoint_busy;
-    assign fault_o = fatal_latched_i;
+    assign fault_o = fatal_latched_sys;
 
-    /* Active-low LEDs make deployment bring-up observable without a debugger. */
     assign led1_no = ~heartbeat_o;
     assign led2_no = ~endpoint_busy;
     assign led3_no = ~endpoint_irq_pending;
     assign led4_no = ~key_valid;
     assign led5_no = ~session_active;
     assign led6_no = ~retained_packet;
-    assign led7_no = ~(fatal_latched_i || (last_error_code != 16'h0000));
+    assign led7_no = ~(fatal_latched_sys || (last_error_code != 16'h0000));
 
 `ifndef SYNTHESIS
+    initial begin
+        assert (CLOCK_HZ > 0)
+            else $error("kiwi_primer20k_fpst_tx_top: CLOCK_HZ must be positive");
+        assert (HEARTBEAT_TOGGLE_CYCLES > 0)
+            else $error("kiwi_primer20k_fpst_tx_top: HEARTBEAT_TOGGLE_CYCLES must be positive");
+    end
+
     always_ff @(posedge sys_clk_i) begin
         if (internal_rst_n) begin
             assert (!(session_active && !key_valid))
@@ -243,6 +306,6 @@ module kiwi_primer20k_fpst_tx_top #(
     end
 `endif
 
-    logic unused_ntt_busy;
-    always_comb unused_ntt_busy = ntt_busy;
+    logic unused_pqc_status;
+    always_comb unused_pqc_status = ^{pqc_busy,pqc_domain,pqc_complete};
 endmodule

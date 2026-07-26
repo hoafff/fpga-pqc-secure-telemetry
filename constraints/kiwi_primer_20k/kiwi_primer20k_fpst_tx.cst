@@ -1,0 +1,74 @@
+// Kiwi Primer 20K #1 FPST v1.1 deployment constraint.
+// Target: GW2A-LV18PG256C8/I7, 27 MHz.
+//
+// The J2 mapping below is the frozen FPGA-side harness profile for Primer #1.
+// Build/program only after the physical SN32/Tiny harness has been wired to this
+// exact profile and continuity-checked.  Do not silently remap a signal in Gowin.
+
+// Board clock/reset.
+IO_LOC "sys_clk_i" H11;
+IO_PORT "sys_clk_i" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+
+IO_LOC "rst_ni" A5;
+IO_PORT "rst_ni" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+// J2 deployment harness.
+// J2-3  B1_T48_N -> P16 : SN32 SPI SCK
+// J2-5  B1_T54_P -> P15 : SN32 SPI MOSI
+// J2-7  B2_R7_P  -> T15 : SN32 SPI MISO
+// J2-8  B2_R7_N  -> R14 : SN32 chip select for Primer #1
+// J2-10 B2_R20_N -> T14 : BTP irq_n
+// J2-11 B2_R20_P -> R13 : BTP busy
+// J2-12 B2_R8_N  -> T13 : endpoint fault
+// J2-13 B2_R11_P -> R12 : Tiny fatal_latched
+// J2-15 B2_R17_N -> T12 : Tiny secure_enable
+// J2-16 B2_R17_P -> R11 : Tiny zeroize_n
+// J2-18 B3_R24_P -> T11 : Primer #1 heartbeat to Tiny
+IO_LOC "spi_sck_i" P16;
+IO_PORT "spi_sck_i" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
+
+IO_LOC "spi_mosi_i" P15;
+IO_PORT "spi_mosi_i" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
+
+IO_LOC "spi_miso_o" T15;
+IO_PORT "spi_miso_o" IO_TYPE=LVCMOS33 DRIVE=8;
+
+IO_LOC "spi_cs_ni" R14;
+IO_PORT "spi_cs_ni" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+IO_LOC "irq_no" T14;
+IO_PORT "irq_no" IO_TYPE=LVCMOS33 DRIVE=8;
+
+IO_LOC "busy_o" R13;
+IO_PORT "busy_o" IO_TYPE=LVCMOS33 DRIVE=8;
+
+IO_LOC "fault_o" T13;
+IO_PORT "fault_o" IO_TYPE=LVCMOS33 DRIVE=8;
+
+IO_LOC "fatal_latched_i" R12;
+IO_PORT "fatal_latched_i" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
+
+IO_LOC "secure_enable_i" T12;
+IO_PORT "secure_enable_i" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
+
+IO_LOC "zeroize_ni" R11;
+IO_PORT "zeroize_ni" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+IO_LOC "heartbeat_o" T11;
+IO_PORT "heartbeat_o" IO_TYPE=LVCMOS33 DRIVE=8;
+
+// On-board active-low diagnostics.
+IO_LOC "led1_no" J1;
+IO_PORT "led1_no" IO_TYPE=LVCMOS33;
+IO_LOC "led2_no" J2;
+IO_PORT "led2_no" IO_TYPE=LVCMOS33;
+IO_LOC "led3_no" H1;
+IO_PORT "led3_no" IO_TYPE=LVCMOS33;
+IO_LOC "led4_no" H2;
+IO_PORT "led4_no" IO_TYPE=LVCMOS33;
+IO_LOC "led5_no" G1;
+IO_PORT "led5_no" IO_TYPE=LVCMOS33;
+IO_LOC "led6_no" G2;
+IO_PORT "led6_no" IO_TYPE=LVCMOS33;
+IO_LOC "led7_no" F1;
+IO_PORT "led7_no" IO_TYPE=LVCMOS33;

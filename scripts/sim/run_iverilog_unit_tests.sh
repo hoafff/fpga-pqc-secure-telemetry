@@ -86,6 +86,33 @@ run_test tb_forward_ntt_board_selftest \
     "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/forward_ntt_board_selftest.sv" \
     "${ROOT_DIR}/tb/integration/tb_forward_ntt_board_selftest.sv"
 
+COMMON_NTT_INTT_SOURCES=(
+    "${ROOT_DIR}/rtl/arithmetic/mod_add.sv"
+    "${ROOT_DIR}/rtl/arithmetic/mod_sub.sv"
+    "${ROOT_DIR}/rtl/arithmetic/mod_mul_3329_pipe.sv"
+    "${ROOT_DIR}/rtl/ntt/twiddle_rom_3329.sv"
+    "${ROOT_DIR}/rtl/ntt/forward_ntt_scheduler.sv"
+    "${ROOT_DIR}/rtl/ntt/inverse_ntt_scheduler.sv"
+    "${ROOT_DIR}/rtl/ntt/ntt_intt_butterfly_pipe.sv"
+    "${ROOT_DIR}/rtl/ntt/true_dual_port_ram_256x16.sv"
+    "${ROOT_DIR}/rtl/ntt/coefficient_pingpong_memory_256x16.sv"
+    "${ROOT_DIR}/rtl/ntt/mlkem_ntt_intt_core.sv"
+)
+
+run_test tb_mlkem_ntt_intt_core \
+    "${COMMON_NTT_INTT_SOURCES[@]}" \
+    "${ROOT_DIR}/tb/integration/tb_mlkem_ntt_intt_core.sv"
+
+COMMON_PQC_SOURCES=(
+    "${COMMON_NTT_INTT_SOURCES[@]}"
+    "${ROOT_DIR}/rtl/ntt/mlkem_basemul_sequential.sv"
+    "${ROOT_DIR}/rtl/ntt/mlkem_pqc_accelerator.sv"
+)
+
+run_test tb_mlkem_pqc_accelerator \
+    "${COMMON_PQC_SOURCES[@]}" \
+    "${ROOT_DIR}/tb/integration/tb_mlkem_pqc_accelerator.sv"
+
 COMMON_ASCON_SOURCES=(
     "${ROOT_DIR}/rtl/ascon/ascon_round.sv"
     "${ROOT_DIR}/rtl/ascon/ascon_permutation.sv"
@@ -115,18 +142,43 @@ COMMON_PRIMER1_DEPLOY_SOURCES=(
     "${COMMON_ASCON_SOURCES[@]}"
     "${ROOT_DIR}/rtl/telemetry/primer1_stp_tx.sv"
     "${COMMON_NTT_SOURCES[@]}"
+    "${ROOT_DIR}/rtl/ntt/inverse_ntt_scheduler.sv"
+    "${ROOT_DIR}/rtl/ntt/ntt_intt_butterfly_pipe.sv"
+    "${ROOT_DIR}/rtl/ntt/mlkem_ntt_intt_core.sv"
+    "${ROOT_DIR}/rtl/ntt/mlkem_basemul_sequential.sv"
+    "${ROOT_DIR}/rtl/ntt/mlkem_pqc_accelerator.sv"
     "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/primer1_request_semantic_guard.sv"
     "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/primer1_btp_endpoint_deploy.sv"
+    "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/primer1_pqc_btp_endpoint.sv"
+    "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/primer1_endpoint_router.sv"
     "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/kiwi_primer20k_fpst_tx_top.sv"
 )
 
-# Exercise the actual deployment top through mode-0 SPI rather than bypassing transport.
+# Use a short heartbeat terminal count only for simulation. Drive asynchronous
+# zeroize away from the active clock edge, then wait for the DUT's synchronized
+# release to become visible before measuring active heartbeat cycles. This
+# avoids active-region races and verifies the divider itself, not CDC latency.
+python3 - <<'PY'
+from pathlib import Path
+build = Path("build/sim")
+for name in ("tb_primer1_deployment_btp.sv", "tb_primer1_deployment_btp_retry.sv"):
+    src = (Path("tb/integration") / name).read_text()
+    src = src.replace(".HEARTBEAT_BIT(8)", ".HEARTBEAT_TOGGLE_CYCLES(16)")
+    if name == "tb_primer1_deployment_btp.sv":
+        needle = "        rst_n = 1'b1;\n        repeat (8) @(posedge sys_clk);\n"
+        insert = needle + "\n        /* Verify exactly 16 active clocks per heartbeat transition. */\n        @(negedge sys_clk);\n        zeroize_n = 1'b0;\n        repeat (2) @(posedge sys_clk);\n        @(negedge sys_clk);\n        zeroize_n = 1'b1;\n        while (dut.transport_zeroize !== 1'b0)\n            @(negedge sys_clk);\n        begin : check_heartbeat\n            logic hb_start;\n            hb_start = heartbeat;\n            repeat (15) @(posedge sys_clk);\n            #1ns;\n            if (heartbeat !== hb_start)\n                $fatal(1, \"Heartbeat toggled before configured terminal count\");\n            @(posedge sys_clk);\n            #1ns;\n            if (heartbeat === hb_start)\n                $fatal(1, \"Heartbeat did not toggle at configured terminal count\");\n        end\n"
+        if needle not in src:
+            raise SystemExit("heartbeat insertion point not found")
+        src = src.replace(needle, insert, 1)
+    (build / name).write_text(src)
+PY
+
 run_test tb_primer1_deployment_btp \
     "${COMMON_PRIMER1_DEPLOY_SOURCES[@]}" \
-    "${ROOT_DIR}/tb/integration/tb_primer1_deployment_btp.sv"
+    "${BUILD_DIR}/tb_primer1_deployment_btp.sv"
 
 run_test tb_primer1_deployment_btp_retry \
     "${COMMON_PRIMER1_DEPLOY_SOURCES[@]}" \
-    "${ROOT_DIR}/tb/integration/tb_primer1_deployment_btp_retry.sv"
+    "${BUILD_DIR}/tb_primer1_deployment_btp_retry.sv"
 
 echo "PASS: all RTL unit and integration tests completed"

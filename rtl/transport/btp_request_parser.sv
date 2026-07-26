@@ -28,7 +28,12 @@ module btp_request_parser #(
 );
     import fpst_btp_pkg::*;
 
-    typedef enum logic [1:0] {ST_IDLE, ST_SCAN, ST_HOLD} state_t;
+    typedef enum logic [1:0] {
+        ST_IDLE,
+        ST_SCAN,
+        ST_HOLD,
+        ST_DRAIN
+    } state_t;
     state_t state_q;
 
     logic [COUNT_W-1:0] scan_index_q;
@@ -183,11 +188,23 @@ module btp_request_parser #(
 
                 ST_HOLD: begin
                     if (request_accept_i) begin
+                        /*
+                         * frame_accept_o is registered, while rx_pending_q in
+                         * btp_spi_slave is cleared on the following clk edge.
+                         * Do not return directly to IDLE here: doing so lets the
+                         * still-high frame_valid_i be mistaken for a new frame.
+                         */
                         frame_accept_o <= 1'b1;
                         request_error_o <= 1'b0;
                         request_error_code_o <= ERR_OK;
-                        state_q <= ST_IDLE;
+                        state_q <= ST_DRAIN;
                     end
+                end
+
+                ST_DRAIN: begin
+                    /* Re-arm only after the producer has visibly dropped valid. */
+                    if (!frame_valid_i)
+                        state_q <= ST_IDLE;
                 end
 
                 default: state_q <= ST_IDLE;
