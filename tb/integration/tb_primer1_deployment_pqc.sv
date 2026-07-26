@@ -24,6 +24,7 @@ module tb_primer1_deployment_pqc;
 
     logic [7:0] request [0:MAX_BYTES-1];
     logic [7:0] response [0:MAX_BYTES-1];
+    logic [7:0] first_add_response [0:25];
     logic [15:0] original_poly [0:255];
     logic [31:0] crc;
     integer i;
@@ -175,6 +176,7 @@ module tb_primer1_deployment_pqc;
 
     integer response_total;
     integer txid;
+    integer add_txid;
     integer data_offset;
 
     initial begin
@@ -216,11 +218,42 @@ module tb_primer1_deployment_pqc;
         transact(OP_PQC_LOAD_POLY,txid[15:0],514,response_total); txid=txid+1;
         expect_ok(OP_PQC_LOAD_POLY);
 
-        // Add the zero polynomial through the BTP binary-operand streaming path.
+        // Non-idempotent duplicate test: add one to every coefficient, then
+        // resend the exact same transaction ID and request. The second request
+        // must be served from cache and MUST NOT execute the addition again.
         request[10] = 8'h00; // add
         for (i=0; i<256; i=i+1) begin
             request[11+2*i] = 8'h00;
-            request[12+2*i] = 8'h00;
+            request[12+2*i] = 8'h01;
+        end
+        add_txid = txid;
+        transact(OP_PQC_POLY_ADD_SUB,add_txid[15:0],513,response_total);
+        expect_ok(OP_PQC_POLY_ADD_SUB);
+        if (response_total != 26)
+            $fatal(1,"unexpected add response size %0d",response_total);
+        for (i=0; i<26; i=i+1)
+            first_add_response[i] = response[i];
+
+        transact(OP_PQC_POLY_ADD_SUB,add_txid[15:0],513,response_total);
+        expect_ok(OP_PQC_POLY_ADD_SUB);
+        for (i=0; i<26; i=i+1) begin
+            if (response[i] !== first_add_response[i])
+                $fatal(1,"duplicate PQC response changed at byte %0d",i);
+        end
+        txid = txid + 1;
+
+        request[10]=8'h00; request[11]=8'h00;
+        transact(OP_PQC_READ_COEFF,txid[15:0],2,response_total); txid=txid+1;
+        expect_ok(OP_PQC_READ_COEFF);
+        if ({response[22],response[23]} !== ((original_poly[0] + 1) % 3329))
+            $fatal(1,"duplicate POLY_ADD executed side effect more than once");
+
+        // Subtract one once to restore the original polynomial before the
+        // NTT/INTT round trip.
+        request[10] = 8'h01; // subtract
+        for (i=0; i<256; i=i+1) begin
+            request[11+2*i] = 8'h00;
+            request[12+2*i] = 8'h01;
         end
         transact(OP_PQC_POLY_ADD_SUB,txid[15:0],513,response_total); txid=txid+1;
         expect_ok(OP_PQC_POLY_ADD_SUB);
@@ -270,7 +303,7 @@ module tb_primer1_deployment_pqc;
         if (irq_n !== 1'b1 || fault !== 1'b0)
             $fatal(1,"Primer deployment did not return to clean idle state");
 
-        $display("PASS: Primer #1 complete PQC command path works over wire-level SPI/BTP");
+        $display("PASS: Primer #1 complete PQC path + non-idempotent retry works over SPI/BTP");
         $finish;
     end
 endmodule
