@@ -1,5 +1,6 @@
 #include "fpst_sn32f407_port.h"
 #include "board_profile.h"
+#include "fpst_profile.h"
 
 #include <SN32F400.h>
 #include <SN32F400_Def.h>
