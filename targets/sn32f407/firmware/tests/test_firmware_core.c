@@ -21,13 +21,11 @@ typedef struct {
     unsigned chunk_count;
     unsigned commit_count;
     unsigned activate_count;
-    unsigned tx_commit_count;
 
     uint32_t staged_session_id;
     uint8_t staged_key_material[24];
     uint64_t staged_initial_sequence;
     uint32_t staged_policy_flags;
-    uint64_t committed_tx_sequence;
 } mock_hw_t;
 
 static uint32_t mock_millis(void *ctx) {
@@ -104,12 +102,6 @@ static fpst_result_t mock_send_frame(void *ctx,
             assert(request.payload_len == 4u);
             assert(fpst_load_be32(request.payload) == m->staged_session_id);
             ++m->activate_count;
-            break;
-
-        case FPST_OP_TX_COMMIT_ACCEPTED:
-            assert(request.payload_len == 8u);
-            m->committed_tx_sequence = fpst_load_be64(request.payload);
-            ++m->tx_commit_count;
             break;
 
         default:
@@ -189,11 +181,11 @@ static void test_btp_frame(void) {
     uint8_t frame[64];
     size_t len = 0u;
 
-    assert(fpst_frame_encode(0x60u, 0u, 0x1234u,
+    assert(fpst_frame_encode(FPST_OP_TELEMETRY_TX_SAMPLE, 0u, 0x1234u,
                              payload, sizeof payload,
                              frame, sizeof frame, &len) == FPST_OK);
     assert(frame[0] == 0xA5u && frame[1] == 0x5Au);
-    assert(frame[2] == 0x01u && frame[3] == 0x60u);
+    assert(frame[2] == 0x01u && frame[3] == FPST_OP_TELEMETRY_TX_SAMPLE);
     assert(frame[4] == 0u && frame[5] == 0u);
     assert(fpst_load_be16(&frame[6]) == 0x1234u);
     assert(fpst_load_be16(&frame[8]) == sizeof payload);
@@ -206,7 +198,8 @@ static void test_btp_frame(void) {
 
     fpst_frame_view_t view;
     assert(fpst_frame_decode(frame, len, &view) == FPST_OK);
-    assert(view.opcode == 0x60u && view.transaction_id == 0x1234u);
+    assert(view.opcode == FPST_OP_TELEMETRY_TX_SAMPLE &&
+           view.transaction_id == 0x1234u);
     assert(view.payload_len == sizeof payload);
     assert(memcmp(view.payload, payload, sizeof payload) == 0);
 
@@ -238,19 +231,21 @@ static void test_session_atomic_commit(void) {
 
     assert(fpst_fpga_link_init(&link, &platform) == FPST_OK);
     assert(fpst_session_init(&session, &link) == FPST_OK);
+
+    /* FPST v1.1 starts every new telemetry session at sequence zero. */
     assert(fpst_session_establish(&session, shared_secret,
                                   0x01020304u,
-                                  0x0102030405060708ULL,
+                                  0u,
                                   0x11223344u) == FPST_OK);
 
     assert(session.state == FPST_SESSION_ACTIVE);
-    assert(session.next_sequence == 0x0102030405060708ULL);
+    assert(session.next_sequence == 0u);
     assert(hw.begin_count == 1u);
     assert(hw.chunk_count == 1u);
     assert(hw.commit_count == 1u);
     assert(hw.activate_count == 1u);
     assert(hw.staged_session_id == 0x01020304u);
-    assert(hw.staged_initial_sequence == 0x0102030405060708ULL);
+    assert(hw.staged_initial_sequence == 0u);
     assert(hw.staged_policy_flags == 0x11223344u);
 
     static const uint8_t expected_material[24] = {
@@ -261,15 +256,13 @@ static void test_session_atomic_commit(void) {
     assert(memcmp(hw.staged_key_material, expected_material,
                   sizeof expected_material) == 0);
 
-    assert(fpst_session_commit_accepted(&session,
-                                        0x0102030405060708ULL) == FPST_OK);
-    assert(hw.tx_commit_count == 1u);
-    assert(hw.committed_tx_sequence == 0x0102030405060708ULL);
-    assert(session.next_sequence == 0x0102030405060709ULL);
-
-    assert(fpst_session_commit_accepted(&session,
-                                        0x0102030405060708ULL) ==
-           FPST_ERR_TRANSACTION);
+    /* Non-zero initial sequence is forbidden for a fresh session. */
+    fpst_session_manager_t rejected;
+    assert(fpst_session_init(&rejected, &link) == FPST_OK);
+    assert(fpst_session_establish(&rejected, shared_secret,
+                                  0x01020305u,
+                                  1u,
+                                  0u) == FPST_ERR_ARGUMENT);
 
     fpst_session_zeroize(&session);
     assert(session.state == FPST_SESSION_NO_KEY);
