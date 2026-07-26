@@ -195,9 +195,19 @@ J2-16 / R11 : Tiny zeroize_n
 J2-18 / T11 : heartbeat -> Tiny
 ```
 
-Không được nối chung `CS_N` của hai Primer. Nếu dùng chung SCK/MOSI/MISO bus, firmware/physical harness phải bảo đảm chỉ board được chọn lái MISO và từng endpoint có đường select/IRQ được phân biệt đúng. Shared `btp_spi_slave` đã được sửa để MISO về high-impedance khi CS không chọn endpoint; regression Primer #1 và Primer #2 đều qua sau thay đổi này.
+Không được nối chung `CS_N` của hai Primer. SCK/MOSI/MISO được dùng chung, còn mỗi Primer có CS/IRQ riêng. Shared `btp_spi_slave` đã được sửa để MISO về high-impedance khi CS không chọn endpoint; SN32 multiport adapter luôn deassert flash CS, P1 CS và P2 CS trước khi chọn đúng một endpoint.
 
-CST chỉ khóa **FPGA-side** pin mapping. SN32/Tiny-side GPIO assignment và continuity measurement phải được ghi trong harness profile trước hardware sign-off.
+SN32 deployment profile hiện khóa:
+
+```text
+shared SCK  : P1.0
+shared MISO : P1.1
+shared MOSI : P1.2
+Primer #1   : CS=P2.1, IRQ=P2.3
+Primer #2   : CS=P2.2, IRQ=P2.8
+```
+
+CST chỉ khóa FPGA-side pin mapping. Physical continuity/common-ground/MISO-release measurement vẫn là hardware sign-off item.
 
 ## 9. Verification entrypoints
 
@@ -208,22 +218,29 @@ bash scripts/sim/run_primer2_deployment_tests.sh
 bash scripts/synth/check_kiwi_primer20k_fpst_rx_deployment_yosys.sh
 ```
 
-`run_primer2_deployment_tests.sh` hiện chạy ba gate:
+`run_primer2_deployment_tests.sh` hiện chạy bốn gate:
 
 ```text
 Ascon-AEAD128 decrypt KAT / quarantine
 Primer #1 STP TX -> Primer #2 STP RX cross-endpoint policy regression
+actual Primer #2 BTP endpoint key/session/STP/replay/counter contract regression
 complete Primer #2 deployment hierarchy compile
 ```
 
 Cross-endpoint regression đã bắt được và dẫn tới sửa một lỗi streaming có thật ở `primer1_stp_tx`: ciphertext có thể được Ascon xuất ngay trong lúc wrapper còn feed block plaintext tiếp theo, nên TX phải capture `core_out_valid` trong toàn transaction chứ không chỉ ở `ST_WAIT_CRYPTO`.
 
-GitHub Actions run #369 (`218028bf...`) đã PASS toàn bộ regression và generic synthesis gates, bao gồm Primer #1 sau sửa streaming và Primer #2 secure RX; final `Report verification failure` được skip, nên không có `continue-on-error` raw failure bị che. Generic Yosys synthesis chỉ là structural/synthesizability smoke gate và không thay Gowin exact-device synthesis/place-and-route/timing.
+SN32 portable regression hiện kiểm cả independent-link và low-RAM routed one-link pair flow. Routed flow dùng một `fpst_fpga_link_t` cho cả hai Primer, kiểm session provisioning, exact retained STP forwarding, COMMIT, lost-ACK -> `ERR_REPLAY expected=sent+1` reconciliation và pair zeroize. ML-KEM regression còn kiểm 42-byte `KEY_STATUS` response không được ghi đè 768-byte ciphertext scratch; scratch hiện bắt đầu ở `response_buf[48]`.
+
+GitHub Actions run #420 trên commit `d3f4956f1898f6222909a087e81efad2448b297f` đã PASS toàn bộ portable C, ML-KEM differential/SRAM preflight, RTL regression và Primer #1/#2 generic Yosys deployment synthesis gates. Final `Report verification failure` được skip, nên không còn `continue-on-error` raw failure bị che.
+
+Generic Yosys synthesis chỉ là structural/synthesizability smoke gate và không thay Gowin exact-device synthesis/place-and-route/timing. Host SRAM preflight cũng không thay ARM Compiler 6 `.map`/stack proof.
 
 Các evidence còn bắt buộc trước board sign-off:
 
-- Gowin synthesis + P&R + timing cho `GW2A-LV18PG256C8/I7`;
-- continuity/common-ground check;
+- Gowin synthesis + P&R + timing cho `GW2A-LV18PG256C8/I7` của cả hai Primer;
+- generated/programmed Primer `.fs` artifacts;
+- ARM Compiler 6 exact SN32 build, `.map`, stack/call-graph evidence và `.hex`;
+- continuity/common-ground/MISO-release check cho shared SPI harness;
 - logic-analyzer validation bắt đầu ở SPI Mode 0, 1 MHz;
 - programmed-board end-to-end telemetry TX -> RX -> commit/retry/zeroize/fault test.
 
@@ -231,7 +248,7 @@ Các evidence còn bắt buộc trước board sign-off:
 
 ```text
 IMPLEMENTED + CI-VERIFIED ON primer2-deployment-v1:
-  secure RX top + BTP endpoint
+  Primer #2 secure RX top + BTP endpoint
   receive session context / expected_sequence
   STP precheck + replay/gap guard
   Ascon-AEAD128 decrypt/verify compatibility core
@@ -242,15 +259,28 @@ IMPLEMENTED + CI-VERIFIED ON primer2-deployment-v1:
   CST/SDC + source manifest
   decrypt KAT/quarantine regression
   Primer1-TX -> Primer2-RX cross-endpoint regression
+  actual Primer #2 BTP response-contract regression
   replay / sequence-gap / bad-tag x3 threshold regression
-  Icarus complete hierarchy compile
+  SN32 Primer #2 BTP client
+  SN32 shared-SPI dual-CS/dual-IRQ adapter
+  SN32 atomic P1-TX/P2-RX pair session provisioning
+  SN32 retained-packet bridge + lost-ACK reconciliation
+  SN32 low-RAM one-link routing
+  ML-KEM ciphertext scratch protection at byte 48
+  strict host syntax gate for new SN32 board sources
+  dual-Primer source-level SRAM preflight
   Primer #1 and Primer #2 generic Yosys deployment synthesis
+  full CI run #420 with hidden-failure detector clean
 
 NOT YET HARDWARE-SIGNED-OFF:
   Gowin exact-device P&R/timing
   generated/programmed *.fs
-  physical Primer #2 harness continuity and logic-analyzer evidence
-  SN32 system-level client/harness extension for the second endpoint
+  ARM Compiler 6 exact SN32 map/stack and generated *.hex
+  physical two-Primer harness continuity/common-ground/MISO-release evidence
+  logic-analyzer SPI evidence
+  programmed-board end-to-end evidence
 ```
 
-Không tạo bitstream giả và không gọi target là hardware-ready chỉ vì RTL/CI đã pass.
+SN32 dual-Primer Keil source list, memory profile and bring-up sequence are documented in `targets/sn32f407/firmware/KEIL_DUAL_PRIMER_BUILD.md`.
+
+Không tạo bitstream/hex giả và không gọi target là hardware-ready chỉ vì RTL/host CI đã pass.
