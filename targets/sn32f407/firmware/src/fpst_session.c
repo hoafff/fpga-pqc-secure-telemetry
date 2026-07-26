@@ -17,7 +17,7 @@ fpst_result_t fpst_session_establish(
     uint64_t initial_sequence,
     uint32_t policy_flags) {
     if (m == NULL || m->link == NULL || shared_secret == NULL ||
-        session_id == 0u) {
+        session_id == 0u || initial_sequence != 0u) {
         return FPST_ERR_ARGUMENT;
     }
     if (m->state == FPST_SESSION_STAGING) return FPST_ERR_BUSY;
@@ -29,7 +29,7 @@ fpst_result_t fpst_session_establish(
     m->state = FPST_SESSION_STAGING;
     uint16_t response_len = 0u;
 
-    /* KEY_LOAD_BEGIN: BE32 session_id | direction=TX(1) | BE16 key_bytes(24). */
+    /* KEY_LOAD_BEGIN: BE32 session_id | direction=TX(1) | BE16 material_len(24). */
     uint8_t begin_payload[7];
     fpst_store_be32(&begin_payload[0], session_id);
     begin_payload[4] = 0x01u;
@@ -42,7 +42,7 @@ fpst_result_t fpst_session_establish(
     fpst_secure_zero(begin_payload, sizeof begin_payload);
     if (rc != FPST_OK) goto fail;
 
-    /* One atomic staging chunk: offset=0 | K_TX[16] | NP_TX[8]. */
+    /* One complete staging chunk: BE16 offset=0 | K_TX[16] | NP_TX[8]. */
     uint8_t chunk_payload[2 + FPST_ASCON_KEY_BYTES +
                           FPST_ASCON_NONCE_PREFIX_BYTES];
     fpst_store_be16(&chunk_payload[0], 0u);
@@ -60,12 +60,14 @@ fpst_result_t fpst_session_establish(
     if (rc != FPST_OK) goto fail;
 
     /*
-     * Implementation clarification for the v1.1 "session metadata" commit:
-     * BE32 session_id | BE64 initial_sequence | BE32 policy_flags.
+     * Repository encoding of the v1.1 "session metadata" commit:
+     * BE32 session_id | BE64 sequence(shall be zero for a new session) |
+     * BE32 policy_flags. The sequence field is retained to make the reset-to-zero
+     * invariant explicit at the endpoint boundary; non-zero is rejected above.
      */
     uint8_t commit_payload[16];
     fpst_store_be32(&commit_payload[0], session_id);
-    fpst_store_be64(&commit_payload[4], initial_sequence);
+    fpst_store_be64(&commit_payload[4], 0u);
     fpst_store_be32(&commit_payload[12], policy_flags);
     rc = fpst_fpga_link_command(m->link, FPST_OP_KEY_LOAD_COMMIT,
                                 commit_payload, sizeof commit_payload,
@@ -85,7 +87,7 @@ fpst_result_t fpst_session_establish(
 
     m->state = FPST_SESSION_ACTIVE;
     m->session_id = session_id;
-    m->next_sequence = initial_sequence;
+    m->next_sequence = 0u;
     return FPST_OK;
 
 fail:
@@ -99,31 +101,10 @@ fail:
     return rc;
 }
 
-fpst_result_t fpst_session_commit_accepted(fpst_session_manager_t *m,
-                                           uint64_t committed_sequence) {
-    if (m == NULL || m->link == NULL) return FPST_ERR_ARGUMENT;
-    if (m->state != FPST_SESSION_ACTIVE) return FPST_ERR_STATE;
-    if (committed_sequence != m->next_sequence) return FPST_ERR_TRANSACTION;
-
-    uint8_t payload[8];
-    fpst_store_be64(payload, committed_sequence);
-    uint16_t response_len = 0u;
-    const fpst_result_t rc = fpst_fpga_link_command(
-        m->link, FPST_OP_TX_COMMIT_ACCEPTED,
-        payload, sizeof payload, NULL, 0u, &response_len,
-        FPST_LINK_COMMAND_TIMEOUT_MS);
-    fpst_secure_zero(payload, sizeof payload);
-
-    if (rc == FPST_OK) {
-        ++m->next_sequence;
-    }
-    return rc;
-}
-
 void fpst_session_zeroize(fpst_session_manager_t *m) {
     if (m == NULL) return;
 
-    /* OOB wipe does not depend on a responsive SPI endpoint. */
+    /* OOB wipe has highest priority and does not depend on a responsive SPI link. */
     if (m->link != NULL && m->link->platform != NULL) {
         m->link->platform->fpga_zeroize(m->link->platform->ctx,
                                         FPST_LINK_ZEROIZE_PULSE_MS);
