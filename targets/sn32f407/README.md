@@ -35,8 +35,6 @@ Programmer    : SN-LINK-V3
 Board         : 32F407_EVK_V1.0
 ```
 
-The organizer EVK schematic closes the MCU connector routing that was previously TBC.
-
 ## 3. Current implementation truth
 
 ### Portable firmware core — implemented and CI tested
@@ -49,7 +47,6 @@ BTP frame encode/decode
 BTP request transaction -> IRQ wait -> response transaction
 transaction-ID retry behavior
 KEY_LOAD_BEGIN/CHUNK/COMMIT/ACTIVATE
-TX commit-ack relay profile
 bounded timeout/recovery
 portable mock-endpoint tests
 ```
@@ -74,6 +71,7 @@ real jumper harness continuity check
 logic-analyzer capture
 Gowin .cst for integrated Primer system
 full INTT/ML-KEM offload
+final carrier for Primer #2 commit evidence back to Primer #1
 ```
 
 ## 4. Verified EVK V1.0 connector profile
@@ -102,7 +100,7 @@ Selected SPI PFPA:
 PFPA SPI0 = 0x6A
 ```
 
-The data signals use the P1.x route. Hardware SEL is routed away/disabled because Primer CS is a manual GPIO.
+Hardware SEL is disabled because Primer CS is a manual GPIO.
 
 ### J7 sidebands
 
@@ -114,7 +112,7 @@ J7.4 P2.8 = FPGA_RESET_N    output, active low
 J7.5 P2.9 = FPGA_ZEROIZE_N  output, active low
 ```
 
-This mapping avoids selecting the onboard Flash while Primer #1 is active on the shared SCK/MOSI/MISO signals.
+This avoids selecting the onboard flash while Primer #1 is active on shared SCK/MOSI/MISO.
 
 ## 5. Active BTP profile
 
@@ -129,15 +127,15 @@ max payload   = 1024 bytes
 CRC           = CRC-32/ISO-HDLC
 ```
 
-One request/response command exchange is:
+Command exchange:
 
 ```text
-CS low  -> send one complete BTP request -> CS high
+CS low -> complete request frame -> CS high
 wait IRQ_N low
-CS low  -> read one complete BTP response -> CS high
+CS low -> complete response frame -> CS high
 ```
 
-BTP frame:
+Frame:
 
 ```text
 A5 5A
@@ -151,9 +149,33 @@ payload[N]
 crc32[4] BE
 ```
 
-The earlier A1/A2 memory-burst + CRC-16 mailbox profile is obsolete and has been removed from the active firmware build.
+The old A1/A2 memory-burst + CRC16 mailbox profile is obsolete.
 
-## 6. Firmware layout
+## 6. Frozen opcode registry
+
+Firmware enum values follow FPST v1.1 Appendix B, including:
+
+```text
+0x01 GET_DEVICE_ID
+0x02 GET_STATUS
+0x03 GET_ERROR
+0x04 CLEAR_ERROR
+0x05 SOFT_RESET
+...
+0x20..0x28 PQC commands
+0x40..0x46 key/session commands
+0x50 ASCON_KAT
+0x60 TELEMETRY_TX_SAMPLE
+0x61 STP_RX_PACKET
+0x62 STP_GET_COUNTERS
+0x63 STP_CLEAR_COUNTERS
+0x70..0x72 test commands
+0x7F PING
+```
+
+`0x61` is not available for a private TX acknowledgement command.
+
+## 7. Firmware layout
 
 ```text
 targets/sn32f407/firmware/
@@ -185,7 +207,7 @@ targets/sn32f407/firmware/
 
 Only `platform/sn32f407/` depends directly on SONiX device registers/headers.
 
-## 7. Host verification
+## 8. Host verification
 
 ```bash
 cmake -S targets/sn32f407/firmware \
@@ -196,16 +218,16 @@ ctest --test-dir build/sn32f407-firmware-host --output-on-failure
 
 Tests cover:
 
-- CRC-32/ISO-HDLC check value `CBF43926`;
+- CRC-32/ISO-HDLC check `CBF43926`;
 - SHAKE256 KAT;
-- FPST KDF with big-endian session ID;
-- BTP v1.1 encode/decode and corruption rejection;
-- two-transaction command client behavior;
+- FPST KDF with BE32 session ID;
+- BTP encode/decode and corruption rejection;
+- two-transaction client behavior;
 - derive → key-load begin/chunk/commit → activate;
-- TX commit acknowledgement;
+- zero initial TX sequence rule;
 - out-of-band zeroize.
 
-## 8. Session flow
+## 9. Session flow
 
 ```text
 ML-KEM shared_secret[32]
@@ -226,9 +248,7 @@ SESSION_ACTIVATE
 Primer #1 owns active TX session + sequence
 ```
 
-The ML-KEM shared secret itself is never sent to Ascon/Primer #1.
-
-KDF:
+The shared secret itself is never sent to Primer #1.
 
 ```text
 D = ASCII("FPST-KDF-V1")
@@ -236,20 +256,26 @@ K_TX  = SHAKE256(D || 01 || shared_secret[32] || BE32(session_id), 16)
 NP_TX = SHAKE256(D || 02 || shared_secret[32] || BE32(session_id),  8)
 ```
 
-## 9. Telemetry / commit flow
+Fresh FPST v1.1 sessions start with sequence zero.
 
-The MCU sends only the 24-byte telemetry record in `TELEMETRY_TX_SAMPLE`. Primer #1 builds/encrypts the STP packet and returns the retained packet bytes.
+## 10. Telemetry and receiver commit evidence
 
-After Primer #2 authenticates/releases the packet, the MCU relays the committed sequence to Primer #1 using the repository `TX_COMMIT_ACCEPTED` profile command. Only then does Primer #1 clear the retained packet and increment its sequence.
+The MCU sends only the 24-byte telemetry record in `TELEMETRY_TX_SAMPLE`. Primer #1 builds/encrypts and retains the STP packet.
 
-The profile extension is documented in:
+FPST v1.1 requires sequence advancement only after receiver commit. The current branch deliberately does **not** invent a BTP opcode for that evidence because `0x61` is already `STP_RX_PACKET`.
 
-- [`FPST-MCU-FPGA-LINK-001-v1.1.md`](../../docs/interfaces/FPST-MCU-FPGA-LINK-001-v1.1.md)
-- [`FPST-v1.1-implementation-decisions.md`](../../docs/spec-delta/FPST-v1.1-implementation-decisions.md)
+Primer #1 exposes the commit as a logical integration pair:
 
-## 10. Harness safety gate
+```text
+tx_commit_valid_i
+tx_commit_sequence_i[63:0]
+```
 
-`board_profile.h` deliberately keeps:
+The final MCU/Primer2-to-Primer1 carrier is still an integration item to freeze without changing Appendix B.
+
+## 11. Harness safety gate
+
+`board_profile.h` keeps:
 
 ```c
 #define FPST_SN32F407_DEVICE_VERIFIED       1
@@ -258,17 +284,17 @@ The profile extension is documented in:
 #define FPST_SN32F407_HARNESS_VERIFIED     0
 ```
 
-With the last flag at `0`, firmware boots and UART works, but BTP SPI transactions are intentionally rejected with `FPST_ERR_STATE`.
+With the last flag at `0`, firmware boots/UART works but BTP transfers are intentionally blocked.
 
-Do not set it to `1` until:
+Set it to `1` only after:
 
-1. exact Primer #1 physical pins are selected and constrained;
-2. jumper continuity is checked;
-3. common GND and 3.3 V logic are confirmed;
-4. Mode-0/MSB-first/1 MHz is captured on a logic analyzer;
-5. PING/GET_CAPS and bad-CRC tests pass.
+1. exact Primer #1 pins are selected/constrained;
+2. continuity passes;
+3. common GND/3.3 V is confirmed;
+4. Mode-0/MSB-first/1 MHz capture passes;
+5. PING/GET_DEVICE_ID/GET_STATUS and bad-CRC tests pass.
 
-## 11. Keil build / program
+## 12. Keil build / program
 
 See [`firmware/KEIL_BUILD.md`](firmware/KEIL_BUILD.md).
 
@@ -280,22 +306,24 @@ baseline=FPST-SYS-SPEC-001-v1.1
 host=UART0-115200 link=BTP-SPI0-1MHz-mode0
 ```
 
-Bring-up commands:
+Bring-up CLI:
 
 ```text
 help
 wiring
 ping
-caps
+device
 status
+error
+clear
 zeroize
 reset
 ```
 
-## 12. Remaining MCU/system work
+## 13. Remaining MCU/system work
 
 1. lock exact Primer #1 connector pins and close the physical harness gate;
-2. add full host commands for actual ML-KEM session establishment/telemetry demo;
-3. integrate Primer #2 receiver commit evidence into `fpst_session_commit_accepted()`;
+2. add full PC-facing ML-KEM/session/telemetry commands;
+3. freeze a non-conflicting system carrier for Primer #2 commit evidence;
 4. complete INTT/remaining PQC accelerator hooks;
-5. capture board/timing/logic-analyzer evidence for the competition build.
+5. capture board/timing/logic-analyzer evidence for competition build.
