@@ -18,7 +18,8 @@ add_library(fpst_firmware_core
     src/fpst_primer1.c
     src/fpst_session.c
     src/fpst_csprng.c
-    src/fpst_mlkem512_wrapper.c)
+    src/fpst_mlkem512_wrapper.c
+    src/fpst_mlkem_session.c)
 target_include_directories(fpst_firmware_core PUBLIC include)
 target_compile_options(fpst_firmware_core PRIVATE -Wall -Wextra -Werror -Wpedantic)
 
