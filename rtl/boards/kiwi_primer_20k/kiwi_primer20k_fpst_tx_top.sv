@@ -54,17 +54,25 @@ module kiwi_primer20k_fpst_tx_top #(
 
     logic parser_frame_accept;
     logic [COUNT_W-1:0] parser_frame_rd_addr;
-    logic request_valid;
-    logic request_accept;
+
+    /* Raw BTP request held by parser until the semantic guard accepts it. */
+    logic raw_request_valid;
+    logic raw_request_accept;
     logic [7:0] request_opcode;
     logic [7:0] request_flags;
     logic [15:0] request_transaction_id;
     logic [15:0] request_payload_len;
     logic [31:0] request_crc32;
-    logic request_error;
-    logic [15:0] request_error_code;
-    logic [9:0] request_payload_rd_addr;
+    logic raw_request_error;
+    logic [15:0] raw_request_error_code;
+
+    logic [9:0] guard_payload_rd_addr;
     logic [7:0] request_payload_rd_data;
+    logic [9:0] endpoint_payload_rd_addr;
+    logic guarded_request_valid;
+    logic guarded_request_accept;
+    logic guarded_request_error;
+    logic [15:0] guarded_request_error_code;
 
     logic endpoint_irq_pending;
     logic endpoint_busy;
@@ -133,21 +141,44 @@ module kiwi_primer20k_fpst_tx_top #(
         .frame_accept_o           (parser_frame_accept),
         .frame_rd_addr_o          (parser_frame_rd_addr),
         .frame_rd_data_i          (rx_rd_data),
-        .request_valid_o          (request_valid),
-        .request_accept_i         (request_accept),
+        .request_valid_o          (raw_request_valid),
+        .request_accept_i         (raw_request_accept),
         .request_opcode_o         (request_opcode),
         .request_flags_o          (request_flags),
         .request_transaction_id_o (request_transaction_id),
         .request_payload_len_o    (request_payload_len),
         .request_crc32_o          (request_crc32),
-        .request_error_o          (request_error),
-        .request_error_code_o     (request_error_code),
-        .payload_rd_addr_i        (request_payload_rd_addr),
+        .request_error_o          (raw_request_error),
+        .request_error_code_o     (raw_request_error_code),
+        .payload_rd_addr_i        (guard_payload_rd_addr),
         .payload_rd_data_o        (request_payload_rd_data)
     );
 
     assign rx_frame_accept = parser_frame_accept;
     assign rx_rd_addr = parser_frame_rd_addr;
+
+    /*
+     * Keep BTP framing generic, then perform command-specific prevalidation
+     * before any command endpoint state can produce a side effect.
+     */
+    primer1_request_semantic_guard u_request_guard (
+        .clk_i                       (sys_clk_i),
+        .rst_ni                      (internal_rst_n),
+        .zeroize_i                   (transport_zeroize),
+        .raw_valid_i                 (raw_request_valid),
+        .raw_accept_o                (raw_request_accept),
+        .raw_opcode_i                (request_opcode),
+        .raw_payload_len_i           (request_payload_len),
+        .raw_error_i                 (raw_request_error),
+        .raw_error_code_i            (raw_request_error_code),
+        .payload_rd_addr_o           (guard_payload_rd_addr),
+        .payload_rd_data_i           (request_payload_rd_data),
+        .endpoint_payload_rd_addr_i  (endpoint_payload_rd_addr),
+        .guarded_valid_o             (guarded_request_valid),
+        .guarded_accept_i            (guarded_request_accept),
+        .guarded_error_o             (guarded_request_error),
+        .guarded_error_code_o        (guarded_request_error_code)
+    );
 
     primer1_btp_endpoint_deploy #(
         .CLOCK_HZ(27_000_000),
@@ -159,16 +190,16 @@ module kiwi_primer20k_fpst_tx_top #(
         .transport_zeroize_i       (transport_zeroize),
         .secure_enable_i           (secure_enable_i),
         .fatal_latched_i           (fatal_latched_i),
-        .request_valid_i           (request_valid),
-        .request_accept_o          (request_accept),
+        .request_valid_i           (guarded_request_valid),
+        .request_accept_o          (guarded_request_accept),
         .request_opcode_i          (request_opcode),
         .request_flags_i           (request_flags),
         .request_transaction_id_i  (request_transaction_id),
         .request_payload_len_i     (request_payload_len),
         .request_crc32_i           (request_crc32),
-        .request_error_i           (request_error),
-        .request_error_code_i      (request_error_code),
-        .request_payload_rd_addr_o (request_payload_rd_addr),
+        .request_error_i           (guarded_request_error),
+        .request_error_code_i      (guarded_request_error_code),
+        .request_payload_rd_addr_o (endpoint_payload_rd_addr),
         .request_payload_rd_data_i (request_payload_rd_data),
         .tx_frame_ready_i          (tx_frame_ready),
         .tx_frame_consumed_i       (tx_frame_consumed),
