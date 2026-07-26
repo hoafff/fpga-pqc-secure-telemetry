@@ -28,10 +28,8 @@ module tb_primer1_telemetry_tx;
     logic [15:0] error_code;
 
     /* Byte 0 is the left-most byte below. */
-    localparam logic [511:0] EXPECTED_PACKET = 512'h
-        50510103000000180102030418191a1b1c1d1e1f00180100
-        12a62bb1d21fb4838266123691f2a90c7b2f1ad98cd77349
-        ceef16213c2d0845608d8cb1c8732851;
+    localparam logic [511:0] EXPECTED_PACKET =
+        512'h50510103000000180102030418191a1b1c1d1e1f0018010012a62bb1d21fb4838266123691f2a90c7b2f1ad98cd77349ceef16213c2d0845608d8cb1c8732851;
 
     primer1_telemetry_tx #(
         .SYS_CLK_HZ(1_000_000),
