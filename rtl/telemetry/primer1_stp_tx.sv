@@ -186,6 +186,22 @@ module primer1_stp_tx (
                     packet_q[i] <= 8'h00;
             end
 
+            /*
+             * Ascon is a streaming producer.  A full 16-byte plaintext block can
+             * be emitted while this wrapper is still feeding later plaintext
+             * bytes.  Capture every accepted output beat for the entire active
+             * transaction; waiting until ST_WAIT_CRYPTO would drop early blocks.
+             */
+            if (core_out_valid && (state_q != ST_IDLE)) begin
+                if (ciphertext_index_q < TELEMETRY_BYTES) begin
+                    packet_q[STP_HEADER_BYTES + ciphertext_index_q] <= core_out_data;
+                    ciphertext_index_q <= ciphertext_index_q + 1'b1;
+                end else begin
+                    error_valid_o <= 1'b1;
+                    error_code_o <= ERR_ASCON_LENGTH;
+                end
+            end
+
             if (core_error_valid && (state_q != ST_IDLE)) begin
                 state_q <= ST_IDLE;
                 sample_q <= '0;
@@ -274,14 +290,6 @@ module primer1_stp_tx (
                     end
 
                     ST_WAIT_CRYPTO: begin
-                        if (core_out_valid) begin
-                            if (ciphertext_index_q < TELEMETRY_BYTES) begin
-                                packet_q[STP_HEADER_BYTES + ciphertext_index_q] <=
-                                    core_out_data;
-                                ciphertext_index_q <= ciphertext_index_q + 1'b1;
-                            end
-                        end
-
                         if (core_tag_valid) begin
                             for (i = 0; i < TAG_BYTES; i = i + 1)
                                 packet_q[STP_HEADER_BYTES + TELEMETRY_BYTES + i] <=
@@ -338,6 +346,10 @@ module primer1_stp_tx (
             assert (retained_len_o == 7'd64)
                 else $error("primer1_stp_tx: retained packet length changed");
         end
+        if (rst_ni && core_out_valid) begin
+            assert (ciphertext_index_q < TELEMETRY_BYTES)
+                else $error("primer1_stp_tx: ciphertext overflow");
+        end
         if (rst_ni && core_tag_valid) begin
             assert (ciphertext_index_q == TELEMETRY_BYTES)
                 else $error("primer1_stp_tx: tag arrived before all ciphertext bytes");
@@ -348,4 +360,7 @@ module primer1_stp_tx (
         end
     end
 `endif
+
+    logic unused_core_out_last;
+    always_comb unused_core_out_last = core_out_last;
 endmodule
