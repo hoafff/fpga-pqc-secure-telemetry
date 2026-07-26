@@ -14,7 +14,8 @@ module tb_fpst_btp_spi_slave;
     logic link_err_v; logic [15:0] link_err;
     reg [7:0] req[0:31]; reg [7:0] rsp[0:31];
     integer i;
-    always #18.5 clk=~clk; // 27 MHz
+    localparam [7:0] OP_PING = 8'h7F;
+    always #18.5 clk=~clk; // approximately 27 MHz
 
     fpst_btp_spi_slave dut(
         .sys_clk_i(clk),.rst_ni(rst_n),.zeroize_i(zeroize),
@@ -56,7 +57,7 @@ module tb_fpst_btp_spi_slave;
     task build_ping(input [15:0] txid);
         reg [31:0] c;
         begin
-            req[0]=8'hA5; req[1]=8'h5A; req[2]=8'h01; req[3]=8'h01;
+            req[0]=8'hA5; req[1]=8'h5A; req[2]=8'h01; req[3]=OP_PING;
             req[4]=8'h00; req[5]=8'h00;
             req[6]=txid[15:8]; req[7]=txid[7:0]; req[8]=0; req[9]=0;
             c=32'hFFFFFFFF;
@@ -74,18 +75,25 @@ module tb_fpst_btp_spi_slave;
         build_ping(16'h1234);
         cs_n=0; #300; for(i=0;i<14;i=i+1) spi_tx_byte(req[i]); #300; cs_n=1;
         fork begin wait(cmd_valid); end begin #200000; $fatal(1,"no decoded request"); end join_any disable fork;
-        if(cmd_opcode!==8'h01||cmd_txid!==16'h1234||cmd_len!==0)
+        if(cmd_opcode!==OP_PING||cmd_txid!==16'h1234||cmd_len!==0)
             $fatal(1,"decoded request mismatch");
 
-        // Stage generic success payload 0000, then release command and submit response.
+        // Stage generic success payload 0000, then release command.
         rsp_we=1;rsp_addr=0;rsp_data=0;@(posedge clk);rsp_addr=1;@(posedge clk);rsp_we=0;
         cmd_ready=1;@(posedge clk);cmd_ready=0;
-        wait(rsp_ready); rsp_opcode=8'h01;rsp_flags=0;rsp_txid=16'h1234;rsp_len=2;rsp_valid=1;
-        @(posedge clk); while(!rsp_ready) @(posedge clk); rsp_valid=0;
+
+        // Wait until response builder can accept a response. valid is held for
+        // one complete ready/valid transfer only; waiting for ready AFTER that
+        // transfer would deadlock because ready correctly falls while cached.
+        wait(rsp_ready);
+        rsp_opcode=OP_PING;rsp_flags=0;rsp_txid=16'h1234;rsp_len=2;rsp_valid=1;
+        @(posedge clk); #1;
+        rsp_valid=0;
+
         fork begin wait(!irq_n); end begin #200000;$fatal(1,"irq not asserted");end join_any disable fork;
 
         cs_n=0; #300; for(i=0;i<16;i=i+1) spi_rx_byte(rsp[i]); #300; cs_n=1;
-        if(rsp[0]!==8'hA5||rsp[1]!==8'h5A||rsp[2]!==8'h01||rsp[3]!==8'h01||
+        if(rsp[0]!==8'hA5||rsp[1]!==8'h5A||rsp[2]!==8'h01||rsp[3]!==OP_PING||
            rsp[4]!==8'h01||rsp[5]!==8'h00||rsp[6]!==8'h12||rsp[7]!==8'h34||
            rsp[8]!==0||rsp[9]!==2||rsp[10]!==0||rsp[11]!==0)
             $fatal(1,"response header/payload mismatch");
