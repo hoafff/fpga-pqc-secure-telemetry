@@ -28,7 +28,17 @@ run_test tb_ascon_aead_decrypt \
     "${ASCON_SOURCES[@]}" \
     "${ROOT_DIR}/tb/integration/tb_ascon_aead_decrypt.sv"
 
-# Compile the complete board target as a hierarchy/syntax gate.  This catches
+# Cross-check the receiver against the already-qualified Primer #1 STP sender.
+# The test covers authenticated plaintext release, replay/gap precheck, bad-tag
+# quarantine and the three-consecutive-auth-failure fatal threshold.
+run_test tb_primer2_stp_rx \
+    "${ROOT_DIR}/rtl/transport/fpst_btp_pkg.sv" \
+    "${ASCON_SOURCES[@]}" \
+    "${ROOT_DIR}/rtl/telemetry/primer1_stp_tx.sv" \
+    "${ROOT_DIR}/rtl/telemetry/primer2_stp_rx.sv" \
+    "${ROOT_DIR}/tb/integration/tb_primer2_stp_rx.sv"
+
+# Compile the complete board target as a hierarchy/syntax gate. This catches
 # missing source-manifest entries and integration port drift even before a
 # device-specific Gowin build is available.
 mapfile -t DEPLOY_SOURCES < <(
@@ -41,4 +51,4 @@ iverilog -g2012 -Wall -s kiwi_primer20k_fpst_rx_top \
     -o "${BUILD_DIR}/kiwi_primer20k_fpst_rx_top.vvp" \
     "${DEPLOY_SOURCES[@]}"
 
-echo "PASS: Primer #2 decrypt regression and deployment hierarchy compile completed"
+echo "PASS: Primer #2 decrypt/STP policy regressions and deployment hierarchy compile completed"
