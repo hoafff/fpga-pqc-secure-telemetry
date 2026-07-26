@@ -3,6 +3,7 @@
 #include "fpst_primer1.h"
 #include "fpst_session.h"
 #include "fpst_profile.h"
+#include "fpst_telemetry.h"
 
 #include <SN32F400.h>
 
@@ -14,7 +15,10 @@
 static fpst_platform_t g_platform;
 static fpst_fpga_link_t g_link;
 static fpst_session_manager_t g_session;
+static fpst_csprng_t g_csprng;
+static fpst_telemetry_source_t g_telemetry;
 static bool g_link_initialized;
+static bool g_rng_initialized;
 
 static void console(const char *s) {
     fpst_sn32f407_uart0_write_cstr(s);
@@ -35,6 +39,11 @@ static void console_hex32(uint32_t value) {
         console_hex_nibble((uint8_t)((value >> shift) & 0x0Fu));
 }
 
+static void console_hex64(uint64_t value) {
+    console_hex32((uint32_t)(value >> 32));
+    console_hex32((uint32_t)value);
+}
+
 static void print_result(fpst_result_t rc) {
     if (rc == FPST_OK) {
         console("OK\r\n");
@@ -45,7 +54,9 @@ static void print_result(fpst_result_t rc) {
         console_hex16(g_link.last_remote_detail);
         console("\r\n");
     } else {
-        console("ERR\r\n");
+        console("ERR code=0x");
+        console_hex32((uint32_t)rc);
+        console("\r\n");
     }
 }
 
@@ -55,9 +66,85 @@ static bool require_link(void) {
     return false;
 }
 
+static void report_rng(void) {
+    console(g_rng_initialized && fpst_sn32f407_csprng_ready()
+                ? "rng=ADC_P20-conditioned READY (research/competition)\r\n"
+                : "rng=BLOCKED; check ADC_P20/potentiometer entropy\r\n");
+}
+
+static void handle_discover(void) {
+    if (!require_link()) return;
+    char id[FPST_PRIMER1_DEVICE_ID_BYTES + 1u];
+    uint32_t state = 0u;
+    fpst_result_t rc = fpst_primer1_get_device_id(&g_link, id);
+    if (rc != FPST_OK) {
+        print_result(rc);
+        return;
+    }
+    rc = fpst_primer1_get_status(&g_link, &state);
+    if (rc != FPST_OK) {
+        print_result(rc);
+        return;
+    }
+    console("primer1=");
+    console(id);
+    console(" state=0x");
+    console_hex32(state);
+    console("\r\n");
+}
+
+static void handle_selftest(void) {
+    if (!require_link()) return;
+    static const uint8_t token[] = {'S','E','L','F','T','E','S','T'};
+    char id[FPST_PRIMER1_DEVICE_ID_BYTES + 1u];
+    uint32_t state = 0u;
+
+    fpst_result_t rc = fpst_primer1_ping(&g_link, token, sizeof(token));
+    if (rc == FPST_OK) rc = fpst_primer1_get_device_id(&g_link, id);
+    if (rc == FPST_OK) rc = fpst_primer1_get_status(&g_link, &state);
+    if (rc == FPST_OK && (state & FPST_DEVICE_STATE_FATAL) != 0u)
+        rc = FPST_ERR_STATE;
+
+    console(rc == FPST_OK ? "selftest=PASS\r\n" : "selftest=FAIL ");
+    if (rc != FPST_OK) print_result(rc);
+}
+
+static void handle_telemetry(void) {
+    if (!require_link()) return;
+    if (g_session.state != FPST_SESSION_ACTIVE) {
+        console("BLOCKED: no active session\r\n");
+        return;
+    }
+
+    uint16_t adc = 0u;
+    fpst_result_t rc = fpst_sn32f407_adc_read(&adc);
+    uint8_t sample[FPST_STP_SAMPLE_BYTES];
+    if (rc == FPST_OK) {
+        rc = fpst_telemetry_build_adc_demo(&g_telemetry,
+                                            fpst_sn32f407_uptime_ms64(),
+                                            adc, sample);
+    }
+
+    fpst_primer1_telemetry_result_t result;
+    if (rc == FPST_OK)
+        rc = fpst_primer1_telemetry_tx_sample(&g_link, sample, &result);
+    fpst_secure_zero(sample, sizeof(sample));
+
+    if (rc != FPST_OK) {
+        print_result(rc);
+        return;
+    }
+
+    console("telemetry=RETAINED seq=0x");
+    console_hex64(result.sequence);
+    console(" bytes=0x");
+    console_hex16(result.packet_len);
+    console("; release requires receiver commit acknowledgement\r\n");
+}
+
 static void handle_command(const char *line) {
     if (strcmp(line, "help") == 0) {
-        console("help wiring ping id status error key-status pqc-status zeroize reset\r\n");
+        console("help wiring adc rng-status rng-reseed ping discover selftest id status error key-status pqc-status telemetry fault zeroize reset\r\n");
         return;
     }
     if (strcmp(line, "wiring") == 0) {
@@ -66,10 +153,41 @@ static void handle_command(const char *line) {
                     : "wiring=UNVERIFIED\r\n");
         return;
     }
+    if (strcmp(line, "adc") == 0) {
+        uint16_t value = 0u;
+        const fpst_result_t rc = fpst_sn32f407_adc_read(&value);
+        if (rc == FPST_OK) {
+            console("ADC_P20=0x");
+            console_hex16(value);
+            console("\r\n");
+        } else {
+            print_result(rc);
+        }
+        return;
+    }
+    if (strcmp(line, "rng-status") == 0) {
+        report_rng();
+        return;
+    }
+    if (strcmp(line, "rng-reseed") == 0) {
+        fpst_sn32f407_csprng_zeroize();
+        memset(&g_csprng, 0, sizeof(g_csprng));
+        g_rng_initialized = fpst_sn32f407_csprng_init(&g_csprng) == FPST_OK;
+        report_rng();
+        return;
+    }
     if (strcmp(line, "ping") == 0) {
         if (!require_link()) return;
         static const uint8_t token[] = {'S','N','3','2'};
         print_result(fpst_primer1_ping(&g_link, token, sizeof(token)));
+        return;
+    }
+    if (strcmp(line, "discover") == 0) {
+        handle_discover();
+        return;
+    }
+    if (strcmp(line, "selftest") == 0) {
+        handle_selftest();
         return;
     }
     if (strcmp(line, "id") == 0) {
@@ -135,9 +253,28 @@ static void handle_command(const char *line) {
         }
         return;
     }
+    if (strcmp(line, "telemetry") == 0) {
+        handle_telemetry();
+        return;
+    }
+    if (strcmp(line, "fault") == 0) {
+        console("session_state=0x");
+        console_hex16((uint16_t)g_session.state);
+        console(" remote_status=0x");
+        console_hex16(g_link.last_remote_status);
+        console(" remote_detail=0x");
+        console_hex16(g_link.last_remote_detail);
+        console(" ");
+        report_rng();
+        return;
+    }
     if (strcmp(line, "zeroize") == 0) {
         if (!require_link()) return;
-        print_result(fpst_session_zeroize(&g_session));
+        const fpst_result_t rc = fpst_session_zeroize(&g_session);
+        fpst_sn32f407_csprng_zeroize();
+        memset(&g_csprng, 0, sizeof(g_csprng));
+        g_rng_initialized = false;
+        print_result(rc);
         return;
     }
     if (strcmp(line, "reset") == 0) {
@@ -162,11 +299,19 @@ int main(void) {
     console("\r\nFPST SN32F407F control firmware\r\n");
     console("baseline=FPST-SYS-SPEC-001-v1.1 Primer1-BTP-v1\r\n");
     console("host=UART0-115200 link=SPI0-1MHz-mode0-direct-BTP\r\n");
+    console("entropy=EVK ADC_P20/AIN0 + health-check + VN + SHAKE256\r\n");
+
+    fpst_telemetry_source_init(&g_telemetry, 1u);
+    memset(&g_csprng, 0, sizeof(g_csprng));
+    g_rng_initialized = fpst_sn32f407_csprng_init(&g_csprng) == FPST_OK;
+    report_rng();
 
     if (!fpst_sn32f407_link_wiring_verified()) {
         console("WARNING: MCU-to-Primer harness is not yet continuity-verified.\r\n");
         console("BTP SPI transactions are intentionally blocked.\r\n");
         g_link_initialized = false;
+        memset(&g_session, 0, sizeof(g_session));
+        g_session.state = FPST_SESSION_NO_KEY;
     } else {
         rc = fpst_fpga_link_init(&g_link, &g_platform);
         if (rc == FPST_OK) rc = fpst_session_init(&g_session, &g_link);
@@ -176,7 +321,7 @@ int main(void) {
 
     console("type 'help' followed by Enter\r\n> ");
 
-    char line[40];
+    char line[48];
     size_t used = 0u;
     for (;;) {
         uint8_t ch;
