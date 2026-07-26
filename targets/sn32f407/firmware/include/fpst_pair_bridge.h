@@ -7,14 +7,28 @@
 typedef struct {
     fpst_session_manager_t *tx_session;
     fpst_fpga_link_t *rx_link;
+    const fpst_platform_t *tx_platform;
+    const fpst_platform_t *rx_platform;
+    bool routed_shared_link;
     bool retained_valid;
     uint64_t retained_sequence;
     uint8_t retained_packet[FPST_STP_RETAINED_BYTES];
 } fpst_pair_bridge_t;
 
+/* Independent-link form used by host/integration environments. */
 fpst_result_t fpst_pair_bridge_init(fpst_pair_bridge_t *bridge,
                                     fpst_session_manager_t *tx_session,
                                     fpst_fpga_link_t *rx_link);
+
+/*
+ * Low-RAM board form: Primer #1 and Primer #2 time-share tx_session->link and
+ * its buffers; the bridge rebinds the physical platform before each operation.
+ */
+fpst_result_t fpst_pair_bridge_init_routed(
+    fpst_pair_bridge_t *bridge,
+    fpst_session_manager_t *tx_session,
+    const fpst_platform_t *primer1_platform,
+    const fpst_platform_t *primer2_platform);
 
 /*
  * Generate exactly one STP telemetry packet on Primer #1, forward the retained
