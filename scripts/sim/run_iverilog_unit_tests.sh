@@ -117,4 +117,10 @@ run_test tb_primer1_deployment_btp \
     "${DEPLOYMENT_SOURCES[@]}" \
     "${ROOT_DIR}/tb/integration/tb_primer1_deployment_btp.sv"
 
-echo "PASS: all RTL unit and integration tests completed"
+run_test tb_primer1_deployment_session_tx \
+    "${DEPLOYMENT_SOURCES[@]}" \
+    "${ROOT_DIR}/tb/integration/tb_primer1_deployment_session_tx.sv"
+
+bash "${ROOT_DIR}/scripts/synth/check_kiwi_primer20k_deployment_yosys.sh"
+
+echo "PASS: all RTL unit, integration and Primer #1 deployment synthesis tests completed"
