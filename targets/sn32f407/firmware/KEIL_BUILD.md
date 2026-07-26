@@ -47,7 +47,7 @@ targets/sn32f407/firmware/include
 targets/sn32f407/firmware/platform/sn32f407
 ```
 
-The active BTP build uses CRC-32/ISO-HDLC. `fpst_crc16.*` and the old A1/A2 memory-transport code are legacy artifacts and SHALL NOT be added to the Keil target.
+The active BTP build uses CRC-32/ISO-HDLC. The obsolete A1/A2 memory transport and CRC-16 files have been removed from the active source tree.
 
 ## 3. Compiler/output settings
 
@@ -119,7 +119,7 @@ The active frame uses CRC-32/ISO-HDLC, not CRC-16.
 
 ## 6. Harness guard
 
-The MCU-side connector map is now verified from the organizer schematic, but the exact Primer #1 connector pins are not yet locked.
+The MCU-side connector map is verified from the organizer schematic, but the exact Primer #1 connector pins are not yet locked.
 
 Therefore keep:
 
@@ -154,13 +154,17 @@ Bring-up commands:
 help
 wiring
 ping
-caps
+device
 status
+error
+clear
 zeroize
 reset
 ```
 
-`ping/caps/status` become active only when the matching Primer #1 BTP bitstream is loaded and the harness guard is set from physical evidence.
+The corresponding frozen BTP operations are `PING=0x7F`, `GET_DEVICE_ID=0x01`, `GET_STATUS=0x02`, `GET_ERROR=0x03` and `CLEAR_ERROR=0x04`.
+
+These link commands become active only when the matching Primer #1 BTP bitstream is loaded and the harness guard is set from physical evidence.
 
 ## 8. Definition of board-loadable / hardware-verified
 
@@ -171,6 +175,6 @@ The MCU source is tied to the official SN32F407F DFP and can be built into an MC
 3. continuity check passes;
 4. logic analyzer confirms Mode 0 / MSB-first / 1 MHz;
 5. bad BTP CRC is rejected;
-6. `PING`, `GET_CAPS`, key load/commit/activate, telemetry TX and zeroize pass;
+6. `PING`, `GET_DEVICE_ID`, `GET_STATUS`, key load/commit/activate, telemetry TX and zeroize pass;
 7. response-loss retry does not repeat a non-idempotent operation;
 8. Gowin P&R/timing and SN32F407F programming evidence are archived.
