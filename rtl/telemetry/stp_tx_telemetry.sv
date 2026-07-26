@@ -3,7 +3,7 @@
 // Packet retained here is exactly:
 //   HEADER[24] || CIPHERTEXT[24] || TAG[16]
 // The sequence counter is owned by the session block and is committed by the
-// BTP endpoint only after the complete BTP response transaction is consumed.
+// BTP endpoint only after receiver commit policy authorizes the next packet.
 module stp_tx_telemetry (
     input  logic         clk_i,
     input  logic         rst_ni,
@@ -126,7 +126,7 @@ module stp_tx_telemetry (
     assign packet_length_o = 7'd64;
     assign packet_data_o = (packet_addr_i < 7'd64) ? packet_mem[packet_addr_i] : 8'h00;
 
-    ascon_aead_encrypt u_encrypt (
+    ascon_aead_core u_aead_core (
         .clk_i          (clk_i),
         .rst_ni         (rst_ni),
         .zeroize_i      (zeroize_i),
