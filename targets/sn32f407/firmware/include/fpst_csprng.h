@@ -6,11 +6,15 @@
 /*
  * Explicit entropy boundary for firmware cryptographic operations.
  *
- * This abstraction does not claim that a provider is cryptographically secure;
- * the board/platform integration must supply and qualify the actual CSPRNG.
- * Callers must never substitute rand(), timestamps, counters, ADC noise, or a
- * deterministic test generator in a release image without an approved entropy
- * design and verification evidence.
+ * A provider is accepted here only after its board/platform integration has
+ * applied the project entropy policy. The SN32F407 competition profile uses
+ * fpst_entropy_rng: repeated AIN0 measurements -> online health checks ->
+ * Von-Neumann extraction -> SHAKE256 conditioning. Raw ADC samples, rand(),
+ * timestamps, counters or deterministic test generators must never be wired
+ * directly to this interface in a release/demo image.
+ *
+ * This project profile is a research/competition CSPRNG and does not claim a
+ * certified production TRNG or quantified production min-entropy.
  */
 typedef fpst_result_t (*fpst_csprng_fill_fn)(void *ctx,
                                              uint8_t *out,
