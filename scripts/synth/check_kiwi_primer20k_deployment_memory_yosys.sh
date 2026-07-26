@@ -26,6 +26,7 @@ yosys -ql "${LOG_FILE}" -p "
         rtl/ascon/ascon_round.sv \
         rtl/ascon/ascon_permutation.sv \
         rtl/ascon/ascon_aead_encrypt.sv \
+        rtl/ascon/ascon_aead_core.sv \
         rtl/common/simple_dual_port_ram_2048x8.sv \
         rtl/protocol/btp_spi_slave.sv \
         rtl/protocol/btp_response_builder.sv \
