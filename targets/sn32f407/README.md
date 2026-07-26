@@ -2,7 +2,7 @@
 
 ## 1. Vai trò theo FPST v1.1
 
-SN32F407F là tầng điều khiển firmware và cầu nối PC–FPGA:
+SN32F407F là trusted orchestrator và cầu PC–FPGA:
 
 ```text
 PC host
@@ -11,19 +11,17 @@ PC host
    v
 SN32F407F
    |-- ML-KEM-512 high-level control
-   |-- SHAKE256/KDF
-   |-- session staging / atomic commit / zeroize
-   |-- SPI0 mailbox transport to Primer #1
-   |-- telemetry/status forwarding
+   |-- SHAKE256 / KDF
+   |-- telemetry source
+   |-- session/key orchestration
+   |-- BTP SPI master
    v
 Kiwi Primer 20K #1
 ```
 
 Không nhầm SONiX `SN32F407F` với STMicroelectronics `STM32F407`.
 
-## 2. Organizer hardware/SDK facts now verified
-
-From the organizer material uploaded in `hoafff/tai_lieu_bo_mach`:
+## 2. Organizer hardware/SDK facts
 
 ```text
 Device        : SN32F407F
@@ -31,88 +29,149 @@ CPU           : Cortex-M0
 Flash         : 32 KiB
 RAM           : 8 KiB
 Default HCLK  : 12 MHz IHRC
-Keil          : MDK 5+ / ARM Compiler 6 examples
+Keil          : MDK 5+; ARM Compiler 6 compatible
 DFP supplied  : SONiX.SN32F4_DFP.1.1.1.pack
 Programmer    : SN-LINK-V3
+Board         : 32F407_EVK_V1.0
 ```
 
-The official PFPA table confirms:
-
-```text
-SPI0 SCK  = P0.0
-SPI0 SEL  = P0.1
-SPI0 MISO = P0.2
-SPI0 MOSI = P0.3
-
-UART0 TX  = P0.10
-UART0 RX  = P0.11
-```
+The organizer EVK schematic closes the MCU connector routing that was previously TBC.
 
 ## 3. Current implementation truth
 
+### Portable firmware core — implemented and CI tested
+
 ```text
-CURRENT / HOST-VERIFIED:
-  portable C11 firmware core
-  SHAKE256 + FPST v1.1 KDF
-  CRC-16 and mailbox frame codec
-  SPI memory-burst header codec
-  SPI-mailbox command client
-  bounded timeout/retry/recovery
-  session staging, atomic commit and zeroize
-  mock Primer #1 integration tests
-
-CURRENT / SONIX-PORT IMPLEMENTED:
-  SysTick millisecond clock
-  UART0 115200 polling console
-  SPI0 master Mode 0 at 3 MHz
-  manual CS on P0.1
-  READY/IRQ/RESET_N/ZEROIZE_N GPIO callbacks
-  CRC-protected A1/A2 SPI memory bursts
-  board bring-up main/CLI
-
-STILL OPEN BEFORE MCU<->PRIMER HARDWARE IS VERIFIED:
-  physical jumper/header mapping to Primer #1
-  matching Primer #1 SPI slave/mailbox/CDC RTL
-  full ML-KEM/INTT orchestration
-  final STP TX retained-packet integration
+SHAKE256
+FPST v1.1 KDF
+CRC-32/ISO-HDLC
+BTP frame encode/decode
+BTP request transaction -> IRQ wait -> response transaction
+transaction-ID retry behavior
+KEY_LOAD_BEGIN/CHUNK/COMMIT/ACTIVATE
+TX commit-ack relay profile
+bounded timeout/recovery
+portable mock-endpoint tests
 ```
 
-The firmware can now be built for the real `SN32F407F` using the official DFP. SPI mailbox operations remain deliberately blocked while the external harness guard is zero.
+### SONiX hardware port — implemented
 
-## 4. Selected implementation profile
+```text
+SysTick 1 ms
+UART0 115200 8N1
+SPI0 master, Mode 0, 1 MHz, MSB first
+manual Primer CS
+onboard W25Q16 CE forced inactive
+BUSY / IRQ_N / RESET_N / ZEROIZE_N GPIO
+board bring-up CLI
+```
 
-- SN32F407F = SPI master.
-- Primer #1 = SPI slave.
-- SPI Mode 0, **3 MHz**, MSB first.
-- PC link = UART0 115200 8N1.
-- READY, IRQ, RESET_N and ZEROIZE_N sidebands.
-- CRC-16/CCITT-FALSE on both mailbox frames and physical SPI bursts.
-- 16-bit transaction IDs for retry deduplication.
-- 20/50/500 ms timeout classes and two retries.
+### Still physical/open
 
-The previous 4 MHz estimate was corrected to 3 MHz after reading the organizer SDK: default HCLK is 12 MHz and SPI0 supports even divisors, so divisor 4 gives 3 MHz without changing the clock/UART profile.
+```text
+exact Primer #1 connector/package pin selection
+real jumper harness continuity check
+logic-analyzer capture
+Gowin .cst for integrated Primer system
+full INTT/ML-KEM offload
+```
 
-Current contract:
+## 4. Verified EVK V1.0 connector profile
 
-- [`FPST-MCU-FPGA-LINK-001 v1.1`](../../docs/interfaces/FPST-MCU-FPGA-LINK-001-v1.1.md)
-- [`FPST v1.1 implementation delta register`](../../docs/spec-delta/FPST-v1.1-implementation-decisions.md)
+### DB_UART
 
-Historical v1.0 of the link profile is retained only to show why/where decisions changed.
+```text
+P3.1 = UART0_TX
+P3.2 = UART0_RX
+PFPA UART0 = 0x0A
+```
 
-## 5. Firmware layout
+### DB_SPI
+
+```text
+J12.1 P1.8 = onboard W25Q16 CE#  -> keep HIGH; NOT FPGA CS
+J12.2 P1.0 = SPI0_SCK            -> Primer SCLK
+J12.3 P1.1 = SPI0_MISO           <- Primer MISO
+J12.4 P1.2 = SPI0_MOSI           -> Primer MOSI
+J12.5      = GND                  <-> common GND
+```
+
+Selected SPI PFPA:
+
+```text
+PFPA SPI0 = 0x6A
+```
+
+The data signals use the P1.x route. Hardware SEL is routed away/disabled because Primer CS is a manual GPIO.
+
+### J7 sidebands
+
+```text
+J7.1 P2.1 = FPGA_CS_N       output, active low
+J7.2 P2.2 = FPGA_BUSY       input,  active high
+J7.3 P2.3 = FPGA_IRQ_N      input,  active low
+J7.4 P2.8 = FPGA_RESET_N    output, active low
+J7.5 P2.9 = FPGA_ZEROIZE_N  output, active low
+```
+
+This mapping avoids selecting the onboard Flash while Primer #1 is active on the shared SCK/MOSI/MISO signals.
+
+## 5. Active BTP profile
+
+```text
+SPI           = Mode 0
+word          = 8 bit
+order         = MSB first
+initial SCLK  = 1 MHz
+MCU           = master
+Primer #1     = slave
+max payload   = 1024 bytes
+CRC           = CRC-32/ISO-HDLC
+```
+
+One request/response command exchange is:
+
+```text
+CS low  -> send one complete BTP request -> CS high
+wait IRQ_N low
+CS low  -> read one complete BTP response -> CS high
+```
+
+BTP frame:
+
+```text
+A5 5A
+version=01
+opcode
+flags
+reserved=00
+transaction_id[2] BE
+payload_len[2] BE
+payload[N]
+crc32[4] BE
+```
+
+The earlier A1/A2 memory-burst + CRC-16 mailbox profile is obsolete and has been removed from the active firmware build.
+
+## 6. Firmware layout
 
 ```text
 targets/sn32f407/firmware/
 ├── include/
 │   ├── fpst_profile.h
-│   ├── fpst_spi_mem.h
-│   └── ... portable interfaces
+│   ├── fpst_crc32.h
+│   ├── fpst_transport.h
+│   ├── fpst_fpga_link.h
+│   ├── fpst_session.h
+│   └── ...
 ├── src/
+│   ├── fpst_crc32.c
 │   ├── fpst_sha3.c
 │   ├── fpst_kdf.c
-│   ├── fpst_spi_mem.c
+│   ├── fpst_transport.c
 │   ├── fpst_fpga_link.c
-│   └── ...
+│   ├── fpst_session.c
+│   └── fpst_platform.c
 ├── tests/
 │   └── test_firmware_core.c
 ├── platform/sn32f407/
@@ -124,9 +183,9 @@ targets/sn32f407/firmware/
 └── CMakeLists.txt
 ```
 
-Only `platform/sn32f407/` may depend directly on SONiX registers/device headers.
+Only `platform/sn32f407/` depends directly on SONiX device registers/headers.
 
-## 6. Host verification
+## 7. Host verification
 
 ```bash
 cmake -S targets/sn32f407/firmware \
@@ -137,16 +196,39 @@ ctest --test-dir build/sn32f407-firmware-host --output-on-failure
 
 Tests cover:
 
-- CRC-16/CCITT-FALSE KAT;
+- CRC-32/ISO-HDLC check value `CBF43926`;
 - SHAKE256 KAT;
-- FPST KDF and big-endian `session_id`;
-- mailbox frame encode/decode and corruption rejection;
-- A1/A2 SPI memory-burst header CRC;
-- mailbox transaction flow;
-- derive → stage → commit;
-- out-of-band and in-band zeroize.
+- FPST KDF with big-endian session ID;
+- BTP v1.1 encode/decode and corruption rejection;
+- two-transaction command client behavior;
+- derive → key-load begin/chunk/commit → activate;
+- TX commit acknowledgement;
+- out-of-band zeroize.
 
-## 7. KDF inherited from FPST v1.1
+## 8. Session flow
+
+```text
+ML-KEM shared_secret[32]
+       |
+       v
+SHAKE256 FPST-KDF-V1
+       |
+       +--> K_TX[16]
+       +--> NP_TX[8]
+       |
+       v
+KEY_LOAD_BEGIN
+KEY_LOAD_CHUNK
+KEY_LOAD_COMMIT
+SESSION_ACTIVATE
+       |
+       v
+Primer #1 owns active TX session + sequence
+```
+
+The ML-KEM shared secret itself is never sent to Ascon/Primer #1.
+
+KDF:
 
 ```text
 D = ASCII("FPST-KDF-V1")
@@ -154,55 +236,51 @@ K_TX  = SHAKE256(D || 01 || shared_secret[32] || BE32(session_id), 16)
 NP_TX = SHAKE256(D || 02 || shared_secret[32] || BE32(session_id),  8)
 ```
 
-The ML-KEM shared secret is never sent directly to Ascon. Temporary secret/KDF/staging buffers are explicitly wiped and must not be logged.
+## 9. Telemetry / commit flow
 
-## 8. MCU-side physical profile
+The MCU sends only the 24-byte telemetry record in `TELEMETRY_TX_SAMPLE`. Primer #1 builds/encrypts the STP packet and returns the retained packet bytes.
 
-Verified peripheral routes:
+After Primer #2 authenticates/releases the packet, the MCU relays the committed sequence to Primer #1 using the repository `TX_COMMIT_ACCEPTED` profile command. Only then does Primer #1 clear the retained packet and increment its sequence.
 
-```text
-P0.0  SPI0_SCK
-P0.1  FPGA_SPI_CS_N
-P0.2  SPI0_MISO
-P0.3  SPI0_MOSI
-P0.10 UART0_TX
-P0.11 UART0_RX
-```
+The profile extension is documented in:
 
-Proposed ordinary-GPIO sidebands:
+- [`FPST-MCU-FPGA-LINK-001-v1.1.md`](../../docs/interfaces/FPST-MCU-FPGA-LINK-001-v1.1.md)
+- [`FPST-v1.1-implementation-decisions.md`](../../docs/spec-delta/FPST-v1.1-implementation-decisions.md)
 
-```text
-P1.4  FPGA_READY
-P1.5  FPGA_IRQ
-P1.6  FPGA_RESET_N
-P1.7  FPGA_ZEROIZE_N
-```
+## 10. Harness safety gate
 
-`board_profile.h` therefore separates:
+`board_profile.h` deliberately keeps:
 
 ```c
-FPST_SN32F407_DEVICE_VERIFIED      = 1
-FPST_SN32F407_MCU_PINMUX_VERIFIED = 1
-FPST_SN32F407_HARNESS_VERIFIED    = 0
+#define FPST_SN32F407_DEVICE_VERIFIED       1
+#define FPST_SN32F407_MCU_PINMUX_VERIFIED  1
+#define FPST_SN32F407_EVK_HEADER_VERIFIED  1
+#define FPST_SN32F407_HARNESS_VERIFIED     0
 ```
 
-The last flag stays zero until the exact EVK header pins and Primer #1 pins are continuity-checked and the Primer `.cst` is frozen.
+With the last flag at `0`, firmware boots and UART works, but BTP SPI transactions are intentionally rejected with `FPST_ERR_STATE`.
 
-## 9. Build / program
+Do not set it to `1` until:
+
+1. exact Primer #1 physical pins are selected and constrained;
+2. jumper continuity is checked;
+3. common GND and 3.3 V logic are confirmed;
+4. Mode-0/MSB-first/1 MHz is captured on a logic analyzer;
+5. PING/GET_CAPS and bad-CRC tests pass.
+
+## 11. Keil build / program
 
 See [`firmware/KEIL_BUILD.md`](firmware/KEIL_BUILD.md).
-
-The organizer pack provides the required SONiX DFP/startup/flash algorithm. The application source now has a real SN32F407F entry point and UART bring-up CLI.
 
 Expected UART banner:
 
 ```text
 FPST SN32F407F control firmware
 baseline=FPST-SYS-SPEC-001-v1.1
-host=UART0-115200 link=SPI0-3MHz-mode0
+host=UART0-115200 link=BTP-SPI0-1MHz-mode0
 ```
 
-Commands:
+Bring-up commands:
 
 ```text
 help
@@ -214,11 +292,10 @@ zeroize
 reset
 ```
 
-## 10. Remaining work for the full system
+## 12. Remaining MCU/system work
 
-1. Lock physical jumper pins on Primer #1 and EVK; set `FPST_SN32F407_HARNESS_VERIFIED=1` only after measurement.
-2. Implement Primer #1 SPI slave + A1/A2 burst parser + mailbox + CDC.
-3. Connect mailbox opcodes to `ascon_aead_core`, session registers, NTT/INTT and STP TX.
-4. Complete ML-KEM-512 high-level orchestration after NTT/INTT command interface is frozen.
-5. Add PC host application and end-to-end real-hardware tests.
-6. Capture logic-analyzer evidence for CRC, retry, timeout and zeroize behavior.
+1. lock exact Primer #1 connector pins and close the physical harness gate;
+2. add full host commands for actual ML-KEM session establishment/telemetry demo;
+3. integrate Primer #2 receiver commit evidence into `fpst_session_commit_accepted()`;
+4. complete INTT/remaining PQC accelerator hooks;
+5. capture board/timing/logic-analyzer evidence for the competition build.
