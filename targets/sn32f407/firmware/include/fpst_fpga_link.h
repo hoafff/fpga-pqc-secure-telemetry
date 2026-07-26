@@ -82,6 +82,29 @@ typedef enum {
 #define FPST_DEVICE_STATE_SECURE_ENABLE   (1u << 6)
 #define FPST_DEVICE_STATE_FATAL           (1u << 31)
 
+/*
+ * The wire protocol still permits 1024-byte BTP payloads. The SN32F407F has
+ * only 8 KiB SRAM, so its runtime buffers are right-sized to the frozen
+ * Primer #1 command set instead of reserving two full 1038-byte frames.
+ *
+ * Largest request:  PQC_LOAD_POLY = BE16(count) + 256*BE16 = 514 bytes.
+ * Largest response: generic envelope 12 + PQC_READ_POLY 512 = 524 bytes.
+ * Oversized legal-BTP responses are drained and rejected locally; this is a
+ * target memory-capacity limit, not a change to the BTP wire format.
+ */
+#define FPST_LINK_MCU_MAX_REQUEST_PAYLOAD   514u
+#define FPST_LINK_MCU_MAX_RESPONSE_PAYLOAD  524u
+#define FPST_LINK_MCU_BUFFER_PAYLOAD        524u
+#define FPST_LINK_MCU_BUFFER_FRAME \
+    (FPST_FRAME_FIXED_BYTES + FPST_LINK_MCU_BUFFER_PAYLOAD)
+
+_Static_assert(FPST_LINK_MCU_BUFFER_PAYLOAD >= FPST_LINK_MCU_MAX_REQUEST_PAYLOAD,
+               "MCU BTP buffer too small for Primer #1 request set");
+_Static_assert(FPST_LINK_MCU_BUFFER_PAYLOAD >= FPST_LINK_MCU_MAX_RESPONSE_PAYLOAD,
+               "MCU BTP buffer too small for Primer #1 response set");
+_Static_assert(FPST_LINK_MCU_BUFFER_FRAME <= FPST_LINK_MAX_FRAME,
+               "MCU local frame capacity cannot exceed BTP wire maximum");
+
 typedef struct {
     const fpst_platform_t *platform;
     uint16_t next_transaction_id;
@@ -89,8 +112,8 @@ typedef struct {
     uint16_t last_remote_detail;
     uint32_t last_device_state;
     uint32_t last_data_len;
-    uint8_t request_buf[FPST_LINK_MAX_FRAME];
-    uint8_t response_buf[FPST_LINK_MAX_FRAME];
+    uint8_t request_buf[FPST_LINK_MCU_BUFFER_FRAME];
+    uint8_t response_buf[FPST_LINK_MCU_BUFFER_FRAME];
 } fpst_fpga_link_t;
 
 fpst_result_t fpst_fpga_link_init(fpst_fpga_link_t *link,
