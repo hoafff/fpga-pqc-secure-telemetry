@@ -95,6 +95,7 @@ COMMON_ASCON_SOURCES=(
     "${ROOT_DIR}/rtl/ascon/ascon_round.sv"
     "${ROOT_DIR}/rtl/ascon/ascon_permutation.sv"
     "${ROOT_DIR}/rtl/ascon/ascon_aead_encrypt.sv"
+    "${ROOT_DIR}/rtl/ascon/ascon_aead_core.sv"
 )
 
 run_test tb_ascon_aead_encrypt \
