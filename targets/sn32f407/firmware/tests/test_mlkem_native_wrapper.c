@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "fpst_mlkem512_wrapper.h"
+#include "fpst_mlkem_session.h"
 #include "fpst_primer1.h"
 
 /* Pure-C reference instance built from the same pinned mlkem-native v1.0.0. */
@@ -31,7 +32,17 @@ typedef struct {
     unsigned ntt_calls;
 } mlkem_mock_t;
 
+typedef struct {
+    const uint8_t *bytes;
+    size_t length;
+    size_t offset;
+    bool fail;
+} rng_mock_t;
+
 static mlkem_mock_t g_mock;
+static uint8_t g_session_shared_secret[FPST_MLKEM512_SHARED_SECRET_BYTES];
+static uint32_t g_session_id;
+static unsigned g_session_establish_calls;
 
 static uint32_t mock_millis(void *ctx) {
     return ((mlkem_mock_t *)ctx)->now_ms;
@@ -39,6 +50,22 @@ static uint32_t mock_millis(void *ctx) {
 
 static void mock_delay(void *ctx, uint32_t ms) {
     ((mlkem_mock_t *)ctx)->now_ms += ms;
+}
+
+static fpst_result_t mock_rng_fill(void *ctx, uint8_t *out, size_t len) {
+    rng_mock_t *rng = (rng_mock_t *)ctx;
+    if (rng == NULL || (len != 0u && out == NULL)) return FPST_ERR_ARGUMENT;
+    if (rng->fail) return FPST_ERR_IO;
+    if (rng->offset + len > rng->length) return FPST_ERR_IO;
+    if (len != 0u) memcpy(out, &rng->bytes[rng->offset], len);
+    rng->offset += len;
+    return FPST_OK;
+}
+
+static bool all_zero(const uint8_t *data, size_t len) {
+    uint8_t aggregate = 0u;
+    for (size_t i = 0u; i < len; ++i) aggregate |= data[i];
+    return aggregate == 0u;
 }
 
 static uint16_t mod_pow(uint16_t base, uint8_t exponent) {
@@ -140,6 +167,29 @@ fpst_result_t fpst_primer1_pqc_read_poly(fpst_fpga_link_t *link,
     return FPST_OK;
 }
 
+/* Composition-test seam: the real function already has independent BTP/KDF/
+ * atomic-commit tests in test_firmware_core. Here we verify that the ML-KEM
+ * orchestration passes the exact secret internally and never exposes it in its
+ * public result. */
+fpst_result_t fpst_session_establish(
+    fpst_session_manager_t *m,
+    const uint8_t shared_secret[FPST_SHARED_SECRET_BYTES],
+    uint32_t session_id,
+    uint64_t initial_sequence,
+    uint32_t policy_flags) {
+    if (m == NULL || shared_secret == NULL || session_id == 0u ||
+        initial_sequence != 0u || policy_flags != 0u)
+        return FPST_ERR_ARGUMENT;
+    memcpy(g_session_shared_secret, shared_secret,
+           sizeof(g_session_shared_secret));
+    g_session_id = session_id;
+    ++g_session_establish_calls;
+    m->state = FPST_SESSION_ACTIVE;
+    m->session_id = session_id;
+    m->next_sequence = 0u;
+    return FPST_OK;
+}
+
 static void fill_pattern(uint8_t *out, size_t len, uint8_t seed) {
     uint8_t x = seed;
     for (size_t i = 0u; i < len; ++i) {
@@ -153,16 +203,26 @@ static void test_differential_mlkem512(void) {
     static uint8_t encap_coins[FPST_MLKEM512_ENCAP_COINS_BYTES];
     static uint8_t pk_hw[FPST_MLKEM512_PUBLIC_KEY_BYTES];
     static uint8_t pk_ref[FPST_MLKEM512_PUBLIC_KEY_BYTES];
+    static uint8_t pk_live[FPST_MLKEM512_PUBLIC_KEY_BYTES];
     static uint8_t sk_hw[FPST_MLKEM512_SECRET_KEY_BYTES];
     static uint8_t sk_ref[FPST_MLKEM512_SECRET_KEY_BYTES];
+    static uint8_t sk_live[FPST_MLKEM512_SECRET_KEY_BYTES];
     static uint8_t ct_hw[FPST_MLKEM512_CIPHERTEXT_BYTES];
     static uint8_t ct_ref[FPST_MLKEM512_CIPHERTEXT_BYTES];
+    static uint8_t ct_live[FPST_MLKEM512_CIPHERTEXT_BYTES];
+    static uint8_t ct_session[FPST_MLKEM512_CIPHERTEXT_BYTES];
+    static uint8_t ct_fail[FPST_MLKEM512_CIPHERTEXT_BYTES];
     static uint8_t ss_hw[FPST_MLKEM512_SHARED_SECRET_BYTES];
     static uint8_t ss_ref[FPST_MLKEM512_SHARED_SECRET_BYTES];
+    static uint8_t ss_live[FPST_MLKEM512_SHARED_SECRET_BYTES];
+    static uint8_t ss_fail[FPST_MLKEM512_SHARED_SECRET_BYTES];
     static uint8_t ss_dec_hw[FPST_MLKEM512_SHARED_SECRET_BYTES];
     static uint8_t ss_dec_ref[FPST_MLKEM512_SHARED_SECRET_BYTES];
 
     memset(&g_mock, 0, sizeof(g_mock));
+    memset(g_session_shared_secret, 0, sizeof(g_session_shared_secret));
+    g_session_id = 0u;
+    g_session_establish_calls = 0u;
     fill_pattern(keygen_coins, sizeof(keygen_coins), 0x31u);
     fill_pattern(encap_coins, sizeof(encap_coins), 0xA7u);
 
@@ -179,6 +239,8 @@ static void test_differential_mlkem512(void) {
     assert(fpst_mlkem512_is_available());
     assert(fpst_mlkem512_bind_primer1(&link) == FPST_OK);
 
+    /* Deterministic hooked implementation must match the same upstream source
+     * compiled as an independent pure-C backend, byte for byte. */
     assert(fpst_mlkem512_keypair_derand(pk_hw, sk_hw, keygen_coins) == FPST_OK);
     assert(fpst_mlkem512_ref_keypair_derand(pk_ref, sk_ref, keygen_coins) == 0);
     assert(memcmp(pk_hw, pk_ref, sizeof(pk_hw)) == 0);
@@ -194,19 +256,73 @@ static void test_differential_mlkem512(void) {
     assert(memcmp(ss_dec_hw, ss_hw, sizeof(ss_hw)) == 0);
     assert(memcmp(ss_dec_ref, ss_ref, sizeof(ss_ref)) == 0);
     assert(memcmp(ss_dec_hw, ss_dec_ref, sizeof(ss_dec_hw)) == 0);
-    assert(g_mock.ntt_calls != 0u);
+
+    /* Runtime CSPRNG adapters must produce the same result when the provider
+     * yields the same coins, while preserving an explicit failure path. */
+    rng_mock_t key_rng_state = {
+        .bytes = keygen_coins, .length = sizeof(keygen_coins),
+        .offset = 0u, .fail = false
+    };
+    fpst_csprng_t key_rng = {.ctx = &key_rng_state, .fill = mock_rng_fill};
+    assert(fpst_mlkem512_keypair(pk_live, sk_live, &key_rng) == FPST_OK);
+    assert(key_rng_state.offset == sizeof(keygen_coins));
+    assert(memcmp(pk_live, pk_ref, sizeof(pk_live)) == 0);
+    assert(memcmp(sk_live, sk_ref, sizeof(sk_live)) == 0);
+
+    rng_mock_t enc_rng_state = {
+        .bytes = encap_coins, .length = sizeof(encap_coins),
+        .offset = 0u, .fail = false
+    };
+    fpst_csprng_t enc_rng = {.ctx = &enc_rng_state, .fill = mock_rng_fill};
+    assert(fpst_mlkem512_encaps(ct_live, ss_live, pk_live, &enc_rng) == FPST_OK);
+    assert(enc_rng_state.offset == sizeof(encap_coins));
+    assert(memcmp(ct_live, ct_ref, sizeof(ct_live)) == 0);
+    assert(memcmp(ss_live, ss_ref, sizeof(ss_live)) == 0);
+
+    memset(ct_fail, 0xA5, sizeof(ct_fail));
+    memset(ss_fail, 0x5A, sizeof(ss_fail));
+    rng_mock_t fail_rng_state = {
+        .bytes = encap_coins, .length = sizeof(encap_coins),
+        .offset = 0u, .fail = true
+    };
+    fpst_csprng_t fail_rng = {.ctx = &fail_rng_state, .fill = mock_rng_fill};
+    assert(fpst_mlkem512_encaps(ct_fail, ss_fail, pk_live, &fail_rng) == FPST_ERR_IO);
+    assert(all_zero(ct_fail, sizeof(ct_fail)));
+    assert(all_zero(ss_fail, sizeof(ss_fail)));
 
     fpst_mlkem512_unbind_primer1();
+
+    /* End-to-end composition boundary: encapsulated secret is handed directly
+     * into session establishment while the caller sees only ciphertext. */
+    fpst_session_manager_t session;
+    memset(&session, 0, sizeof(session));
+    session.state = FPST_SESSION_NO_KEY;
+    session.link = &link;
+    assert(fpst_mlkem_session_establish_tx_derand(
+               &session, pk_ref, 0x10203040u, encap_coins, ct_session) == FPST_OK);
+    assert(session.state == FPST_SESSION_ACTIVE);
+    assert(session.session_id == 0x10203040u);
+    assert(g_session_establish_calls == 1u);
+    assert(g_session_id == 0x10203040u);
+    assert(memcmp(ct_session, ct_ref, sizeof(ct_session)) == 0);
+    assert(memcmp(g_session_shared_secret, ss_ref,
+                  sizeof(g_session_shared_secret)) == 0);
+
+    assert(g_mock.ntt_calls != 0u);
+
     fpst_secure_zero(sk_hw, sizeof(sk_hw));
     fpst_secure_zero(sk_ref, sizeof(sk_ref));
+    fpst_secure_zero(sk_live, sizeof(sk_live));
     fpst_secure_zero(ss_hw, sizeof(ss_hw));
     fpst_secure_zero(ss_ref, sizeof(ss_ref));
+    fpst_secure_zero(ss_live, sizeof(ss_live));
     fpst_secure_zero(ss_dec_hw, sizeof(ss_dec_hw));
     fpst_secure_zero(ss_dec_ref, sizeof(ss_dec_ref));
+    fpst_secure_zero(g_session_shared_secret, sizeof(g_session_shared_secret));
 }
 
 int main(void) {
     test_differential_mlkem512();
-    puts("PASS: mlkem-native v1.0.0 ML-KEM-512 Primer #1 NTT differential test");
+    puts("PASS: mlkem-native v1.0.0 ML-KEM-512 Primer #1 differential/runtime test");
     return 0;
 }
