@@ -4,40 +4,46 @@
 #include "fpst_platform.h"
 #include "fpst_transport.h"
 
-/*
- * Canonical system-control and telemetry opcodes are taken from the FPST v1.1
- * registry.  The existing accelerator/context opcodes are kept here while the
- * Primer #1 integration branch converts both firmware and RTL together; there
- * is only one registry in this header on the MCU side.
- */
+/* Canonical FPST-SYS-SPEC-001 v1.1 Appendix B opcodes used by this target. */
 typedef enum {
-    FPST_OP_GET_DEVICE_ID       = 0x01,
-    FPST_OP_GET_STATUS          = 0x02,
-    FPST_OP_GET_ERROR           = 0x03,
-    FPST_OP_CLEAR_ERROR         = 0x04,
-    FPST_OP_SOFT_RESET          = 0x05,
-    FPST_OP_SELF_TEST           = 0x06,
+    FPST_OP_GET_DEVICE_ID        = 0x01,
+    FPST_OP_GET_STATUS           = 0x02,
+    FPST_OP_GET_ERROR            = 0x03,
+    FPST_OP_CLEAR_ERROR          = 0x04,
+    FPST_OP_SOFT_RESET           = 0x05,
+    FPST_OP_SELF_TEST            = 0x06,
 
-    FPST_OP_STAGE_CONTEXT       = 0x10,
-    FPST_OP_COMMIT_CONTEXT      = 0x11,
-    FPST_OP_ZEROIZE             = 0x12,
+    FPST_OP_PQC_START_NTT        = 0x24,
+    FPST_OP_PQC_START_INTT       = 0x25,
+    FPST_OP_PQC_POINTWISE_MUL    = 0x26,
+    FPST_OP_PQC_POLY_ADD_SUB     = 0x27,
+    FPST_OP_PQC_GET_RESULT       = 0x28,
 
-    FPST_OP_ASCON_ENCRYPT       = 0x20,
+    FPST_OP_KEY_LOAD_BEGIN       = 0x40,
+    FPST_OP_KEY_LOAD_CHUNK       = 0x41,
+    FPST_OP_KEY_LOAD_COMMIT      = 0x42,
+    FPST_OP_KEY_LOAD_ABORT       = 0x43,
+    FPST_OP_KEY_STATUS           = 0x44,
+    FPST_OP_ZEROIZE              = 0x45,
+    FPST_OP_SESSION_ACTIVATE     = 0x46,
 
-    FPST_OP_NTT_LOAD            = 0x30,
-    FPST_OP_NTT_START           = 0x31,
-    FPST_OP_NTT_READ            = 0x32,
-    FPST_OP_INTT_LOAD           = 0x33,
-    FPST_OP_INTT_START          = 0x34,
-    FPST_OP_INTT_READ           = 0x35,
+    FPST_OP_ASCON_KAT            = 0x50,
+    FPST_OP_TELEMETRY_TX_SAMPLE  = 0x60,
+    FPST_OP_STP_RX_PACKET         = 0x61,
 
-    FPST_OP_TELEMETRY_TX_SAMPLE = 0x60,
-    FPST_OP_STP_GET_COUNTERS     = 0x62,
-    FPST_OP_STP_CLEAR_COUNTERS   = 0x63,
-    FPST_OP_PING                 = 0x7F
+    /* Integration-profile status helpers retained by PRIMER1 RTL design v1. */
+    FPST_OP_STP_GET_COUNTERS      = 0x62,
+    FPST_OP_STP_CLEAR_COUNTERS    = 0x63,
+    FPST_OP_PING                  = 0x7F
 } fpst_opcode_t;
 
 #define FPST_GENERIC_RESPONSE_BYTES 12u
+
+/* Primer #1 key-load profile. */
+#define FPST_KEY_DIRECTION_TX        0x01u
+#define FPST_TX_KEY_BYTES            16u
+#define FPST_TX_NONCE_PREFIX_BYTES    8u
+#define FPST_TX_MATERIAL_BYTES       24u
 
 typedef struct {
     const fpst_platform_t *platform;
