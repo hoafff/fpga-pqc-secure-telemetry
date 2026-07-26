@@ -118,6 +118,12 @@ run_test tb_ascon_encrypt_kat_selftest \
     "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/ascon_encrypt_kat_selftest.sv" \
     "${ROOT_DIR}/tb/integration/tb_ascon_encrypt_kat_selftest.sv"
 
+run_test tb_primer1_telemetry_tx \
+    "${COMMON_ASCON_SOURCES[@]}" \
+    "${ROOT_DIR}/rtl/telemetry/stp_v1_header_builder.sv" \
+    "${ROOT_DIR}/rtl/telemetry/primer1_telemetry_tx.sv" \
+    "${ROOT_DIR}/tb/integration/tb_primer1_telemetry_tx.sv"
+
 run_test tb_primer1_session_manager \
     "${ROOT_DIR}/rtl/key_manager/primer1_session_manager.sv" \
     "${ROOT_DIR}/tb/unit/tb_primer1_session_manager.sv"
