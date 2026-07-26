@@ -101,4 +101,18 @@ run_test tb_ascon_encrypt_kat_selftest \
     "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/ascon_encrypt_kat_selftest.sv" \
     "${ROOT_DIR}/tb/integration/tb_ascon_encrypt_kat_selftest.sv"
 
+# Compile and exercise the actual Primer #1 deployment top through mode-0 SPI.
+run_test tb_primer1_deployment_btp \
+    "${ROOT_DIR}/rtl/transport/fpst_btp_pkg.sv" \
+    "${ROOT_DIR}/rtl/transport/btp_spi_slave.sv" \
+    "${ROOT_DIR}/rtl/transport/btp_request_parser.sv" \
+    "${ROOT_DIR}/rtl/transport/btp_response_builder.sv" \
+    "${ROOT_DIR}/rtl/session/primer1_session_context.sv" \
+    "${COMMON_ASCON_SOURCES[@]}" \
+    "${ROOT_DIR}/rtl/telemetry/primer1_stp_tx.sv" \
+    "${COMMON_NTT_SOURCES[@]}" \
+    "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/primer1_btp_endpoint_deploy.sv" \
+    "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/kiwi_primer20k_fpst_tx_top.sv" \
+    "${ROOT_DIR}/tb/integration/tb_primer1_deployment_btp.sv"
+
 echo "PASS: all RTL unit and integration tests completed"
