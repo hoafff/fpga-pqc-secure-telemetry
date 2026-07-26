@@ -30,6 +30,8 @@ sources = [
     "rtl/telemetry/primer1_stp_tx.sv",
     "rtl/boards/kiwi_primer_20k/primer1_request_semantic_guard.sv",
     "rtl/boards/kiwi_primer_20k/primer1_btp_endpoint_deploy.sv",
+    "rtl/boards/kiwi_primer_20k/primer1_pqc_btp_endpoint.sv",
+    "rtl/boards/kiwi_primer_20k/primer1_endpoint_router.sv",
 ]
 
 needle = "import fpst_btp_pkg::*;"
@@ -57,11 +59,18 @@ yosys -ql "${LOG_FILE}" -p "
         rtl/ntt/ntt_butterfly_pipe.sv \
         rtl/ntt/twiddle_rom_3329.sv \
         rtl/ntt/forward_ntt_scheduler.sv \
+        rtl/ntt/inverse_ntt_scheduler.sv \
+        rtl/ntt/ntt_intt_butterfly_pipe.sv \
         rtl/ntt/true_dual_port_ram_256x16.sv \
         rtl/ntt/coefficient_pingpong_memory_256x16.sv \
         rtl/ntt/forward_ntt_core.sv \
+        rtl/ntt/mlkem_ntt_intt_core.sv \
+        rtl/ntt/mlkem_basemul_sequential.sv \
+        rtl/ntt/mlkem_pqc_accelerator.sv \
         ${FLAT_DIR}/primer1_request_semantic_guard.sv \
         ${FLAT_DIR}/primer1_btp_endpoint_deploy.sv \
+        ${FLAT_DIR}/primer1_pqc_btp_endpoint.sv \
+        ${FLAT_DIR}/primer1_endpoint_router.sv \
         rtl/boards/kiwi_primer_20k/kiwi_primer20k_fpst_tx_top.sv;
     hierarchy -check -top kiwi_primer20k_fpst_tx_top;
     synth -top kiwi_primer20k_fpst_tx_top;
@@ -70,4 +79,4 @@ yosys -ql "${LOG_FILE}" -p "
 "
 
 cat "${LOG_FILE}"
-echo "PASS: generic Yosys synthesis completed for Kiwi Primer 20K #1 FPST deployment top"
+echo "PASS: generic Yosys synthesis completed for complete Kiwi Primer 20K #1 FPST deployment top"
