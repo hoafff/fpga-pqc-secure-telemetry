@@ -27,7 +27,7 @@
 #if !defined(__ASSEMBLER__)
 #include <stddef.h>
 #include <stdint.h>
-#include "sys.h"
+#include "src/sys.h"
 void fpst_mlkem512_upstream_randombytes_forbidden(uint8_t *out, size_t len);
 static MLK_INLINE void mlk_randombytes(uint8_t *out, size_t len)
 {
