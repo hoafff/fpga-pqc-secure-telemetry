@@ -1,6 +1,8 @@
-# Kiwi Primer 20K — Forward NTT Hardware Self-Test
+# Board Support: Kiwi Primer 20K — Primer #1 NTT Self-Test
 
-This target is the first board-specific wrapper for the project.
+> **Scope rõ ràng:** thư mục `boards/kiwi_primer_20k/` hiện chỉ mô tả board support cho **forward NTT self-test trên Kiwi Primer 20K #1**. Nó không phải toàn bộ hệ thống FPST và không phải bitstream của Primer #2.
+>
+> Hướng dẫn deployment theo thiết bị: [`targets/primer20k_1/README.md`](../../targets/primer20k_1/README.md).
 
 ## Target device
 
@@ -9,31 +11,40 @@ Board       : OneKiwi Kiwi Primer 20K, schematic revision v1.0
 FPGA        : GW2A-LV18PG256C8/I7
 Clock       : 27 MHz SYS_CLK
 Top module  : kiwi_primer20k_ntt_selftest_top
+System role : Primer 20K #1 bring-up / NTT accelerator test
 ```
 
-Verified pin assignments are stored in:
+Verified pin assignments:
 
 ```text
 constraints/kiwi_primer_20k/kiwi_primer20k_ntt_selftest.cst
 constraints/kiwi_primer_20k/kiwi_primer20k_ntt_selftest.sdc
 ```
 
-## What the bitstream does
+Canonical target source manifest:
 
-After reset, the top waits approximately 100 ms and automatically performs this sequence:
+```text
+targets/primer20k_1/sources-ntt-selftest.f
+```
 
-1. load the polynomial `input[i] = i` for all 256 coefficients;
-2. start the complete seven-stage forward NTT;
-3. wait for all 896 butterflies and seven coefficient-bank swaps;
-4. read back all 256 output coefficients;
-5. compare every coefficient with a generated golden ROM;
-6. latch PASS or FAIL on the onboard LEDs.
+File legacy `boards/kiwi_primer_20k/ntt_selftest_sources.f` có thể tiếp tục dùng cho compatibility, nhưng target manifest phía trên là đường vào được khuyến nghị.
 
-Pressing `BTN1` starts the complete self-test again.
+## What this bitstream does
 
-This is an end-to-end hardware smoke test for:
+After reset, the top waits approximately 100 ms and automatically:
 
-- the 27 MHz board clock and reset;
+1. loads `input[i] = i` for all 256 coefficients;
+2. starts the complete seven-stage forward NTT;
+3. waits for all 896 butterflies and seven coefficient-bank swaps;
+4. reads back all 256 output coefficients;
+5. compares every coefficient with a generated golden ROM;
+6. latches PASS or FAIL on the onboard LEDs.
+
+Press `BTN1` to run the self-test again.
+
+This smoke test covers:
+
+- 27 MHz board clock and reset;
 - coefficient loading and synchronous readback;
 - ping-pong coefficient RAM;
 - forward-NTT scheduler;
@@ -44,17 +55,17 @@ This is an end-to-end hardware smoke test for:
 
 ## LED meanings
 
-The board LEDs are active low.
+The LEDs are active low.
 
 | LED | Meaning |
 |---|---|
-| LED1 | heartbeat; confirms the 27 MHz clock and top-level logic are running |
-| LED2 | self-test is currently running |
-| LED3 | self-test completed and result is latched |
-| LED4 | PASS: all 256 coefficients matched the golden vector |
+| LED1 | Heartbeat; clock and top-level logic are running |
+| LED2 | Self-test running |
+| LED3 | Self-test completed |
+| LED4 | PASS: all 256 coefficients matched |
 | LED5 | FAIL or timeout |
-| LED6 | current NTT stage is draining at a barrier |
-| LED7 | active coefficient bank; changes after every stage |
+| LED6 | Current NTT stage draining at a barrier |
+| LED7 | Active coefficient bank |
 
 Expected successful final state:
 
@@ -65,18 +76,16 @@ LED3 : on
 LED4 : on
 LED5 : off
 LED6 : off
-LED7 : depends on the number of completed runs
+LED7 : depends on completed run count
 ```
 
 ## Reset behavior
 
-The external `RST` button is active low. Reset assertion is asynchronous at the board boundary and release is synchronized internally.
+External `RST` is active low. Reset assertion is asynchronous at the board boundary and release is synchronized internally.
 
-Coefficient RAM contents are deliberately not cleared by reset so the arrays remain compatible with block-RAM inference. The self-test always reloads all 256 coefficients before starting, so stale RAM contents cannot affect the result.
+Coefficient RAM is deliberately not cleared by reset to preserve block-RAM inference. The self-test reloads all 256 coefficients before every run, so stale RAM contents cannot affect the result.
 
-## Gowin EDA project setup
-
-Create a project with these settings:
+## Gowin EDA setup
 
 ```text
 Series      : GW2A
@@ -86,30 +95,28 @@ Speed grade : C8/I7
 Top module  : kiwi_primer20k_ntt_selftest_top
 ```
 
-Add every path listed in:
+Add all paths from:
 
 ```text
-boards/kiwi_primer_20k/ntt_selftest_sources.f
+targets/primer20k_1/sources-ntt-selftest.f
 ```
 
-The `.hex` file must remain available at this repository-relative location during synthesis:
+The generated expected data must remain at:
 
 ```text
 rtl/boards/kiwi_primer_20k/forward_ntt_ramp_expected.hex
 ```
 
-Then run synthesis, place-and-route, timing analysis and bitstream generation. Before programming the board, check that:
+Before programming:
 
-- the selected part is exactly `GW2A-LV18PG256C8/I7`;
-- the top-level is correct;
-- `SYS_CLK` is constrained to pin `H11` and 27 MHz;
-- there are no unconstrained top-level ports;
-- timing is met;
-- the utilization report shows the coefficient arrays mapped to memory resources rather than thousands of flip-flops.
+- select exactly `GW2A-LV18PG256C8/I7`;
+- use the correct top;
+- constrain `SYS_CLK` at H11 to 27 MHz;
+- check no unconstrained top-level ports;
+- check timing passes;
+- check coefficient arrays map to memory resources, not thousands of flip-flops.
 
 ## Local verification
-
-Board-independent verification runs with:
 
 ```bash
 python3 software/reference/generate_kiwi_primer20k_selftest.py --check
@@ -117,10 +124,10 @@ bash scripts/sim/run_iverilog_unit_tests.sh
 bash scripts/synth/check_kiwi_primer20k_selftest_yosys.sh
 ```
 
-These checks do not replace Gowin EDA place-and-route or a physical-board test.
+These checks do not replace Gowin EDA place-and-route or physical-board testing.
 
 ## UART status
 
-UART is intentionally not part of this first board wrapper. The official Kiwi Primer 20K schematic identifies an onboard CP2102N USB-to-UART block, but the published UART schematic page is blank and the current user guide does not provide a reliable FPGA UART pin table. The first load therefore uses only pins that are explicitly documented: clock, reset, BTN1 and LED1–LED7.
+UART is intentionally not part of this self-test. Although the board includes a CP2102N USB-to-UART block, the currently available documentation does not provide a sufficiently reliable FPGA UART pin table.
 
-UART or MCU-to-FPGA communication will be added after the exact routed pins are confirmed from an official example project, manufacturer clarification or continuity testing.
+MCU-to-FPGA or UART communication must only be added after exact routed pins are confirmed from an official example, manufacturer clarification or continuity testing.
