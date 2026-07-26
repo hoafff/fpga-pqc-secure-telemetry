@@ -6,12 +6,14 @@ BUILD_DIR="${ROOT_DIR}/build/sim"
 mkdir -p "${BUILD_DIR}"
 cd "${ROOT_DIR}"
 
-# Icarus has a copy-back corner case when a variable-indexed unpacked-array
-# element (response[k]) is passed directly as the output of a nested automatic
-# task. Generate an equivalent simulation copy that receives into a scalar byte
-# and assigns the array element explicitly. No DUT/source behavior is changed.
+# Icarus-specific build-time compatibility only. Production/Gowin/Yosys sources
+# remain package-based and unmodified.
 python3 - <<'PY'
 from pathlib import Path
+
+# 1) Icarus copy-back corner case: a variable-indexed unpacked-array element
+# cannot be passed reliably as the output of a nested automatic task. Receive
+# into a scalar byte, then assign response[k] explicitly.
 src = Path("tb/integration/tb_primer1_deployment_pqc.sv").read_text()
 src = src.replace(
     "        integer response_payload_len;\n",
@@ -34,6 +36,18 @@ src = src.replace(
     1,
 )
 Path("build/sim/tb_primer1_deployment_pqc_iverilog.sv").write_text(src)
+
+# 2) Icarus 12 misses exactly OP_PQC_POLY_ADD_SUB from the wildcard import in
+# primer1_pqc_btp_endpoint_v2.sv and creates an implicit one-bit wire. Replace
+# only that identifier in the simulator's temporary copy with its normative
+# Appendix-B value. The committed production RTL still uses fpst_btp_pkg.
+ep_path = Path("rtl/boards/kiwi_primer_20k/primer1_pqc_btp_endpoint_v2.sv")
+ep = ep_path.read_text()
+needle = "OP_PQC_POLY_ADD_SUB"
+if needle not in ep:
+    raise SystemExit("expected PQC add/sub opcode identifier not found")
+ep = ep.replace(needle, "8'h27")
+Path("build/sim/primer1_pqc_btp_endpoint_iverilog.sv").write_text(ep)
 PY
 
 iverilog -g2012 -Wall -s tb_primer1_deployment_pqc \
@@ -62,7 +76,7 @@ iverilog -g2012 -Wall -s tb_primer1_deployment_pqc \
     rtl/boards/kiwi_primer_20k/forward_ntt_core_disabled.sv \
     rtl/boards/kiwi_primer_20k/primer1_request_semantic_guard.sv \
     rtl/boards/kiwi_primer_20k/primer1_btp_endpoint_deploy.sv \
-    rtl/boards/kiwi_primer_20k/primer1_pqc_btp_endpoint.sv \
+    "${BUILD_DIR}/primer1_pqc_btp_endpoint_iverilog.sv" \
     rtl/boards/kiwi_primer_20k/primer1_endpoint_router_v2.sv \
     rtl/boards/kiwi_primer_20k/kiwi_primer20k_fpst_tx_top.sv \
     "${BUILD_DIR}/tb_primer1_deployment_pqc_iverilog.sv"
