@@ -21,6 +21,11 @@ typedef struct {
 fpst_result_t fpst_session_init(fpst_session_manager_t *m,
                                 fpst_fpga_link_t *link);
 
+/*
+ * FPST v1.1 creates each new telemetry session with sequence zero. The
+ * initial_sequence argument is retained in the public API for compatibility,
+ * but any non-zero value is rejected by the implementation.
+ */
 fpst_result_t fpst_session_establish(
     fpst_session_manager_t *m,
     const uint8_t shared_secret[FPST_SHARED_SECRET_BYTES],
@@ -29,11 +34,12 @@ fpst_result_t fpst_session_establish(
     uint32_t policy_flags);
 
 /*
- * Called only after Primer #2 returned COMMIT_ACCEPTED evidence for the exact
- * retained packet sequence. Primer #1 owns the authoritative TX counter.
+ * Receiver COMMIT_ACCEPTED evidence is intentionally not assigned a private
+ * BTP opcode. Appendix B is frozen and 0x61 belongs to STP_RX_PACKET on
+ * Primer #2. Primer #1 therefore keeps its retained packet/sequence commit as
+ * a logical integration input until an approved existing register/BTP mapping
+ * is frozen for the complete two-Primer system.
  */
-fpst_result_t fpst_session_commit_accepted(fpst_session_manager_t *m,
-                                           uint64_t committed_sequence);
 
 void fpst_session_zeroize(fpst_session_manager_t *m);
 
