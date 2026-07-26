@@ -154,18 +154,19 @@ COMMON_PRIMER1_DEPLOY_SOURCES=(
     "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/kiwi_primer20k_fpst_tx_top.sv"
 )
 
-# The smoke test uses 14 active heartbeat cycles plus the two-cycle synchronized
-# zeroize release, so the visible transition occurs on the 16th observed clock.
-# Production remains 2,700,000 active cycles = 100 ms at 27 MHz.
+# Use a short heartbeat terminal count only for simulation. Drive asynchronous
+# zeroize away from the active clock edge, then wait for the DUT's synchronized
+# release to become visible before measuring active heartbeat cycles. This
+# avoids active-region races and verifies the divider itself, not CDC latency.
 python3 - <<'PY'
 from pathlib import Path
 build = Path("build/sim")
 for name in ("tb_primer1_deployment_btp.sv", "tb_primer1_deployment_btp_retry.sv"):
     src = (Path("tb/integration") / name).read_text()
-    src = src.replace(".HEARTBEAT_BIT(8)", ".HEARTBEAT_TOGGLE_CYCLES(14)")
+    src = src.replace(".HEARTBEAT_BIT(8)", ".HEARTBEAT_TOGGLE_CYCLES(16)")
     if name == "tb_primer1_deployment_btp.sv":
         needle = "        rst_n = 1'b1;\n        repeat (8) @(posedge sys_clk);\n"
-        insert = needle + "\n        /* Verify heartbeat timing including synchronized zeroize release. */\n        zeroize_n = 1'b0;\n        repeat (2) @(posedge sys_clk);\n        zeroize_n = 1'b1;\n        begin : check_heartbeat\n            logic hb_start;\n            hb_start = heartbeat;\n            repeat (15) @(posedge sys_clk);\n            #1ns;\n            if (heartbeat !== hb_start)\n                $fatal(1, \"Heartbeat toggled before configured terminal count\");\n            @(posedge sys_clk);\n            #1ns;\n            if (heartbeat === hb_start)\n                $fatal(1, \"Heartbeat did not toggle at configured terminal count\");\n        end\n"
+        insert = needle + "\n        /* Verify exactly 16 active clocks per heartbeat transition. */\n        @(negedge sys_clk);\n        zeroize_n = 1'b0;\n        repeat (2) @(posedge sys_clk);\n        @(negedge sys_clk);\n        zeroize_n = 1'b1;\n        while (dut.transport_zeroize !== 1'b0)\n            @(negedge sys_clk);\n        begin : check_heartbeat\n            logic hb_start;\n            hb_start = heartbeat;\n            repeat (15) @(posedge sys_clk);\n            #1ns;\n            if (heartbeat !== hb_start)\n                $fatal(1, \"Heartbeat toggled before configured terminal count\");\n            @(posedge sys_clk);\n            #1ns;\n            if (heartbeat === hb_start)\n                $fatal(1, \"Heartbeat did not toggle at configured terminal count\");\n        end\n"
         if needle not in src:
             raise SystemExit("heartbeat insertion point not found")
         src = src.replace(needle, insert, 1)
