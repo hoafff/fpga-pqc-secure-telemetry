@@ -72,6 +72,10 @@ run_test tb_btp_spi_slave \
     "${ROOT_DIR}/rtl/transport/btp_spi_slave.sv" \
     "${ROOT_DIR}/tb/unit/tb_btp_spi_slave.sv"
 
+run_test tb_btp_frame_validator \
+    "${ROOT_DIR}/rtl/transport/btp_frame_validator.sv" \
+    "${ROOT_DIR}/tb/unit/tb_btp_frame_validator.sv"
+
 COMMON_NTT_SOURCES=(
     "${ROOT_DIR}/rtl/arithmetic/mod_add.sv"
     "${ROOT_DIR}/rtl/arithmetic/mod_sub.sv"
