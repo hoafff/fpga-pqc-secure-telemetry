@@ -55,6 +55,8 @@ REMAINING HARDWARE EVIDENCE:
 
 Primer #1 does **not** implement the complete ML-KEM protocol state machine. SN32F407 owns ML-KEM orchestration, SHAKE/KDF and higher-level session control; Primer #1 exposes the arithmetic primitives required by that firmware.
 
+Runtime diagnostic opcodes whose exact deployment semantics are not frozen locally (`SOFT_RESET`, `SELF_TEST`, `ASCON_KAT`) fail closed with `ERR_UNSUPPORTED_OPCODE`; independent NTT/Ascon KAT images remain available for bring-up. This avoids inventing command semantics that are not required for the Primer #1 datapath contract.
+
 ## 2. Board / device
 
 ```text
