@@ -101,4 +101,8 @@ run_test tb_ascon_encrypt_kat_selftest \
     "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/ascon_encrypt_kat_selftest.sv" \
     "${ROOT_DIR}/tb/integration/tb_ascon_encrypt_kat_selftest.sv"
 
+run_test tb_primer1_session_manager \
+    "${ROOT_DIR}/rtl/key_manager/primer1_session_manager.sv" \
+    "${ROOT_DIR}/tb/unit/tb_primer1_session_manager.sv"
+
 echo "PASS: all RTL unit and integration tests completed"
