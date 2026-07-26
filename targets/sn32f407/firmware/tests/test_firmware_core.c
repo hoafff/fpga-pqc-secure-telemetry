@@ -5,6 +5,7 @@
 #include "fpst_kdf.h"
 #include "fpst_session.h"
 #include "fpst_sha3.h"
+#include "fpst_spi_mem.h"
 #include "fpst_transport.h"
 
 typedef struct {
@@ -131,6 +132,24 @@ static void test_frame(void) {
     assert(fpst_frame_decode(frame, len, &v) == FPST_ERR_CRC);
 }
 
+static void test_spi_mem_header(void) {
+    uint8_t h[FPST_SPI_MEM_HEADER_BYTES];
+    uint16_t address = 0u;
+    uint16_t length = 0u;
+
+    fpst_spi_mem_build_header(h, FPST_SPI_MEM_CMD_WRITE, 0x1234u, 0x0056u);
+    assert(h[0] == 0xA1u);
+    assert(h[1] == 0x12u && h[2] == 0x34u);
+    assert(h[3] == 0x00u && h[4] == 0x56u);
+    assert(fpst_spi_mem_validate_header(h, FPST_SPI_MEM_CMD_WRITE,
+                                        &address, &length) == FPST_OK);
+    assert(address == 0x1234u && length == 0x0056u);
+
+    h[2] ^= 1u;
+    assert(fpst_spi_mem_validate_header(h, FPST_SPI_MEM_CMD_WRITE,
+                                        &address, &length) == FPST_ERR_CRC);
+}
+
 static void test_session_atomic_commit(void) {
     mock_hw_t hw = {0};
     fpst_store_be32(&hw.mem[FPST_REG_STATUS], FPST_STATUS_READY);
@@ -163,6 +182,7 @@ int main(void) {
     test_shake();
     test_shake_kdf();
     test_frame();
+    test_spi_mem_header();
     test_session_atomic_commit();
     puts("PASS: SN32F407 portable firmware core tests");
     return 0;
