@@ -29,6 +29,8 @@ if(FPST_ENABLE_MLKEM_NATIVE)
             "Pinned mlkem-native source not found. See software/third_party/mlkem-native/LOCK.md")
     endif()
 
+    # Production profile: upstream ML-KEM-512 frontend with the qualified
+    # Primer #1 forward-NTT backend hook.
     add_library(fpst_mlkem_native_upstream STATIC "${FPST_MLKEM_NATIVE_MONOLITHIC}")
     target_include_directories(fpst_mlkem_native_upstream PRIVATE
         "${FPST_MLKEM_NATIVE_API_DIR}"
@@ -39,6 +41,29 @@ if(FPST_ENABLE_MLKEM_NATIVE)
     target_include_directories(fpst_firmware_core PRIVATE "${FPST_MLKEM_NATIVE_API_DIR}")
     target_compile_definitions(fpst_firmware_core PRIVATE FPST_MLKEM_NATIVE_ENABLED=1)
     target_link_libraries(fpst_firmware_core PUBLIC fpst_mlkem_native_upstream)
+
+    # Independent pure-C instance from the exact same upstream revision. It is
+    # linked only into the host differential test and never into board firmware.
+    add_library(fpst_mlkem_native_reference STATIC "${FPST_MLKEM_NATIVE_MONOLITHIC}")
+    target_include_directories(fpst_mlkem_native_reference PRIVATE
+        "${FPST_MLKEM_NATIVE_API_DIR}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_compile_definitions(fpst_mlkem_native_reference PRIVATE
+        MLK_CONFIG_FILE=\"fpst_mlkem512_reference_config.h\")
+
+    add_executable(test_mlkem_native_wrapper
+        tests/test_mlkem_native_wrapper.c
+        src/fpst_mlkem512_wrapper.c)
+    target_include_directories(test_mlkem_native_wrapper PRIVATE
+        include
+        "${FPST_MLKEM_NATIVE_API_DIR}")
+    target_compile_definitions(test_mlkem_native_wrapper PRIVATE
+        FPST_MLKEM_NATIVE_ENABLED=1)
+    target_compile_options(test_mlkem_native_wrapper PRIVATE
+        -Wall -Wextra -Werror -Wpedantic)
+    target_link_libraries(test_mlkem_native_wrapper PRIVATE
+        fpst_mlkem_native_upstream
+        fpst_mlkem_native_reference)
 endif()
 
 add_executable(test_firmware_core tests/test_firmware_core.c)
@@ -47,3 +72,6 @@ target_compile_options(test_firmware_core PRIVATE -Wall -Wextra -Werror -Wpedant
 
 enable_testing()
 add_test(NAME firmware_core COMMAND test_firmware_core)
+if(FPST_ENABLE_MLKEM_NATIVE)
+    add_test(NAME mlkem_native_wrapper COMMAND test_mlkem_native_wrapper)
+endif()
