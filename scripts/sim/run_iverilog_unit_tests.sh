@@ -115,6 +115,17 @@ run_test tb_fpst_btp_spi_slave \
     "${ROOT_DIR}/rtl/link/fpst_btp_spi_slave.sv" \
     "${ROOT_DIR}/tb/integration/tb_fpst_btp_spi_slave.sv"
 
+# Exercise the command dispatcher through key staging, activation, Ascon/STP
+# packet generation and matching/mismatching receiver commit evidence.
+run_test tb_primer1_endpoint_core \
+    "${COMMON_NTT_SOURCES[@]}" \
+    "${COMMON_ASCON_SOURCES[@]}" \
+    "${ROOT_DIR}/rtl/ascon/ascon_aead_core.sv" \
+    "${ROOT_DIR}/rtl/session/fpst_tx_session.sv" \
+    "${ROOT_DIR}/rtl/telemetry/fpst_telemetry_tx.sv" \
+    "${ROOT_DIR}/rtl/endpoint/primer1_endpoint_core.sv" \
+    "${ROOT_DIR}/tb/integration/tb_primer1_endpoint_core.sv"
+
 # Compile the full Primer #1 logical integration hierarchy even before the
 # final board connector .cst is frozen. This catches cross-block interface drift.
 run_test primer1_system_core \
