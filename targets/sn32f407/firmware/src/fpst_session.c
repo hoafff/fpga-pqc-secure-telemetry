@@ -1,7 +1,7 @@
 #include "fpst_session.h"
 
 fpst_result_t fpst_session_init(fpst_session_manager_t *m,
-                                fpst_fpga_link_t *link) {
+                                 fpst_fpga_link_t *link) {
     if (m == NULL || link == NULL) return FPST_ERR_ARGUMENT;
     m->state = FPST_SESSION_NO_KEY;
     m->session_id = 0u;
@@ -92,13 +92,13 @@ fail:
     (void)fpst_fpga_link_command(m->link, FPST_OP_KEY_LOAD_ABORT,
                                  NULL, 0u, NULL, 0u, &response_len,
                                  FPST_LINK_COMMAND_TIMEOUT_MS);
-    fpst_session_zeroize(m);
+    (void)fpst_session_zeroize(m);
     m->state = FPST_SESSION_ERROR;
     return rc;
 }
 
 fpst_result_t fpst_session_commit_tx(fpst_session_manager_t *m,
-                                     uint64_t committed_sequence) {
+                                      uint64_t committed_sequence) {
     if (m == NULL || m->link == NULL) return FPST_ERR_ARGUMENT;
     if (m->state != FPST_SESSION_ACTIVE) return FPST_ERR_STATE;
     if (committed_sequence != m->next_sequence) return FPST_ERR_TRANSACTION;
@@ -111,8 +111,8 @@ fpst_result_t fpst_session_commit_tx(fpst_session_manager_t *m,
 }
 
 fpst_result_t fpst_session_reconcile_tx(fpst_session_manager_t *m,
-                                        uint64_t receiver_expected_sequence,
-                                        bool *resend_required) {
+                                         uint64_t receiver_expected_sequence,
+                                         bool *resend_required) {
     if (m == NULL || m->link == NULL || resend_required == NULL)
         return FPST_ERR_ARGUMENT;
     if (m->state != FPST_SESSION_ACTIVE) return FPST_ERR_STATE;
@@ -133,11 +133,16 @@ fpst_result_t fpst_session_reconcile_tx(fpst_session_manager_t *m,
     return FPST_ERR_TRANSACTION;
 }
 
-void fpst_session_zeroize(fpst_session_manager_t *m) {
-    if (m == NULL) return;
+fpst_result_t fpst_session_zeroize(fpst_session_manager_t *m) {
+    if (m == NULL) return FPST_ERR_ARGUMENT;
+
+    fpst_result_t rc = FPST_OK;
     if (m->link != NULL)
-        (void)fpst_primer1_zeroize(m->link, 0u);
+        rc = fpst_primer1_zeroize(m->link, 0u);
+
+    /* MCU-side metadata is invalid regardless of remote-link health. */
     m->session_id = 0u;
     m->next_sequence = 0u;
-    m->state = FPST_SESSION_NO_KEY;
+    m->state = (rc == FPST_OK) ? FPST_SESSION_NO_KEY : FPST_SESSION_ERROR;
+    return rc;
 }
