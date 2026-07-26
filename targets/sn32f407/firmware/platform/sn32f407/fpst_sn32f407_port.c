@@ -129,13 +129,22 @@ static void init_pinmux(void) {
      * SPI0 data/clock route 2 maps to EVK J12:
      *   SCK=P1.0, MISO=P1.1, MOSI=P1.2.
      * SEL route is intentionally 0 and hardware SEL is disabled; P1.8 remains
-     * available to the onboard W25Q16 CE# net rather than becoming FPGA CS.
+     * a GPIO driving the onboard W25Q16 CE# high during Primer traffic.
      */
     SN_PFPA->UART0 = FPST_SN32F407_PFPA_UART0_VALUE;
     SN_PFPA->SPI0 = FPST_SN32F407_PFPA_SPI0_VALUE;
 }
 
 static void init_link_gpio(void) {
+    /* The onboard W25Q16 shares SCK/MISO/MOSI with J12: keep CE# inactive. */
+    gpio_write(FPST_SN32F407_FLASH_CS_N_PORT,
+               FPST_SN32F407_FLASH_CS_N_PIN, true);
+    gpio_set_mode(FPST_SN32F407_FLASH_CS_N_PORT,
+                  FPST_SN32F407_FLASH_CS_N_PIN, true);
+    gpio_set_config(FPST_SN32F407_FLASH_CS_N_PORT,
+                    FPST_SN32F407_FLASH_CS_N_PIN,
+                    GPIO_CFG_INACTIVE_SCHMITT_EN);
+
     /* Deassert both external Primer selects before making the pins outputs. */
     gpio_write(FPST_SN32F407_P1_CS_N_PORT, FPST_SN32F407_P1_CS_N_PIN, true);
     gpio_set_mode(FPST_SN32F407_P1_CS_N_PORT, FPST_SN32F407_P1_CS_N_PIN, true);
@@ -247,6 +256,9 @@ static fpst_result_t port_spi_begin(void *ctx) {
     if (!FPST_SN32F407_HARNESS_VERIFIED) return FPST_ERR_STATE;
     if (g_spi_selected) return FPST_ERR_STATE;
 
+    /* Belt-and-suspenders: ensure the onboard flash can never drive MISO. */
+    gpio_write(FPST_SN32F407_FLASH_CS_N_PORT,
+               FPST_SN32F407_FLASH_CS_N_PIN, true);
     SN_SPI0->CTRL0_b.FRESET = 3u;
     gpio_write(FPST_SN32F407_P1_CS_N_PORT, FPST_SN32F407_P1_CS_N_PIN, false);
     g_spi_selected = true;
