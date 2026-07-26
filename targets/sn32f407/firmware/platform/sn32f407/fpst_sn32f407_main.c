@@ -35,7 +35,7 @@ static fpst_result_t link_simple_command(fpst_opcode_t opcode) {
 
 static void handle_command(const char *line) {
     if (strcmp(line, "help") == 0) {
-        console("help ping caps status zeroize reset wiring\r\n");
+        console("help ping device status error clear zeroize reset wiring\r\n");
         return;
     }
     if (strcmp(line, "wiring") == 0) {
@@ -48,12 +48,20 @@ static void handle_command(const char *line) {
         print_result(link_simple_command(FPST_OP_PING));
         return;
     }
-    if (strcmp(line, "caps") == 0) {
-        print_result(link_simple_command(FPST_OP_GET_CAPS));
+    if (strcmp(line, "device") == 0) {
+        print_result(link_simple_command(FPST_OP_GET_DEVICE_ID));
         return;
     }
     if (strcmp(line, "status") == 0) {
         print_result(link_simple_command(FPST_OP_GET_STATUS));
+        return;
+    }
+    if (strcmp(line, "error") == 0) {
+        print_result(link_simple_command(FPST_OP_GET_ERROR));
+        return;
+    }
+    if (strcmp(line, "clear") == 0) {
+        print_result(link_simple_command(FPST_OP_CLEAR_ERROR));
         return;
     }
     if (strcmp(line, "zeroize") == 0) {
@@ -61,6 +69,10 @@ static void handle_command(const char *line) {
             g_platform.fpga_zeroize(g_platform.ctx,
                                     FPST_LINK_ZEROIZE_PULSE_MS);
         } else {
+            uint16_t response_len = 0u;
+            (void)fpst_fpga_link_command(&g_link, FPST_OP_ZEROIZE,
+                                         NULL, 0u, NULL, 0u, &response_len,
+                                         FPST_LINK_COMMAND_TIMEOUT_MS);
             fpst_session_zeroize(&g_session);
         }
         console("OK\r\n");
@@ -68,7 +80,8 @@ static void handle_command(const char *line) {
     }
     if (strcmp(line, "reset") == 0) {
         g_platform.fpga_reset(g_platform.ctx, FPST_LINK_RESET_PULSE_MS);
-        console("OK\r\n");
+        g_link_initialized = false;
+        console("OK - session/link must be re-established\r\n");
         return;
     }
 
