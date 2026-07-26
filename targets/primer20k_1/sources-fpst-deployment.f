@@ -41,6 +41,6 @@ rtl/ntt/mlkem_pqc_accelerator.sv
 # Deployment integration
 rtl/boards/kiwi_primer_20k/primer1_request_semantic_guard.sv
 rtl/boards/kiwi_primer_20k/primer1_btp_endpoint_deploy.sv
-rtl/boards/kiwi_primer_20k/primer1_pqc_btp_endpoint.sv
+rtl/boards/kiwi_primer_20k/primer1_pqc_btp_endpoint_v2.sv
 rtl/boards/kiwi_primer_20k/primer1_endpoint_router.sv
 rtl/boards/kiwi_primer_20k/kiwi_primer20k_fpst_tx_top.sv
