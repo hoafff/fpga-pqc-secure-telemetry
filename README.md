@@ -104,21 +104,24 @@ results/                       Báo cáo kết quả
 
 Còn phải làm trên phần cứng: exact-device Gowin synthesis/P&R/timing, `.fs`, continuity và real-board logic-analyzer/fault/reset/zeroize tests.
 
-### SN32F407 — functional integration in progress / host-verified baseline
+### SN32F407 — software/host integration complete / physical qualification pending
 
 Đã triển khai:
 
-- direct FPST BTP v1 master transport khớp Primer #1;
-- Primer #1 control/session/PQC/telemetry client;
-- SHAKE256 KDF và atomic key/session flow;
-- `mlkem-native v1.0.0` pinned dependency + ML-KEM-512 wrapper;
-- Primer #1 forward-NTT accelerator hook;
-- differential pure-C vs accelerator-hook KEM test;
-- explicit CSPRNG provider boundary;
-- ML-KEM encaps -> internal shared secret -> KDF -> Primer #1 session handoff;
-- real SN32F407 register-level UART/SPI bring-up port.
+- direct FPST BTP v1 master transport khớp Primer #1, với retry dùng cùng txid + byte-identical request;
+- Primer #1 control/session/PQC/telemetry client và retained-sequence commit/reconcile;
+- SHAKE256 KDF và atomic key stage/commit/activate/zeroize;
+- pinned `mlkem-native v1.0.0` / ML-KEM-512 baseline;
+- Primer #1 forward-NTT accelerator hook, INTT/base-mul vẫn ở pinned portable C;
+- low-RAM sender encapsulation schedule 3072 B, differential-tested byte-for-byte với unmodified pure-C reference;
+- SRAM-conscious link/ciphertext buffer reuse và CI preflight giữ 2 KiB stack reserve;
+- conditioned ADC entropy trên EVK `P2.0/AIN0`: health checks -> Von-Neumann -> SHAKE256 -> `fpst_csprng_t`, fail-closed;
+- canonical 24-byte telemetry, 64-bit uptime và SysTick heartbeat;
+- UART bring-up shell + `kem-session` flow và `tools/sn32_uart_session.py` cho PC.
 
-Chưa được gọi hardware-ready cho đến khi: live CSPRNG được qualify, exact Keil image chứng minh fit 32 KiB Flash / 8 KiB RAM, harness continuity được đo, và board test thật pass.
+Entropy hiện được định danh đúng phạm vi là **research/competition conditioned source**, không claim certified production TRNG/min-entropy.
+
+Chưa được gọi hardware-ready cho đến khi: exact ARM Compiler 6 map/stack chứng minh fit 32 KiB Flash / 8 KiB RAM, SN-LINK programming/boot pass, harness continuity được đo và guard được bật, Primer #1 có exact-device Gowin P&R/`.fs`, sau đó logic-analyzer + end-to-end board tests pass.
 
 ### Các khối khác còn mở
 
