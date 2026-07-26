@@ -4,35 +4,29 @@
 
 Primer #1 là **PQC arithmetic accelerator + secure telemetry transmitter**.
 
-Kiến trúc logic hiện tại:
-
 ```text
 SN32F407F / BTP master
         |
-        | SPI Mode0, 1 MHz bring-up
+        | SPI Mode 0, 1 MHz initial bring-up
         v
 fpst_btp_spi_slave
         |
         v
 primer1_endpoint_core
-   |        |             |
-   |        |             +--> fpst_tx_session
-   |        |                    atomic K_TX/NP_TX/session/sequence
+   |        |              |
+   |        |              +--> fpst_tx_session
+   |        |                     atomic K_TX / NP_TX / sequence
    |        |
-   |        +--> ascon_aead_core
-   |                 |
-   |                 +--> ascon_aead_encrypt
-   |                 |
-   |                 +--> fpst_telemetry_tx
-   |                       STP header + ciphertext + tag
-   |                       retained packet until commit ack
+   |        +--> ascon_aead_core -> fpst_telemetry_tx
+   |                               STP header + ciphertext + tag
+   |                               retained until exact commit evidence
    |
    +--> forward_ntt_core
 ```
 
-Primer #1 không phải MCU. SN32F407F điều phối session/KDF/telemetry và gửi BTP command; Primer #1 sở hữu datapath mật mã, packet retention và TX sequence.
+SN32F407F owns orchestration/KDF/telemetry generation. Primer #1 owns the accelerated datapath, secure TX packet retention and authoritative TX sequence.
 
-## 2. Thiết bị
+## 2. Device baseline
 
 ```text
 Board       : OneKiwi Kiwi Primer 20K v1.0
@@ -44,69 +38,63 @@ BTN1        : A3, active low
 LED1..LED7  : J1,J2,H1,H2,G1,G2,F1, active low
 ```
 
-Không dùng constraint của Tang Primer 20K hoặc board khác.
+Do not reuse Tang Primer constraints without checking every pin.
 
-## 3. Artifact nạp FPGA
+## 3. FPGA artifact
 
-Gowin tạo:
+Gowin final programming artifact:
 
 ```text
 *.fs
 ```
 
-Source, constraint, tool version, timing/utilization report và test evidence mới là nguồn tái tạo. Không coi một file `.fs` không kèm build record là baseline source.
+Source + constraint + tool version + timing/utilization report are the reproducible baseline. The integrated system `.fs` is not claimed yet because exact Primer BTP/sideband pins remain a physical evidence gate.
 
-## 4. Các lớp RTL hiện có
+## 4. Implemented RTL
 
-### 4.1 Forward NTT
-
-Reusable core:
+### Forward NTT
 
 ```text
 rtl/ntt/forward_ntt_core.sv
 ```
 
-Interface `start_i/busy_o/done_o` và host read/write 256×16 giữ nguyên theo FPST v1.1.
+The verified `start_i/busy_o/done_o` + host read/write 256×16 interface is preserved.
 
-Đã có board self-test độc lập:
+Standalone diagnostic:
 
 ```text
 Top      : kiwi_primer20k_ntt_selftest_top
 Manifest : targets/primer20k_1/sources-ntt-selftest.f
 ```
 
-### 4.2 Ascon-AEAD128 encrypt
+### Ascon-AEAD128 encrypt
 
 ```text
-rtl/ascon/ascon_aead_core.sv      frozen common FPST boundary
-rtl/ascon/ascon_aead_encrypt.sv   Primer #1 encrypt engine
+rtl/ascon/ascon_aead_core.sv
+rtl/ascon/ascon_aead_encrypt.sv
 ```
 
-Primer #1 dùng encrypt mode. Nếu có yêu cầu decrypt tại boundary chung, wrapper trả lỗi trạng thái rõ ràng thay vì để port undefined.
+`ascon_aead_core` is the frozen common boundary. Primer #1 implements encrypt mode; decrypt requests are explicitly rejected rather than left undefined.
 
-Đã có KAT board self-test độc lập:
+Standalone diagnostic:
 
 ```text
 Top      : kiwi_primer20k_ascon_selftest_top
 Manifest : targets/primer20k_1/sources-ascon-selftest.f
 ```
 
-Vector 24-byte AD / 24-byte plaintext:
+Known 24-byte AD / 24-byte plaintext board vector:
 
 ```text
 Key       = 00 01 ... 0F
 Nonce     = 10 11 ... 1F
 AD        = 30 31 ... 47
 Plaintext = 20 21 ... 37
-
-Ciphertext:
-9D29F9D52ADF9470AF4CBCE0A4481AC7FCB1B32976469892
-
-Tag:
-DFEBAF445205EC9B019D022C7042AE59
+Ciphertext= 9D29F9D52ADF9470AF4CBCE0A4481AC7FCB1B32976469892
+Tag       = DFEBAF445205EC9B019D022C7042AE59
 ```
 
-### 4.3 Session / key context
+### Atomic TX session
 
 ```text
 rtl/session/fpst_tx_session.sv
@@ -114,136 +102,151 @@ rtl/session/fpst_tx_session.sv
 
 Implements:
 
-- separate staging and active context;
-- atomic key commit;
-- `K_TX[128]`;
-- `NP_TX[64]`;
-- session ID;
-- policy flags;
-- authoritative TX sequence;
-- activate only when `secure_enable=1`;
+- separate staging/active key context;
+- atomic commit;
+- `K_TX[128]`, `NP_TX[64]`, session ID, policy flags;
+- active session gated by `secure_enable`;
+- authoritative 64-bit TX sequence;
 - zeroize/reset invalidation;
-- sequence increment only after exact commit acknowledgement.
+- sequence increment only for matching receiver commit evidence.
 
-### 4.4 STP secure transmitter
+### STP transmitter and packet retention
 
 ```text
 rtl/telemetry/fpst_telemetry_tx.sv
 ```
 
-For the mandatory 24-byte telemetry record:
+Mandatory telemetry demo:
 
 ```text
-build STP v1 header = 24 bytes
-nonce = NP_TX || sequence_number
-Ascon AD = exact 24-byte header
-Ascon plaintext = 24-byte telemetry record
-packet = header || ciphertext || 16-byte tag
-packet length = 64 bytes
+STP header         = 24 bytes
+telemetry plaintext= 24 bytes
+Ascon tag          = 16 bytes
+packet             = header || ciphertext || tag
+normal packet      = 64 bytes
+nonce              = NP_TX || sequence_number
+Ascon AD           = exact 24-byte STP header
 ```
 
-The complete packet is retained byte-for-byte until commit acknowledgement, reset, zeroize or session invalidation.
+The packet remains byte-identical until matching commit evidence, reset, zeroize or session invalidation.
 
-### 4.5 BTP SPI endpoint
+### Direct BTP SPI endpoint
 
 ```text
 rtl/link/fpst_btp_spi_slave.sv
 ```
 
-Active FPST v1.1 transport:
-
 ```text
-Mode          : SPI Mode 0
-Order         : MSB first
-Bring-up rate : 1 MHz
-Request       : one CS assertion
-Response      : second CS assertion after IRQ_N
-Max payload   : 1024 bytes
-Integrity     : CRC-32/ISO-HDLC
-SOF           : A5 5A
-Version       : 01
+SPI            : Mode 0, 8-bit, MSB first
+Initial SCLK   : 1 MHz
+Request        : one CS transaction
+Response       : second CS transaction after IRQ_N
+SOF/version    : A5 5A / 01
+Max payload    : 1024 bytes
+Integrity      : CRC-32/ISO-HDLC
+Retry identity : same txid + byte-identical request
 ```
 
-The earlier A1/A2 mailbox + CRC-16 proposal is obsolete and has been removed from the active firmware path.
+The old A1/A2 mailbox + CRC16 + 3 MHz proposal is obsolete.
 
-At 1 MHz, asynchronous SPI pins are synchronized and edge-detected in the 27 MHz system domain. Any higher SPI rate needs a new timing/CDC review.
+At 1 MHz the asynchronous SPI pins are synchronized/edge-detected in the 27 MHz system domain. Any higher rate requires a fresh CDC/timing review.
 
-### 4.6 Integrated endpoint
+### Integrated hierarchy
 
 ```text
 rtl/endpoint/primer1_endpoint_core.sv
 rtl/endpoint/primer1_system_core.sv
+Manifest: targets/primer20k_1/sources-system.f
+Logical top: primer1_system_core
 ```
 
-Current command handling includes:
+## 5. Appendix-B opcode handling
+
+The FPST v1.1 registry is authoritative. Primer #1 currently implements the commands for which it has a real datapath/state transition:
 
 ```text
-PING / GET_CAPS / GET_STATUS
-KEY_LOAD_BEGIN / CHUNK / COMMIT / ABORT
-KEY_STATUS / ZEROIZE / SESSION_ACTIVATE
-forward NTT start + repository coefficient data-window adapter
+0x01 GET_DEVICE_ID
+0x02 GET_STATUS
+0x03 GET_ERROR
+0x04 CLEAR_ERROR
+0x05 SOFT_RESET
+0x20 PQC_WRITE_COEFF
+0x21 PQC_READ_COEFF
+0x22 PQC_LOAD_POLY
+0x23 PQC_READ_POLY
+0x24 PQC_START_NTT
+0x40 KEY_LOAD_BEGIN
+0x41 KEY_LOAD_CHUNK
+0x42 KEY_LOAD_COMMIT
+0x43 KEY_LOAD_ABORT
+0x44 KEY_STATUS
+0x45 ZEROIZE
+0x46 SESSION_ACTIVATE
+0x60 TELEMETRY_TX_SAMPLE
+0x7F PING
+```
+
+Commands that are receiver-only or whose real datapath is not implemented return explicit `ERR_UNSUPPORTED_OPCODE`, including current INTT/pointwise/poly completion paths. No placeholder command reports false success.
+
+Important collision rule:
+
+```text
+0x61 = STP_RX_PACKET
+```
+
+It is receiver-owned and is **not** reused for TX acknowledgement.
+
+## 6. TX sequence / commit rule
+
+```text
 TELEMETRY_TX_SAMPLE
-TX_COMMIT_ACCEPTED profile extension
+        -> encrypt at current tx_sequence
+        -> retain exact STP packet
+        -> retries/readback reuse retained bytes
+
+Primer #2 authenticates/releases/commits
+        -> complete system presents logical:
+           tx_commit_valid_i
+           tx_commit_sequence_i[63:0]
+
+exact sequence match
+        -> clear retained packet
+        -> tx_sequence++ exactly once
 ```
 
-Unsupported PQC operations return explicit `ERR_UNSUPPORTED_OPCODE`; no placeholder operation reports false success.
+A mismatch leaves both packet retention and sequence unchanged and raises a desynchronization error.
 
-## 5. TX sequence and retained-packet rule
+The carrier of this logical commit evidence across the final two-Primer system is still an integration mapping to freeze. We do not allocate a private opcode that collides with Appendix B.
 
-The secure TX path is intentionally two-phase:
+## 7. PQC scope honesty
+
+Integrated now:
 
 ```text
-TELEMETRY_TX_SAMPLE
-        |
-        v
-build + encrypt packet at current sequence
-        |
-        v
-retain exact packet bytes
-        |
-        +---- retry/read same packet without re-encrypting
-        |
-receiver authenticates and commits
-        |
-MCU relays committed_sequence
-        |
-        v
-TX_COMMIT_ACCEPTED
-        |
-        +--> clear retained packet
-        +--> tx_sequence = tx_sequence + 1
+forward NTT
+coefficient host read/write/load/read adapters
 ```
 
-A mismatched committed sequence does not advance state.
-
-`0x61 TX_COMMIT_ACCEPTED` is an explicit repository PROFILE extension because FPST v1.1 defines commit semantics but the currently frozen BTP registry available to the implementation does not provide a byte-level command for returning that evidence to Primer #1. This is recorded in `docs/spec-delta/FPST-v1.1-implementation-decisions.md` for the next spec revision.
-
-## 6. NTT scope honesty
-
-The verified forward NTT datapath is integrated.
-
-Still not implemented as complete hardware datapaths:
+Still open:
 
 ```text
-inverse NTT
-pointwise multiplication wrapper
-poly add/sub wrapper
-full ML-KEM KeyGen/Encaps/Decaps in RTL
+inverse NTT datapath
+pointwise multiplication datapath/wrapper
+poly add/sub datapath/wrapper
+complete hardware ML-KEM KeyGen/Encaps/Decaps offload
 ```
 
-Therefore this target SHALL currently be described as **hardware-assisted PQC / forward-NTT accelerator**, not a completed full-RTL ML-KEM engine.
+So the current correct claim is **hardware-assisted PQC with forward-NTT acceleration**, not full-RTL ML-KEM.
 
-The repository profile commands `0x20..0x23` expose the existing forward-NTT host coefficient interface for integration testing; they are tracked as PROFILE rather than silently presented as frozen FPST v1.1 opcodes.
+## 8. MCU-side wiring verified
 
-## 7. MCU-side wiring now known
-
-From the organizer `32F407 EVK V1.0` schematic:
+From organizer `32F407 EVK V1.0` schematic:
 
 ```text
 DB_SPI J12.2 P1.0 = SCLK
 DB_SPI J12.3 P1.1 = MISO
 DB_SPI J12.4 P1.2 = MOSI
-DB_SPI J12.1 P1.8 = onboard Flash CE# -> KEEP HIGH, NOT FPGA CS
+DB_SPI J12.1 P1.8 = onboard Flash CE# -> KEEP HIGH, NOT Primer CS
 
 J7.1 P2.1 = FPGA_CS_N
 J7.2 P2.2 = FPGA_BUSY
@@ -251,16 +254,15 @@ J7.3 P2.3 = FPGA_IRQ_N
 J7.4 P2.8 = FPGA_RESET_N
 J7.5 P2.9 = FPGA_ZEROIZE_N
 
-DB_UART:
-P3.1 = UART0_TX
-P3.2 = UART0_RX
+DB_UART P3.1 = UART0_TX
+DB_UART P3.2 = UART0_RX
 ```
 
-See `docs/interfaces/FPST-MCU-FPGA-LINK-001-v1.1.md` for the electrical/protocol contract.
+See `docs/interfaces/FPST-MCU-FPGA-LINK-001-v1.1.md`.
 
-## 8. Primer #1 physical pin gate
+## 9. Remaining physical Primer pin gate
 
-The remaining physical blocker is **not MCU pin selection anymore**. It is the exact mapping from the logical Primer ports:
+The MCU side is known. What remains unknown is the exact Kiwi Primer 20K v1.0 header/package mapping for:
 
 ```text
 spi_sclk_i
@@ -273,67 +275,38 @@ zeroize_i
 secure_enable_i
 ```
 
-to exposed Kiwi Primer 20K header pins / GW2A package pins.
+`tx_commit_*` is a logical system-integration interface, not a newly invented physical wire requirement.
 
-Do not invent these locations. They must be taken from the exact Kiwi Primer 20K v1.0 schematic/user guide, then locked in a new system `.cst`.
+Do not invent Primer pin locations. They must come from exact Primer schematic/user-guide evidence before a final system `.cst` is committed.
 
-Until that happens:
-
-```text
-logical RTL integration : yes
-simulation regression   : required/pass before merge
-final board .fs         : not yet claimable
-hardware-verified link  : no
-```
-
-## 9. Regression
-
-Run:
+## 10. Regression / synthesis
 
 ```bash
 python3 software/reference/check_ascon_aead128.py
 bash scripts/sim/run_iverilog_unit_tests.sh
 bash scripts/synth/check_forward_ntt_core_yosys.sh
+bash scripts/synth/check_kiwi_primer20k_selftest_yosys.sh
 bash scripts/synth/check_kiwi_primer20k_ascon_selftest_yosys.sh
+bash scripts/synth/check_primer1_system_yosys.sh
 ```
 
-The expanded RTL suite additionally checks:
+The expanded suite covers:
 
 - atomic session stage/commit/activate/zeroize;
-- TX sequence commit behavior;
-- STP header construction and packet retention;
-- BTP two-transaction framing;
-- CRC-32 reject path;
-- full Primer #1 hierarchy elaboration.
+- sequence increment only on matching commit;
+- STP header construction/packet retention;
+- BTP direct two-transaction framing and CRC rejection;
+- integrated hierarchy compile;
+- generic synthesis of integrated Primer #1 logic.
 
-## 10. Existing independent board self-tests
+## 11. Definition of done for final integrated `.fs`
 
-The standalone NTT and Ascon self-test bitstreams remain valuable bring-up artifacts even after integrated RTL exists.
-
-### Forward NTT
-
-```text
-Top: kiwi_primer20k_ntt_selftest_top
-```
-
-### Ascon
-
-```text
-Top: kiwi_primer20k_ascon_selftest_top
-```
-
-They use only already verified clock/reset/button/LED constraints and should remain available as fallback diagnostics.
-
-## 11. Definition of done for the final Primer #1 image
-
-Primer #1 becomes a real end-to-end board image only after all of these are true:
-
-1. integrated BTP/session/Ascon/STP/forward-NTT RTL regression passes;
-2. exact Primer connector pins are verified and `.cst` is committed;
-3. Gowin synthesis + place-and-route + timing pass for `GW2A-LV18PG256C8/I7` at 27 MHz;
-4. Mode-0 1 MHz physical BTP PING/CRC tests pass;
-5. atomic key stage/commit/activate/zeroize pass on board;
-6. telemetry sample produces byte-correct STP packet;
-7. retained-packet retry and commit-sequence behavior pass;
-8. fault/zeroize sideband behavior is captured on a logic analyzer;
-9. generated `.fs`, utilization/timing report and wiring evidence are archived for the competition build.
+1. all firmware/reference/RTL regressions pass;
+2. integrated generic synthesis passes;
+3. exact Primer link pins are verified and committed in `.cst`;
+4. Gowin synthesis/place-and-route/timing passes for `GW2A-LV18PG256C8/I7` at 27 MHz;
+5. common GND/3.3 V and continuity pass;
+6. Mode-0/MSB-first/1 MHz logic-analyzer capture passes;
+7. physical PING/status/key/telemetry/bad-CRC/zeroize tests pass;
+8. retained packet + delivery commit behavior passes end-to-end;
+9. `.fs`, timing/utilization reports and wiring evidence are archived.
