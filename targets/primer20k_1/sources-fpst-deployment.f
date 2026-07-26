@@ -2,10 +2,12 @@
 # Top: kiwi_primer20k_fpst_tx_top
 # Device: GW2A-LV18PG256C8/I7
 # System clock: 27 MHz
+# Constraint: constraints/kiwi_primer_20k/kiwi_primer20k_fpst_tx.cst
+# Timing:     constraints/kiwi_primer_20k/kiwi_primer20k_fpst_tx.sdc
 #
-# IMPORTANT: This manifest intentionally does not include a final deployment
-# .cst yet. SPI/security-sideband package pins must be locked from measured
-# board/header evidence before generating a release bitstream.
+# IMPORTANT: the .cst freezes the FPGA-side J2 harness mapping. The physical
+# SN32/Tiny wiring SHALL follow that profile and SHALL be continuity-checked
+# before board sign-off. Do not silently remap deployment pins in Gowin.
 
 # BTP protocol / transport
 rtl/transport/fpst_btp_pkg.sv
