@@ -30,10 +30,9 @@ module btp_spi_slave #(
     output logic        overflow_o
 );
     /*
-     * The MCU starts at 1 MHz while this block runs at 27 MHz. SCK/CS/MOSI are
-     * synchronized and edge-detected in the system-clock domain. A complete
-     * request is latched at CS deassertion and remains readable while the next
-     * CS assertion clocks out its response.
+     * Bring-up SPI is 1 MHz and this block runs at 27 MHz. SCK/CS/MOSI are
+     * oversampled through two-flop synchronizers. Mode 0 data is sampled on
+     * SCK rising edges and changed only after falling edges.
      */
 
     logic [7:0] req_mem [0:MAX_FRAME_BYTES-1];
@@ -48,10 +47,11 @@ module btp_spi_slave #(
     logic [10:0] rx_byte_count_q;
     logic [10:0] req_len_q;
 
-    logic response_phase_q;
+    logic        response_phase_q;
     logic [10:0] rsp_len_q;
     logic [10:0] tx_byte_index_q;
-    logic [2:0]  tx_bit_index_q;
+    logic [2:0]  tx_sample_count_q;
+    logic [7:0]  tx_shift_q;
     logic [10:0] tx_bytes_sampled_q;
 
     logic req_valid_q;
@@ -103,7 +103,8 @@ module btp_spi_slave #(
             response_phase_q    <= 1'b0;
             rsp_len_q           <= 11'd0;
             tx_byte_index_q     <= 11'd0;
-            tx_bit_index_q      <= 3'd7;
+            tx_sample_count_q   <= 3'd0;
+            tx_shift_q          <= 8'h00;
             tx_bytes_sampled_q  <= 11'd0;
             req_valid_q         <= 1'b0;
             rsp_pending_q       <= 1'b0;
@@ -134,14 +135,17 @@ module btp_spi_slave #(
                 rx_bit_count_q     <= 3'd0;
                 rx_byte_count_q    <= 11'd0;
                 tx_byte_index_q    <= 11'd0;
-                tx_bit_index_q     <= 3'd7;
+                tx_sample_count_q  <= 3'd0;
                 tx_bytes_sampled_q <= 11'd0;
                 overflow_o         <= 1'b0;
 
-                if (rsp_pending_q && (rsp_len_q != 0))
+                if (rsp_pending_q && (rsp_len_q != 0)) begin
+                    tx_shift_q <= rsp_mem[0];
                     spi_miso_o <= rsp_mem[0][7];
-                else
+                end else begin
+                    tx_shift_q <= 8'h00;
                     spi_miso_o <= 1'b0;
+                end
             end
 
             if (!cs_sync_q) begin
@@ -161,29 +165,37 @@ module btp_spi_slave #(
                     end
                 end
 
+                /* MCU samples one presented MISO bit on every rising edge. */
                 if (response_phase_q && sclk_rise) begin
-                    if (tx_bit_index_q == 3'd0)
+                    if (tx_sample_count_q == 3'd7) begin
+                        tx_sample_count_q  <= 3'd0;
                         tx_bytes_sampled_q <= tx_bytes_sampled_q + 11'd1;
+                    end else begin
+                        tx_sample_count_q <= tx_sample_count_q + 3'd1;
+                    end
                 end
 
+                /* Advance to the next bit only after the sample edge. */
                 if (response_phase_q && sclk_fall) begin
-                    if (tx_bit_index_q == 3'd0) begin
-                        tx_bit_index_q <= 3'd7;
+                    if (tx_sample_count_q == 3'd0) begin
                         if ((tx_byte_index_q + 11'd1) < rsp_len_q) begin
                             tx_byte_index_q <= tx_byte_index_q + 11'd1;
+                            tx_shift_q <= rsp_mem[tx_byte_index_q + 11'd1];
                             spi_miso_o <= rsp_mem[tx_byte_index_q + 11'd1][7];
                         end else begin
+                            tx_shift_q <= 8'h00;
                             spi_miso_o <= 1'b0;
                         end
                     end else begin
-                        tx_bit_index_q <= tx_bit_index_q - 3'd1;
-                        spi_miso_o <= rsp_mem[tx_byte_index_q][tx_bit_index_q - 3'd1];
+                        tx_shift_q <= {tx_shift_q[6:0], 1'b0};
+                        spi_miso_o <= tx_shift_q[6];
                     end
                 end
             end
 
             if (cs_rise) begin
                 spi_miso_o <= 1'b0;
+                tx_shift_q <= 8'h00;
                 if (response_phase_q) begin
                     if (tx_bytes_sampled_q >= rsp_len_q) begin
                         rsp_pending_q  <= 1'b0;
