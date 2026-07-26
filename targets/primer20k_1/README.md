@@ -10,43 +10,52 @@ SN32F407
    | SPI mode 0 / BTP v1
    v
 Primer #1
-   |-- BTP request/response endpoint + duplicate response cache
+   |-- BTP request/response + duplicate-safe cache
    |-- atomic K_TX / NP_TX session context
-   |-- forward NTT accelerator
+   |-- ML-KEM polynomial accelerator
+   |     |-- forward NTT
+   |     |-- inverse NTT
+   |     |-- MultiplyNTTs / base-case multiply
+   |     `-- polynomial add/sub
    |-- Ascon-AEAD128 encrypt
    |-- STP telemetry TX
    |-- sequence / nonce manager
    `-- retained packet until receiver commit reconciliation
 ```
 
-Trạng thái trên nhánh `primer1-deployment-v1`:
+Trạng thái trên nhánh `primer1-complete-pqc`:
 
 ```text
-IMPLEMENTED + CI VERIFIED:
+FUNCTIONAL RTL COMPLETE + CI VERIFIED:
   BTP v1 framing, CRC-32/ISO-HDLC
   SPI mode-0 two-transaction request/response transport
-  CDC-safe deployment boundary used by the SPI regression
-  duplicate request response cache and transaction-collision rejection
+  CDC-safe SPI/system-clock boundary
+  truncated-response retry
+  byte-identical duplicate response cache
+  transaction-ID collision rejection
+  non-idempotent PQC duplicate protection
   atomic key/session staging, commit, activation and zeroize
-  forward NTT command path
+  PQC_WRITE_COEFF / PQC_READ_COEFF
+  PQC_LOAD_POLY / PQC_READ_POLY
+  PQC_START_NTT / PQC_START_INTT
+  PQC_POINTWISE_MUL
+  PQC_POLY_ADD_SUB
+  PQC_GET_RESULT
   Ascon-AEAD128 encrypt integration
   STP 24-byte header + 24-byte telemetry encryption
   64-byte retained packet
   sequence advance only after explicit commit reconciliation
-  deployment top generic synthesis with Yosys
+  generic Yosys synthesis of the complete deployment top
 
-STILL OPEN FOR THE COMPLETE FPST/PQC TARGET:
-  complete INTT accelerator
-  PQC_READ_POLY bulk path
-  pointwise multiplication command path
-  polynomial add/sub command path
-  full ML-KEM orchestration from SN32
+REMAINING HARDWARE-QUALIFICATION WORK:
   final FPGA package pins for SPI/supervisor sidebands
-  Gowin place-and-route/timing on the final deployment .cst
-  real-board logic-analyzer qualification
+  final deployment .cst after continuity checking the harness
+  Gowin synthesis/place-and-route/timing on GW2A-LV18PG256C8/I7
+  real-board SPI characterization, starting at 1 MHz
+  logic-analyzer qualification and fault/reset/zeroize testing on hardware
 ```
 
-Primer #1 không phải MCU. Nó nhận command/context từ SN32F407, thực hiện datapath phần cứng và trả BTP response/status.
+Primer #1 không phải MCU. Nó nhận command/context từ SN32F407, thực hiện datapath phần cứng và trả BTP response/status. Phần orchestration ML-KEM cấp hệ thống nằm ở firmware SN32; các primitive phần cứng cần từ Primer #1 đã có trong deployment RTL.
 
 ## 2. Thiết bị
 
@@ -128,6 +137,8 @@ Interface logic:
 
 Đây là top phải dùng cho hệ thống thật sau khi physical pin mapping được khóa.
 
+Deployment build chỉ chứa **một** ML-KEM transform datapath. `primer1_btp_endpoint_deploy` vẫn giữ instance `forward_ntt_core` cũ để tương thích source, nhưng manifest deployment bind instance không còn được route này vào `forward_ntt_core_disabled.sv` với `host_ready=0`. Toàn bộ opcode `0x20..0x28` được route tới `primer1_pqc_btp_endpoint` và `mlkem_pqc_accelerator`.
+
 ## 4. Luồng BTP deployment
 
 Primer #1 dùng BTP v1 trực tiếp trên SPI:
@@ -161,7 +172,9 @@ CRC               : CRC-32/ISO-HDLC
 request/response  : two separate CS transactions
 ```
 
-Response bị đọc dở không bị tiêu thụ. MCU có thể clock lại chính response đã cache. Duplicate request cùng `transaction_id` và cùng nội dung trả lại response byte-identical mà không chạy lại side effect.
+Response bị đọc dở không bị tiêu thụ. MCU có thể clock lại chính response đã cache. Duplicate request cùng `transaction_id`, opcode, length và request CRC trả lại response byte-identical mà không chạy lại side effect. Cùng `transaction_id` nhưng request khác bị từ chối bằng `ERR_BTP_TRANSACTION`.
+
+Router giữ ownership của cached transaction trên toàn deployment, kể cả khi request collision đổi từ opcode control sang PQC hoặc ngược lại.
 
 ## 5. Session / key / telemetry TX
 
@@ -199,21 +212,38 @@ Chi tiết register/profile nằm trong:
 docs/interfaces/FPST-PRIMER1-DEPLOYMENT-PROFILE-v1.1.md
 ```
 
-## 6. Forward NTT hiện có
+## 6. ML-KEM polynomial accelerator
 
-Deployment endpoint đã nối vào `forward_ntt_core` và hiện hỗ trợ:
+Deployment endpoint hỗ trợ đầy đủ primitive đa thức cần cho orchestration ML-KEM:
 
 ```text
 PQC_WRITE_COEFF
 PQC_READ_COEFF
 PQC_LOAD_POLY
+PQC_READ_POLY
 PQC_START_NTT
+PQC_START_INTT
+PQC_POINTWISE_MUL
+PQC_POLY_ADD_SUB
 PQC_GET_RESULT
 ```
 
-`PQC_LOAD_POLY` có semantic guard kiểm tra đầy đủ `count_be16`, giới hạn `1..256`, payload length và coefficient range trước khi command được phép gây side effect.
+### 6.1 Representation
 
-Chưa coi ML-KEM accelerator hoàn chỉnh cho tới khi INTT, pointwise multiply, poly add/sub và orchestration được triển khai/kiểm chứng.
+- `q = 3329`, `N = 256`.
+- Hệ số ở wire boundary là BE16 và phải canonical `0..3328`.
+- Domain nội bộ được theo dõi: `PARTIAL`, `STANDARD`, `NTT`.
+- Forward NTT dùng schedule ML-KEM và standard-domain twiddle ROM.
+- INTT dùng twiddle theo chiều `127 -> 1` và scale cuối `128^-1 mod 3329 = 3303`.
+- `PQC_POINTWISE_MUL` thực hiện ML-KEM `MultiplyNTTs` / base-case multiply, không phải phép nhân từng hệ số đơn giản.
+
+### 6.2 Atomicity / validation
+
+`PQC_LOAD_POLY` validate count, payload length và toàn bộ coefficient range trước khi bắt đầu ghi polynomial.
+
+Các binary operation (`PQC_POINTWISE_MUL`, `PQC_POLY_ADD_SUB`) validate toàn bộ operand thứ hai trước writeback. Operand lỗi không được phép để lại kết quả ghi một phần.
+
+Duplicate của operation có side effect được phục vụ từ cached response. Regression gửi cùng một `POLY_ADD` hai lần với cùng transaction ID và kiểm tra dữ liệu chỉ bị cộng đúng một lần.
 
 ## 7. Verification hiện tại
 
@@ -223,9 +253,15 @@ Chạy toàn bộ regression:
 bash scripts/sim/run_iverilog_unit_tests.sh
 ```
 
-Deployment tests bao gồm:
+Wire-level regression của complete PQC deployment path:
 
-- BTP PING bằng waveform SPI mode 0 ở 1 MHz;
+```bash
+bash scripts/sim/run_primer1_pqc_wire_test.sh
+```
+
+Deployment verification hiện kiểm tra:
+
+- BTP PING bằng waveform SPI mode 0;
 - BTP CRC32 request/response;
 - request và response nằm ở hai CS transaction riêng;
 - IRQ chỉ báo khi response hoàn chỉnh đã cache;
@@ -233,15 +269,17 @@ Deployment tests bao gồm:
 - retry response trả byte-identical;
 - duplicate request không chạy lại command;
 - transaction-ID collision bị từ chối;
-- semantic guard từ chối polynomial count/payload không hợp lệ.
+- semantic guard từ chối polynomial load không hợp lệ;
+- `WRITE/READ_COEFF -> LOAD_POLY -> POLY_ADD duplicate -> POLY_SUB -> NTT -> MultiplyNTTs(identity) -> INTT -> READ_POLY` qua chính SPI/BTP deployment top;
+- NTT/INTT round-trip trả lại đủ 256 hệ số gốc;
+- malformed binary operand bị từ chối trước writeback;
+- generic Yosys synthesis của deployment top dùng single PQC datapath.
 
-Generic synthesis check cho deployment top:
+Generic synthesis check:
 
 ```bash
 bash scripts/synth/check_kiwi_primer20k_fpst_deployment_yosys.sh
 ```
-
-CI của draft deployment PR chạy cả simulation và synthesis gate này.
 
 ## 8. Gowin deployment build
 
@@ -256,37 +294,6 @@ Top module  : kiwi_primer20k_fpst_tx_top
 Sources     : targets/primer20k_1/sources-fpst-deployment.f
 ```
 
-**Chưa dùng constraint self-test để generate deployment release bitstream.** Self-test constraint chỉ khóa clock/reset/button/LED. Deployment top còn có SPI và supervisor sidebands cần pin thật.
+**Chưa generate release bitstream bằng constraint self-test.** Constraint self-test chỉ khóa clock/reset/button/LED. Deployment top còn SPI và supervisor sidebands; các pin này phải được chọn từ header thực, continuity-check với harness, rồi mới commit `.cst` cuối.
 
-Trước khi tạo `.fs` deployment release phải có:
-
-1. continuity-check connector/header trên Primer #1;
-2. continuity-check harness SN32F407 ↔ Primer #1;
-3. khóa `spi_sck_i`, `spi_cs_ni`, `spi_mosi_i`, `spi_miso_o`, `irq_no`, `busy_o`, `fault_o`;
-4. khóa `secure_enable_i`, `zeroize_ni`, `fatal_latched_i`, `heartbeat_o` theo supervisor wiring;
-5. tất cả I/O level tương thích 3.3 V theo phần cứng thực tế;
-6. không còn unconstrained deployment port;
-7. Gowin synthesis/P&R/timing đạt;
-8. bắt đầu hardware SPI ở 1 MHz rồi mới tăng tốc sau khi logic-analyzer test sạch.
-
-## 9. Gate trước khi gọi là “sẵn sàng nạp hệ thống thật”
-
-Code deployment hiện đã qua simulation + generic synthesis. Tuy nhiên chưa được gọi là **hardware-release-ready** cho tới khi cả hai nhóm sau đóng:
-
-```text
-PHYSICAL:
-  final Primer GPIO/package pins
-  harness continuity
-  electrical level/common ground
-  Gowin P&R/timing
-  logic-analyzer SPI qualification
-
-FUNCTIONAL PQC:
-  INTT
-  pointwise multiply
-  poly add/sub
-  required bulk read/result paths
-  ML-KEM high-level orchestration with SN32
-```
-
-Không đổi các mục còn mở thành “verified” chỉ vì RTL compile hoặc Yosys synthesize thành công.
+Khi `.cst` đã khóa, gate cuối trước khi gọi hardware-ready là Gowin P&R/timing + bring-up ở 1 MHz SPI + logic-analyzer capture + reset/zeroize/fault/retry tests trên board thật.
