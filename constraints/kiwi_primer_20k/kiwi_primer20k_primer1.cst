@@ -1,0 +1,59 @@
+// Kiwi Primer 20K v1.0/v1.1
+// Device: GW2A-LV18PG256C8/I7
+// Board evidence: OneKiwi schematic v1.0 + User Guide v1.1.
+// MCU link uses free J2 Bank-2 GPIOs, all at VCCIO2=3.3 V.
+//
+// J2-7   T15  SPI_SCLK
+// J2-8   R14  SPI_CS_N
+// J2-10  T14  SPI_MOSI
+// J2-11  R13  SPI_MISO
+// J2-12  T13  FPGA_READY
+// J2-13  R12  FPGA_IRQ
+// J2-15  T12  FPGA_RESET_N
+// J2-16  R11  FPGA_ZEROIZE_N
+// J2-9/J2-14 are convenient adjacent GND pins.
+
+IO_LOC "sys_clk_i" H11;
+IO_PORT "sys_clk_i" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+
+IO_LOC "rst_ni" A5;
+IO_PORT "rst_ni" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+IO_LOC "spi_sclk_i" T15;
+IO_PORT "spi_sclk_i" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
+
+IO_LOC "spi_cs_ni" R14;
+IO_PORT "spi_cs_ni" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+IO_LOC "spi_mosi_i" T14;
+IO_PORT "spi_mosi_i" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
+
+IO_LOC "spi_miso_o" R13;
+IO_PORT "spi_miso_o" IO_TYPE=LVCMOS33;
+
+IO_LOC "fpga_ready_o" T13;
+IO_PORT "fpga_ready_o" IO_TYPE=LVCMOS33;
+
+IO_LOC "fpga_irq_o" R12;
+IO_PORT "fpga_irq_o" IO_TYPE=LVCMOS33;
+
+IO_LOC "fpga_reset_ni" T12;
+IO_PORT "fpga_reset_ni" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+IO_LOC "fpga_zeroize_ni" R11;
+IO_PORT "fpga_zeroize_ni" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+IO_LOC "led1_no" J1;
+IO_PORT "led1_no" IO_TYPE=LVCMOS33;
+IO_LOC "led2_no" J2;
+IO_PORT "led2_no" IO_TYPE=LVCMOS33;
+IO_LOC "led3_no" H1;
+IO_PORT "led3_no" IO_TYPE=LVCMOS33;
+IO_LOC "led4_no" H2;
+IO_PORT "led4_no" IO_TYPE=LVCMOS33;
+IO_LOC "led5_no" G1;
+IO_PORT "led5_no" IO_TYPE=LVCMOS33;
+IO_LOC "led6_no" G2;
+IO_PORT "led6_no" IO_TYPE=LVCMOS33;
+IO_LOC "led7_no" F1;
+IO_PORT "led7_no" IO_TYPE=LVCMOS33;
