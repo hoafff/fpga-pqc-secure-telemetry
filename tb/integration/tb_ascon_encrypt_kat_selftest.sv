@@ -49,8 +49,7 @@ module tb_ascon_encrypt_kat_selftest;
             end
 
             if (!done || !complete || !pass || fail) begin
-                $display("FAIL: board KAT self-test pass=%b fail=%b complete=%b "
-                         "mismatch=%0d got=%02h expected=%02h error=%04h state=%0d",
+                $display("FAIL: board KAT self-test pass=%b fail=%b complete=%b mismatch=%0d got=%02h expected=%02h error=%04h state=%0d",
                          pass, fail, complete, mismatch_index,
                          mismatch_observed, mismatch_expected, core_error_code,
                          dut.state_q);
