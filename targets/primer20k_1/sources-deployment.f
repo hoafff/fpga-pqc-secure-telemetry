@@ -12,10 +12,11 @@ rtl/ntt/true_dual_port_ram_256x16.sv
 rtl/ntt/coefficient_pingpong_memory_256x16.sv
 rtl/ntt/forward_ntt_core.sv
 
-# Ascon encrypt datapath
+# Ascon encrypt datapath and frozen integration boundary
 rtl/ascon/ascon_round.sv
 rtl/ascon/ascon_permutation.sv
 rtl/ascon/ascon_aead_encrypt.sv
+rtl/ascon/ascon_aead_core.sv
 
 # Deployment transport/session/telemetry integration
 rtl/common/simple_dual_port_ram_2048x8.sv
