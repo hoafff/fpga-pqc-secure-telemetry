@@ -30,6 +30,8 @@ typedef enum {
 typedef struct {
     const fpst_platform_t *platform;
     uint16_t next_transaction_id;
+    uint16_t last_remote_status;
+    uint8_t last_response_flags;
     uint8_t request_buf[FPST_BTP_MAX_FRAME];
     uint8_t response_buf[FPST_BTP_MAX_FRAME];
 } fpst_fpga_link_t;
