@@ -64,6 +64,14 @@ run_test tb_coefficient_pingpong_memory_256x16 \
     "${ROOT_DIR}/rtl/ntt/coefficient_pingpong_memory_256x16.sv" \
     "${ROOT_DIR}/tb/unit/tb_coefficient_pingpong_memory_256x16.sv"
 
+run_test tb_btp_crc32_iso_hdlc \
+    "${ROOT_DIR}/rtl/transport/btp_crc32_iso_hdlc.sv" \
+    "${ROOT_DIR}/tb/unit/tb_btp_crc32_iso_hdlc.sv"
+
+run_test tb_btp_spi_slave \
+    "${ROOT_DIR}/rtl/transport/btp_spi_slave.sv" \
+    "${ROOT_DIR}/tb/unit/tb_btp_spi_slave.sv"
+
 COMMON_NTT_SOURCES=(
     "${ROOT_DIR}/rtl/arithmetic/mod_add.sv"
     "${ROOT_DIR}/rtl/arithmetic/mod_sub.sv"
