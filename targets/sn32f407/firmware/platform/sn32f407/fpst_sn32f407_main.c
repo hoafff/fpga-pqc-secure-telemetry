@@ -137,8 +137,7 @@ static void handle_command(const char *line) {
     }
     if (strcmp(line, "zeroize") == 0) {
         if (!require_link()) return;
-        fpst_session_zeroize(&g_session);
-        console("OK\r\n");
+        print_result(fpst_session_zeroize(&g_session));
         return;
     }
     if (strcmp(line, "reset") == 0) {
