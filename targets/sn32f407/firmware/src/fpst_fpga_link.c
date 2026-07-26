@@ -134,6 +134,14 @@ fpst_result_t fpst_fpga_link_init(fpst_fpga_link_t *link,
     return FPST_OK;
 }
 
+fpst_result_t fpst_fpga_link_rebind(fpst_fpga_link_t *link,
+                                    const fpst_platform_t *platform) {
+    if (link == NULL || !fpst_platform_is_valid(platform))
+        return FPST_ERR_ARGUMENT;
+    link->platform = platform;
+    return FPST_OK;
+}
+
 void fpst_fpga_link_recover(fpst_fpga_link_t *link, bool reset_fpga) {
     if (link == NULL || link->platform == NULL) return;
     link->platform->spi_end(link->platform->ctx);
@@ -171,8 +179,8 @@ fpst_result_t fpst_fpga_link_exchange_raw(fpst_fpga_link_t *link,
 
     /*
      * The encoded request and txid are intentionally created once outside the
-     * retry loop. Primer #1 deduplicates this exact signature and therefore a
-     * retry can never repeat a non-idempotent side effect.
+     * retry loop. Each endpoint deduplicates this exact signature and therefore
+     * a retry can never repeat a non-idempotent side effect.
      */
     for (unsigned attempt = 0u; attempt <= FPST_LINK_MAX_RETRIES; ++attempt) {
         if (attempt != 0u) {
