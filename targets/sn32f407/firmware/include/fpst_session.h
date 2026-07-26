@@ -19,7 +19,7 @@ typedef struct {
 } fpst_session_manager_t;
 
 fpst_result_t fpst_session_init(fpst_session_manager_t *m,
-                                fpst_fpga_link_t *link);
+                                 fpst_fpga_link_t *link);
 
 /*
  * Derive K_TX/NP_TX and atomically load the frozen 24-byte Primer #1 TX context.
@@ -36,7 +36,7 @@ fpst_result_t fpst_session_establish(
 
 /* Release the retained packet and advance the FPGA sequence exactly once. */
 fpst_result_t fpst_session_commit_tx(fpst_session_manager_t *m,
-                                     uint64_t committed_sequence);
+                                      uint64_t committed_sequence);
 
 /*
  * Reconcile with a receiver expected_sequence after a lost acknowledgement:
@@ -44,9 +44,14 @@ fpst_result_t fpst_session_commit_tx(fpst_session_manager_t *m,
  *   expected == next_sequence + 1 -> receiver committed; release locally
  */
 fpst_result_t fpst_session_reconcile_tx(fpst_session_manager_t *m,
-                                        uint64_t receiver_expected_sequence,
-                                        bool *resend_required);
+                                         uint64_t receiver_expected_sequence,
+                                         bool *resend_required);
 
-void fpst_session_zeroize(fpst_session_manager_t *m);
+/*
+ * Request in-band Primer #1 zeroize and invalidate MCU session metadata.
+ * If the remote wipe cannot be confirmed, local metadata is still cleared but
+ * the manager enters ERROR rather than pretending that the FPGA is key-free.
+ */
+fpst_result_t fpst_session_zeroize(fpst_session_manager_t *m);
 
 #endif
