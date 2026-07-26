@@ -42,7 +42,6 @@ module primer1_session_manager (
     output logic         event_valid_o,
     output logic [15:0]  event_code_o
 );
-    /* Primer #1 owns TX material only.  Profile value 0x01 means TX. */
     localparam logic [7:0]  KEY_DIRECTION_TX = 8'h01;
     localparam logic [15:0] TX_MATERIAL_BYTES = 16'd24;
 
@@ -122,7 +121,6 @@ module primer1_session_manager (
                     event_valid_o <= 1'b1;
                     event_code_o  <= ERR_ARGUMENT;
                 end else begin
-                    /* Starting a new staging transaction never changes active key. */
                     staging_session_id_q   <= load_session_id_i;
                     staging_key_q          <= '0;
                     staging_nonce_prefix_q <= '0;
@@ -145,7 +143,10 @@ module primer1_session_manager (
             end
 
             if (load_commit_i) begin
-                if (!staging_valid_q) begin
+                if (!secure_enable_i) begin
+                    event_valid_o <= 1'b1;
+                    event_code_o  <= ERR_SECURE_DISABLED;
+                end else if (!staging_valid_q) begin
                     event_valid_o <= 1'b1;
                     event_code_o  <= ERR_KEY_COMMIT;
                 end else if (staging_write_mask_q != 24'hFF_FFFF) begin
@@ -156,7 +157,6 @@ module primer1_session_manager (
                     event_valid_o <= 1'b1;
                     event_code_o  <= ERR_KEY_COMMIT;
                 end else begin
-                    /* Atomic transition into KEY_VALID. Activation is separate 0x46. */
                     session_id_q      <= staging_session_id_q;
                     traffic_key_q     <= staging_key_q;
                     nonce_prefix_q    <= staging_nonce_prefix_q;
@@ -182,9 +182,11 @@ module primer1_session_manager (
                 end
             end
 
-            /* Commit only the exact retained sequence once receiver accepted it. */
             if (tx_commit_i) begin
-                if (!key_valid_q || !session_active_q) begin
+                if (!secure_enable_i) begin
+                    event_valid_o <= 1'b1;
+                    event_code_o  <= ERR_SECURE_DISABLED;
+                end else if (!key_valid_q || !session_active_q) begin
                     event_valid_o <= 1'b1;
                     event_code_o  <= ERR_INVALID_STATE;
                 end else if (tx_commit_sequence_i != tx_sequence_q) begin
@@ -196,13 +198,11 @@ module primer1_session_manager (
                 end
             end
 
-            /* Lost-ack reconciliation:
-             * expected == sent     : receiver has not committed, keep packet.
-             * expected == sent + 1 : prior packet committed; advance locally.
-             * otherwise            : desync and require a new activation/session.
-             */
             if (tx_reconcile_i) begin
-                if (!key_valid_q || !session_active_q) begin
+                if (!secure_enable_i) begin
+                    event_valid_o <= 1'b1;
+                    event_code_o  <= ERR_SECURE_DISABLED;
+                end else if (!key_valid_q || !session_active_q) begin
                     event_valid_o <= 1'b1;
                     event_code_o  <= ERR_INVALID_STATE;
                 end else if (rx_expected_sequence_i == tx_sequence_q + 64'd1) begin
