@@ -28,6 +28,19 @@ add_library(fpst_firmware_core
 target_include_directories(fpst_firmware_core PUBLIC include)
 target_compile_options(fpst_firmware_core PRIVATE -Wall -Wextra -Werror -Wpedantic)
 
+# Host-only syntax gate for the two new target-specific board sources. The fake
+# SN32 header models only register names touched by these files; real sign-off is
+# still ARM Compiler 6 + organizer DFP as documented in KEIL_DUAL_PRIMER_BUILD.md.
+add_library(test_sn32_dual_board_syntax OBJECT
+    platform/sn32f407/fpst_sn32f407_multiport.c
+    platform/sn32f407/fpst_sn32f407_dual_main.c)
+target_include_directories(test_sn32_dual_board_syntax PRIVATE
+    tests/sn32_fake
+    include
+    platform/sn32f407)
+target_compile_options(test_sn32_dual_board_syntax PRIVATE
+    -Wall -Wextra -Werror -Wpedantic)
+
 if(FPST_ENABLE_MLKEM_NATIVE)
     set(FPST_MLKEM_NATIVE_MONOLITHIC "${FPST_MLKEM_NATIVE_ROOT}/mlkem/mlkem_native.c")
     set(FPST_MLKEM_NATIVE_API_DIR "${FPST_MLKEM_NATIVE_ROOT}/mlkem")
