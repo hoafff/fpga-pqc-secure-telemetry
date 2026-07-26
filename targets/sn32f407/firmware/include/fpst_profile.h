@@ -19,6 +19,7 @@
  * Normative initial bring-up profile: SPI Mode 0, 8-bit, MSB first, 1 MHz.
  * The SN32F407F organizer SDK defaults HCLK to 12 MHz, so divisor 12 gives
  * exactly 1 MHz without changing the verified UART/clock configuration.
+ * Frequency may be increased only after the v1.1 qualification sweep.
  */
 #define FPST_LINK_SPI_HZ                 1000000u
 #define FPST_LINK_SPI_MODE                     0u
@@ -42,13 +43,12 @@
 #define FPST_HOST_UART_BAUD                 115200u
 
 /*
- * FPST v1.1 defines TELEMETRY_TX_SAMPLE but does not expose, in the frozen BTP
- * registry text available to this implementation, a transport command that
- * carries Primer #2's COMMIT_ACCEPTED evidence back to Primer #1. The project
- * therefore reserves one explicit implementation-profile opcode and records
- * it in docs/spec-delta/FPST-v1.1-implementation-decisions.md.
+ * IMPORTANT: no project-private BTP opcode is allocated here. Appendix B of
+ * FPST v1.1 is authoritative; in particular 0x61 is STP_RX_PACKET for Primer
+ * #2 and SHALL NOT be reused for TX acknowledgement on Primer #1. Delivery
+ * acknowledgement remains a system-integration input until mapped through a
+ * frozen existing BTP/register contract.
  */
-#define FPST_PROFILE_OP_TX_COMMIT_ACCEPTED    0x61u
 
 /* Development-only direct shared-secret injection is disabled by default. */
 #ifndef FPST_ENABLE_DEV_SECRET_INJECTION
