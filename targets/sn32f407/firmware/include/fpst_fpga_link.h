@@ -92,18 +92,24 @@ typedef enum {
  * Oversized legal-BTP responses are drained and rejected locally; this is a
  * target memory-capacity limit, not a change to the BTP wire format.
  *
- * response_buf has 768 bytes of backing storage rather than only the 538-byte
- * BTP frame requirement. After the two Primer #1 forward-NTT transactions of
- * ML-KEM-512 encapsulation have completed, that same storage is reused as the
- * temporary 768-byte ciphertext. The ciphertext is streamed to UART and wiped
- * before BTP key-load traffic resumes, avoiding a second 768-byte MCU buffer.
+ * After ML-KEM's two forward NTT transactions, sender session establishment
+ * reuses response_buf[32..799] as the 768-byte public ciphertext. The following
+ * KEY_LOAD/SESSION_ACTIVATE operations return no application data, so their
+ * complete generic BTP response frame is only 10 + 12 + 4 = 26 bytes and stays
+ * inside response_buf[0..25]. The ciphertext therefore survives atomic key
+ * commit and is released to UART only after session activation succeeds.
  */
-#define FPST_LINK_MCU_MAX_REQUEST_PAYLOAD   514u
-#define FPST_LINK_MCU_MAX_RESPONSE_PAYLOAD  524u
-#define FPST_LINK_MCU_BUFFER_PAYLOAD        524u
+#define FPST_LINK_MCU_MAX_REQUEST_PAYLOAD      514u
+#define FPST_LINK_MCU_MAX_RESPONSE_PAYLOAD     524u
+#define FPST_LINK_MCU_BUFFER_PAYLOAD           524u
 #define FPST_LINK_MCU_BUFFER_FRAME \
     (FPST_FRAME_FIXED_BYTES + FPST_LINK_MCU_BUFFER_PAYLOAD)
-#define FPST_LINK_MCU_RESPONSE_STORAGE_BYTES 768u
+#define FPST_LINK_MCU_SESSION_PREFIX_BYTES      32u
+#define FPST_LINK_MCU_SESSION_CIPHERTEXT_BYTES 768u
+#define FPST_LINK_MCU_RESPONSE_STORAGE_BYTES \
+    (FPST_LINK_MCU_SESSION_PREFIX_BYTES + FPST_LINK_MCU_SESSION_CIPHERTEXT_BYTES)
+#define FPST_LINK_MCU_GENERIC_NODATA_FRAME_BYTES \
+    (FPST_FRAME_HEADER_BYTES + FPST_GENERIC_RESPONSE_BYTES + FPST_FRAME_TRAILER_BYTES)
 
 _Static_assert(FPST_LINK_MCU_BUFFER_PAYLOAD >= FPST_LINK_MCU_MAX_REQUEST_PAYLOAD,
                "MCU BTP buffer too small for Primer #1 request set");
@@ -111,9 +117,11 @@ _Static_assert(FPST_LINK_MCU_BUFFER_PAYLOAD >= FPST_LINK_MCU_MAX_RESPONSE_PAYLOA
                "MCU BTP buffer too small for Primer #1 response set");
 _Static_assert(FPST_LINK_MCU_BUFFER_FRAME <= FPST_LINK_MAX_FRAME,
                "MCU local frame capacity cannot exceed BTP wire maximum");
+_Static_assert(FPST_LINK_MCU_GENERIC_NODATA_FRAME_BYTES <=
+                   FPST_LINK_MCU_SESSION_PREFIX_BYTES,
+               "session BTP response may overwrite ciphertext scratch");
 _Static_assert(FPST_LINK_MCU_RESPONSE_STORAGE_BYTES >= FPST_LINK_MCU_BUFFER_FRAME,
                "response backing storage must hold the largest local BTP frame");
-
 
 typedef struct {
     const fpst_platform_t *platform;
