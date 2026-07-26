@@ -38,6 +38,20 @@ run_test tb_primer2_stp_rx \
     "${ROOT_DIR}/rtl/telemetry/primer2_stp_rx.sv" \
     "${ROOT_DIR}/tb/integration/tb_primer2_stp_rx.sv"
 
+# Exercise the actual Primer #2 BTP deployment endpoint contract seen by SN32:
+# RX key provisioning, session activation, STP commit response, fresh-transaction
+# replay reconciliation and counters. A real Primer #1 STP packet is used as the
+# receiver input so byte packing is checked end-to-end across the two wrappers.
+run_test tb_primer2_btp_endpoint \
+    "${ROOT_DIR}/rtl/transport/fpst_btp_pkg.sv" \
+    "${ROOT_DIR}/rtl/transport/btp_response_builder.sv" \
+    "${ROOT_DIR}/rtl/session/primer2_session_context.sv" \
+    "${ASCON_SOURCES[@]}" \
+    "${ROOT_DIR}/rtl/telemetry/primer1_stp_tx.sv" \
+    "${ROOT_DIR}/rtl/telemetry/primer2_stp_rx.sv" \
+    "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/primer2_btp_endpoint_deploy.sv" \
+    "${ROOT_DIR}/tb/integration/tb_primer2_btp_endpoint.sv"
+
 # Compile the complete board target as a hierarchy/syntax gate. This catches
 # missing source-manifest entries and integration port drift even before a
 # device-specific Gowin build is available.
@@ -51,4 +65,4 @@ iverilog -g2012 -Wall -s kiwi_primer20k_fpst_rx_top \
     -o "${BUILD_DIR}/kiwi_primer20k_fpst_rx_top.vvp" \
     "${DEPLOY_SOURCES[@]}"
 
-echo "PASS: Primer #2 decrypt/STP policy regressions and deployment hierarchy compile completed"
+echo "PASS: Primer #2 decrypt/STP/BTP regressions and deployment hierarchy compile completed"
