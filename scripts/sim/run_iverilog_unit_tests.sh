@@ -101,6 +101,11 @@ run_test tb_ascon_encrypt_kat_selftest \
     "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/ascon_encrypt_kat_selftest.sv" \
     "${ROOT_DIR}/tb/integration/tb_ascon_encrypt_kat_selftest.sv"
 
+run_test tb_primer1_request_semantic_guard \
+    "${ROOT_DIR}/rtl/transport/fpst_btp_pkg.sv" \
+    "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/primer1_request_semantic_guard.sv" \
+    "${ROOT_DIR}/tb/unit/tb_primer1_request_semantic_guard.sv"
+
 COMMON_PRIMER1_DEPLOY_SOURCES=(
     "${ROOT_DIR}/rtl/transport/fpst_btp_pkg.sv"
     "${ROOT_DIR}/rtl/transport/btp_spi_slave.sv"
