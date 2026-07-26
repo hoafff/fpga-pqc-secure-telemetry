@@ -12,6 +12,11 @@ module primer1_system_core (
     output logic         busy_o,
     output logic         fault_o,
 
+    /* Logical delivery acknowledgement from the complete system integration.
+     * No private BTP opcode or physical pin is assigned by this module. */
+    input  logic         tx_commit_valid_i,
+    input  logic [63:0]  tx_commit_sequence_i,
+
     output logic         key_valid_o,
     output logic         session_active_o,
     output logic [63:0]  tx_sequence_o,
@@ -100,6 +105,8 @@ module primer1_system_core (
         .rsp_flags_o            (rsp_flags),
         .rsp_transaction_id_o   (rsp_transaction_id),
         .rsp_payload_len_o      (rsp_payload_len),
+        .tx_commit_valid_i      (tx_commit_valid_i),
+        .tx_commit_sequence_i   (tx_commit_sequence_i),
         .key_valid_o            (key_valid_o),
         .session_active_o       (session_active_o),
         .tx_sequence_o          (tx_sequence_o),
