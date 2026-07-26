@@ -34,8 +34,8 @@ module tb_btp_response_builder;
         if (rsp_we) rsp_mem[rsp_waddr] <= rsp_wdata;
     end
 
-    localparam logic [223:0] EXPECTED = 224'h
-        a55a017f01001234000e000000001122334400000002dead59751e86;
+    localparam logic [223:0] EXPECTED =
+        224'ha55a017f01001234000e000000001122334400000002dead59751e86;
 
     initial begin
         start=0;
