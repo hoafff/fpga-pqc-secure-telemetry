@@ -29,10 +29,10 @@ static fpst_result_t send_request(fpst_fpga_link_t *link,
 }
 
 /*
- * If a response is malformed, keep the same CS assertion active and clock the
- * remainder of the maximum legal frame. This guarantees that a valid cached
- * Primer response is fully consumed before a duplicate request is retried,
- * even when corruption changed the observed payload-length field.
+ * If a response is malformed or exceeds this MCU's local storage envelope,
+ * keep the same CS assertion active and clock the remainder of the maximum
+ * legal wire frame. This consumes the cached response before any retry and
+ * prevents a truncated read from being confused with the next transaction.
  */
 static void drain_response_to_max(fpst_fpga_link_t *link, size_t already_clocked) {
     while (already_clocked < FPST_LINK_MAX_FRAME) {
@@ -80,6 +80,11 @@ static fpst_result_t read_response(fpst_fpga_link_t *link,
     const uint16_t payload_len = fpst_load_be16(&frame[8]);
     if (payload_len > FPST_LINK_MAX_PAYLOAD) {
         rc = FPST_ERR_FORMAT;
+        drain_response_to_max(link, offset);
+        goto out;
+    }
+    if (payload_len > FPST_LINK_MCU_MAX_RESPONSE_PAYLOAD) {
+        rc = FPST_ERR_BUFFER_TOO_SMALL;
         drain_response_to_max(link, offset);
         goto out;
     }
@@ -149,6 +154,8 @@ fpst_result_t fpst_fpga_link_exchange_raw(fpst_fpga_link_t *link,
         (payload_len != 0u && payload == NULL)) {
         return FPST_ERR_ARGUMENT;
     }
+    if (payload_len > FPST_LINK_MCU_MAX_REQUEST_PAYLOAD)
+        return FPST_ERR_BUFFER_TOO_SMALL;
 
     uint16_t txid = link->next_transaction_id++;
     if (link->next_transaction_id == 0u) link->next_transaction_id = 1u;
