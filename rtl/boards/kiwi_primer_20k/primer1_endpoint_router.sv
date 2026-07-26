@@ -66,8 +66,6 @@ module primer1_endpoint_router #(
     logic current_collision;
     logic current_duplicate;
     logic route_pqc;
-    logic routed_request_error;
-    logic [15:0] routed_request_error_code;
 
     logic control_request_valid;
     logic control_request_accept;
@@ -108,19 +106,18 @@ module primer1_endpoint_router #(
                                !current_same_signature;
     assign current_duplicate = current_same_signature;
 
-    // An exact retry must return to the endpoint that owns the cached response.
-    // A transaction-ID collision is routed by opcode but converted to an error
-    // before either endpoint can cause a side effect.
+    /*
+     * A retry or transaction-ID collision must return to the endpoint that owns
+     * the retained response signature.  That endpoint already has the complete
+     * cached request signature and can therefore either restore the exact old
+     * response (duplicate) or produce ERR_BTP_TRANSACTION/detail=1 (collision)
+     * without executing a command.  This remains correct even when the new
+     * opcode belongs to the other endpoint class.
+     */
     assign route_pqc = active_q
                      ? select_pqc_q
-                     : (current_duplicate ? last_select_pqc_q : current_is_pqc);
-
-    assign routed_request_error = request_error_i ||
-                                  ((!active_q && request_valid_i) ? current_collision
-                                                                 : active_collision_q);
-    assign routed_request_error_code = request_error_i
-                                     ? request_error_code_i
-                                     : (routed_request_error ? ERR_BTP_TRANSACTION : ERR_OK);
+                     : ((current_duplicate || current_collision)
+                        ? last_select_pqc_q : current_is_pqc);
 
     assign control_request_valid = request_valid_i && !route_pqc;
     assign pqc_request_valid = request_valid_i && route_pqc;
@@ -156,14 +153,14 @@ module primer1_endpoint_router #(
         .fatal_latched_i(fatal_latched_i),
         .request_valid_i(control_request_valid),
         .request_accept_o(control_request_accept),
-        // Make PQC opcodes unreachable inside the legacy control endpoint.
+        // PQC opcodes are masked only while this endpoint is not selected.
         .request_opcode_i(route_pqc ? OP_GET_STATUS : request_opcode_i),
         .request_flags_i(request_flags_i),
         .request_transaction_id_i(request_transaction_id_i),
         .request_payload_len_i(request_payload_len_i),
         .request_crc32_i(request_crc32_i),
-        .request_error_i(routed_request_error),
-        .request_error_code_i(routed_request_error_code),
+        .request_error_i(request_error_i),
+        .request_error_code_i(request_error_code_i),
         .request_payload_rd_addr_o(control_payload_addr),
         .request_payload_rd_data_i(request_payload_rd_data_i),
         .tx_frame_ready_i(tx_frame_ready_i),
@@ -196,8 +193,8 @@ module primer1_endpoint_router #(
         .request_transaction_id_i(request_transaction_id_i),
         .request_payload_len_i(request_payload_len_i),
         .request_crc32_i(request_crc32_i),
-        .request_error_i(routed_request_error),
-        .request_error_code_i(routed_request_error_code),
+        .request_error_i(request_error_i),
+        .request_error_code_i(request_error_code_i),
         .request_payload_rd_addr_o(pqc_payload_addr),
         .request_payload_rd_data_i(request_payload_rd_data_i),
         .tx_frame_ready_i(tx_frame_ready_i),
@@ -241,7 +238,8 @@ module primer1_endpoint_router #(
         end else begin
             if (!active_q && request_valid_i) begin
                 active_q <= 1'b1;
-                select_pqc_q <= current_duplicate ? last_select_pqc_q : current_is_pqc;
+                select_pqc_q <= (current_duplicate || current_collision)
+                              ? last_select_pqc_q : current_is_pqc;
                 active_collision_q <= current_collision;
                 active_duplicate_q <= current_duplicate;
                 active_transaction_id_q <= request_transaction_id_i;
@@ -250,6 +248,8 @@ module primer1_endpoint_router #(
                 active_crc32_q <= request_crc32_i;
             end
 
+            // A collision response must not replace the signature it collided
+            // with; exact duplicates also leave the signature semantically same.
             if (active_q && tx_frame_commit_o && !active_collision_q) begin
                 last_valid_q <= 1'b1;
                 last_select_pqc_q <= select_pqc_q;
