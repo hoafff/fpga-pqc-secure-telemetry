@@ -29,11 +29,22 @@ typedef enum {
 
     FPST_OP_ASCON_KAT            = 0x50,
     FPST_OP_TELEMETRY_TX_SAMPLE  = 0x60,
-    FPST_OP_STP_RX_PACKET         = 0x61,
+    FPST_OP_STP_RX_PACKET        = 0x61,
 
-    /* Integration-profile status helpers retained by PRIMER1 RTL design v1. */
-    FPST_OP_STP_GET_COUNTERS      = 0x62,
-    FPST_OP_STP_CLEAR_COUNTERS    = 0x63,
+    /* Integration-profile status helpers. */
+    FPST_OP_STP_GET_COUNTERS     = 0x62,
+    FPST_OP_STP_CLEAR_COUNTERS   = 0x63,
+
+    /*
+     * BTP v1 backward-compatible extensions that close the Section 10.8.1
+     * retained-packet acknowledgement gap without changing the frozen frame:
+     *   0x64 BE64(committed_sequence)
+     *   0x65 BE64(receiver_expected_sequence)
+     * Both MCU and Primer #1 implement these in the same integration baseline.
+     */
+    FPST_OP_STP_TX_COMMIT        = 0x64,
+    FPST_OP_STP_TX_RECONCILE     = 0x65,
+
     FPST_OP_PING                  = 0x7F
 } fpst_opcode_t;
 
