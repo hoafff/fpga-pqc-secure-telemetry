@@ -1,164 +1,251 @@
 # Target: Kiwi Primer 20K #1
 
-## 1. Vai trò theo FPST v1.1
+## 1. Vai trò deployment theo FPST v1.1
 
-Primer #1 là phía phát và accelerator chính:
+Primer #1 là endpoint phát và PQC accelerator của hệ thống:
 
 ```text
-CURRENT:
-  forward NTT hardware self-test
-  Ascon-AEAD128 encrypt RTL engine
-  Ascon 24-byte AD / 24-byte plaintext KAT self-test
-
-PLANNED:
-  INTT accelerator
-  ML-KEM-512 accelerator command interface
-  ascon_aead_core compatibility wrapper
-  session/key context registers
-  STP packet formatter / telemetry TX
-  sequence + nonce manager
-  retained packet buffer và commit/retry support
-  MCU–FPGA physical interface
+SN32F407 BTP master
+        |
+        | SPI Mode 0, BTP v1.1
+        v
+Kiwi Primer 20K #1
+  |-- BTP parser + CRC-32/ISO-HDLC + response cache
+  |-- atomic TX session/key context
+  |-- forward NTT accelerator
+  |-- Ascon-AEAD128 encrypt
+  |-- STP telemetry TX + retained packet
+  |-- supervisor secure_enable / zeroize / heartbeat
 ```
 
-Primer #1 không phải MCU. Nó nhận operation context và dữ liệu từ tầng điều khiển, thực hiện datapath phần cứng rồi trả kết quả/trạng thái.
+Normative baseline: `FPST-SYS-SPEC-001 v1.1`.
 
-## 2. Thiết bị
+## 2. Board target
 
 ```text
 Board       : OneKiwi Kiwi Primer 20K v1.0
 FPGA        : GW2A-LV18PG256C8/I7
-Clock       : 27 MHz SYS_CLK
+System clock: 27 MHz
 Clock pin   : H11
-Reset       : A5, active low at board boundary
-BTN1        : A3, active low
-LED1..LED7  : J1,J2,H1,H2,G1,G2,F1, active low
+Board reset : A5, active low
+Artifact    : Gowin .fs
 ```
 
-Không dùng constraint của Tang Primer 20K hoặc board khác.
-
-## 3. Artifact cần nạp
+Self-test tops are retained as diagnostic images, but the deployment image uses:
 
 ```text
-Gowin bitstream: *.fs
+Top module      : kiwi_primer20k_fpst_tx_top
+Source manifest : targets/primer20k_1/sources-deployment.f
+Constraint      : constraints/kiwi_primer_20k/kiwi_primer20k_fpst_tx.cst
+Timing          : constraints/kiwi_primer_20k/kiwi_primer20k_fpst_tx.sdc
 ```
 
-Bitstream không được commit như source chuẩn trừ khi có yêu cầu release cụ thể. Source, constraint và build record mới là nguồn tái tạo.
-
-## 4. Hai bitstream self-test hiện có
-
-### 4.1 Forward NTT self-test
+## 3. Deployment architecture
 
 ```text
-Top module:
-  kiwi_primer20k_ntt_selftest_top
+                          27 MHz domain
 
-Source manifest:
-  targets/primer20k_1/sources-ntt-selftest.f
+SPI pins ---> btp_spi_slave ---> primer1_btp_endpoint
+                    |                    |
+                    |                    +--> primer1_session_context
+                    |                    |
+                    |                    +--> forward_ntt_core
+                    |                    |
+                    |                    +--> stp_tx_telemetry
+                    |                              |
+                    |                              +--> ascon_aead_encrypt
+                    |
+                    +<---- cached BTP response <---+
 ```
 
-Self-test nạp đa thức ramp 256 hệ số, chạy forward NTT, đọc lại toàn bộ output và báo PASS/FAIL bằng LED.
+`btp_spi_slave` synchronizes SCLK/CS/MOSI into the 27 MHz domain. The first board bring-up rate is **1 MHz**, as required by FPST v1.1. A faster SPI setting is not a release value until real-board qualification records zero CRC/frame errors and timing margin.
 
-### 4.2 Ascon-AEAD128 encrypt self-test
+## 4. BTP wire contract
+
+One command uses two separate CS transactions:
 
 ```text
-Top module:
-  kiwi_primer20k_ascon_selftest_top
+transaction 1:
+CS_N low
+MCU  -> complete BTP request
+CS_N high
 
-Source manifest:
-  targets/primer20k_1/sources-ascon-selftest.f
+Primer parses / executes / builds response
+irq_n becomes low
 
-Reusable engine:
-  rtl/ascon/ascon_aead_encrypt.sv
+transaction 2:
+CS_N low
+MCU  <- complete BTP response
+CS_N high
+irq_n returns high after the full response was consumed
 ```
 
-Self-test Ascon chạy tự động sau reset và chạy lại khi bấm `BTN1`:
+Frame:
 
 ```text
-Key       = 00 01 ... 0F
-Nonce     = 10 11 ... 1F
-AD        = 30 31 ... 47  (24 byte)
-Plaintext = 20 21 ... 37  (24 byte)
-
-Expected ciphertext:
-9D29F9D52ADF9470AF4CBCE0A4481AC7FCB1B32976469892
-
-Expected tag:
-DFEBAF445205EC9B019D022C7042AE59
+SOF             2   A5 5A
+version         1   01
+opcode          1
+flags           1   response/error/more
+reserved        1   00
+transaction_id  2   big-endian
+payload_len     2   big-endian, <=1024
+payload         N
+crc32           4   CRC-32/ISO-HDLC, big-endian wire value
 ```
 
-Vector được tạo bởi reference model bám NIST SP 800-232 và reference model đó được kiểm tra trước bằng các KAT chính thức trong `ascon-c`.
-
-LED của Ascon self-test:
-
-| LED | Ý nghĩa |
-|---|---|
-| LED1 | heartbeat |
-| LED2 | self-test đang chạy |
-| LED3 | self-test đã hoàn tất |
-| LED4 | PASS |
-| LED5 | FAIL |
-| LED6 | Ascon core đang bận |
-| LED7 | có `error_code` khác 0 |
-
-Trạng thái thành công cuối cùng:
+CRC parameters:
 
 ```text
-LED1 : nhấp nháy
-LED2 : tắt
-LED3 : sáng
-LED4 : sáng
-LED5 : tắt
-LED6 : tắt
-LED7 : tắt
+poly reflected : 0xEDB88320
+init           : 0xFFFFFFFF
+RefIn/RefOut   : true/true
+XorOut         : 0xFFFFFFFF
+check          : "123456789" -> 0xCBF43926
+coverage       : bytes version through final payload byte
 ```
 
-## 5. Kiểm tra trên PC
+Malformed frames are rejected before any architected state change. Exact duplicate `transaction_id` requests are served from the cached response and are not executed twice.
 
-```bash
-python3 software/reference/check_ascon_aead128.py
-bash scripts/sim/run_iverilog_unit_tests.sh
-bash scripts/synth/check_kiwi_primer20k_ascon_selftest_yosys.sh
+## 5. Key/session deployment profile
+
+FPST Appendix B freezes the command meanings but abbreviates several key-load payload layouts. This target freezes the following byte-level profile so the later SN32 implementation has one deterministic contract:
+
+```text
+KEY_LOAD_BEGIN (0x40), 7 bytes
+  0..3 session_id, BE, nonzero
+  4    direction = 0x00 for Primer #1 TX
+  5..6 total_len = 0x0018
+
+KEY_LOAD_CHUNK (0x41), 2+N bytes
+  0..1 offset, BE
+  2..  bytes
+
+24-byte staged context
+  offset  0..15 : K_TX
+  offset 16..23 : NP_TX
+
+KEY_LOAD_COMMIT (0x42), 4 bytes
+  session_id, BE
+
+KEY_LOAD_ABORT (0x43), 0 bytes
+SESSION_ACTIVATE (0x46), 4 bytes
+ZEROIZE (0x45), 2-byte reason
 ```
 
-Các test Ascon hiện kiểm tra:
+Staging and active context are separate. Commit is atomic. `key_valid` is cleared immediately when a replacement key load begins and on zeroize. Session activation resets TX sequence to zero.
 
-- KAT rỗng chính thức;
-- luồng nominal FPST AD=24 byte, plaintext=24 byte;
-- ciphertext/tag byte-for-byte;
-- output backpressure;
-- tag giữ ổn định khi backpressure;
-- payload vượt 128 byte trả `ERR_ASCON_LENGTH`;
-- board self-test chạy lặp lại.
+## 6. STP TX behavior
 
-## 6. Tạo Ascon bitstream bằng Gowin EDA
+`TELEMETRY_TX_SAMPLE (0x60)` accepts exactly the 24-byte telemetry record format `0x01`. The MCU sends plaintext telemetry, not a pre-encrypted STP packet.
 
-Tạo project với:
+Primer #1 builds the fixed 24-byte STP header:
+
+```text
+offset 0..1   magic        0x5051
+offset 2      version      0x01
+offset 3      type         0x03 TELEMETRY_DATA
+offset 4..5   flags
+offset 6..7   header_len   0x0018
+offset 8..11  session_id
+offset 12..19 sequence     uint64 BE
+offset 20..21 payload_len  0x0018
+offset 22     format       0x01
+offset 23     reserved     0
+```
+
+Then:
+
+```text
+nonce  = NP_TX[64] || sequence[64]
+AD     = STP header[24]
+P      = telemetry record[24]
+packet = header[24] || ciphertext[24] || tag[16]
+       = 64 bytes
+```
+
+The complete encrypted packet is retained. `tx_sequence` increments only when the MCU has clocked the complete BTP response transaction. A truncated response does not advance the sequence. An exact duplicate BTP request returns the cached byte-identical response and does not re-encrypt.
+
+Secure telemetry is rejected unless all of these are true:
+
+```text
+secure_enable = 1
+key_valid     = 1
+session_active= 1
+no fatal fault
+```
+
+## 7. PQC BTP support
+
+Current deployment endpoint connects the already-verified `forward_ntt_core`:
+
+```text
+0x20 PQC_WRITE_COEFF   supported
+0x21 PQC_READ_COEFF    supported
+0x22 PQC_LOAD_POLY     supported, up to 256 coefficients
+0x23 PQC_READ_POLY     supported
+0x24 PQC_START_NTT     supported
+0x28 PQC_GET_RESULT    supported
+```
+
+The following opcodes have a reserved deployment path but currently return an explicit unavailable/invalid-state error because verified datapaths do not yet exist in the repository:
+
+```text
+0x25 PQC_START_INTT
+0x26 PQC_POINTWISE_MUL
+0x27 PQC_POLY_ADD_SUB
+```
+
+They are deliberately **not faked**. A release claiming full ML-KEM acceleration must add and verify those cores first.
+
+## 8. FPGA-side physical pin profile
+
+The deployment `.cst` freezes FPGA-side J2 GPIO choices from the OneKiwi Primer 20K user guide:
+
+| Logical signal | FPGA pin | Primer socket |
+|---|---:|---:|
+| SPI SCLK | P16 | J2-3 |
+| SPI MOSI | P15 | J2-5 |
+| SPI MISO | T15 | J2-7 |
+| SPI CS_N | R14 | J2-8 |
+| IRQ_N | T14 | J2-10 |
+| BUSY | R13 | J2-11 |
+| FAULT | T13 | J2-12 |
+| LINK_RESET_N | R12 | J2-13 |
+| SECURE_ENABLE | T12 | J2-15 |
+| ZEROIZE_N | R11 | J2-16 |
+| HEARTBEAT | T11 | J2-18 |
+
+All are LVCMOS33. `CS_N`, reset and zeroize inputs have safe inactive pull-ups; `SECURE_ENABLE` defaults low.
+
+**This locks the FPGA-side assignment, not the complete harness.** Before setting the system to hardware-verified, continuity-check each jumper from the SN32 header/Tiny header to these Primer socket pins and record the result.
+
+## 9. Build in Gowin EDA
+
+Create a project with:
 
 ```text
 Series      : GW2A
 Device      : GW2A-LV18
 Package     : PG256
 Speed grade : C8/I7
-Top module  : kiwi_primer20k_ascon_selftest_top
+Top module  : kiwi_primer20k_fpst_tx_top
 ```
 
-Add toàn bộ đường dẫn trong:
+Add every RTL file listed by:
 
 ```text
-targets/primer20k_1/sources-ascon-selftest.f
+targets/primer20k_1/sources-deployment.f
 ```
 
-Constraint hiện tái sử dụng bộ pin clock/reset/BTN/LED đã xác minh:
+Then use:
 
 ```text
-constraints/kiwi_primer_20k/kiwi_primer20k_ntt_selftest.cst
-constraints/kiwi_primer_20k/kiwi_primer20k_ntt_selftest.sdc
+constraints/kiwi_primer_20k/kiwi_primer20k_fpst_tx.cst
+constraints/kiwi_primer_20k/kiwi_primer20k_fpst_tx.sdc
 ```
 
-Tên constraint có chữ `ntt_selftest` vì được tạo ở milestone bring-up đầu tiên, nhưng tập port vật lý của hai self-test giống nhau. Không được tự thêm UART/SPI pin chưa xác minh.
-
-Sau đó chạy:
+Run, in order:
 
 ```text
 Synthesis
@@ -168,46 +255,68 @@ Bitstream Generation
 Program Device
 ```
 
-Trước khi nạp phải xác nhận:
+Do not call the image release-ready unless all top-level ports are constrained, timing closes, utilization has margin and the physical harness has been continuity-checked.
 
-- part đúng `GW2A-LV18PG256C8/I7`;
-- top đúng `kiwi_primer20k_ascon_selftest_top`;
-- `SYS_CLK` tại H11, 27 MHz;
-- không có unconstrained top-level port;
-- timing đạt;
-- báo cáo utilization hợp lý.
+## 10. Automated verification
 
-## 7. Ranh giới với bitstream Primer #1 cuối cùng
+The normal RTL regression now includes:
 
-Bitstream Ascon self-test ở trên **nạp được độc lập**, nhưng chưa phải hệ thống TX cuối cùng. Top cuối còn phải ghép:
-
-```text
-MCU/session control
-       |
-       +--> NTT/INTT accelerator
-       |
-       +--> atomic key/nonce/context registers
-                    |
-                    v
-             ascon_aead_core wrapper
-                    |
-                    v
-             ascon_aead_encrypt
-                    |
-                    v
-          STP formatter + TX retention
+```bash
+bash scripts/sim/run_iverilog_unit_tests.sh
 ```
 
-`ascon_aead_encrypt.sv` là engine encrypt nội bộ. Integration boundary vẫn phải giữ `ascon_aead_core.sv` nếu FPST Section 13.2 yêu cầu interface chung đã đóng băng.
+The deployment smoke test performs an actual Mode-0 SPI exchange against the board top:
 
-## 8. Điểm còn chưa khóa
+```text
+BTP PING request transaction
+        -> parser + CRC32
+        -> response build + irq_n
+BTP response transaction
+        -> status/token/CRC32 checked
+exact duplicate request
+        -> cached response checked
+```
 
-Để tạo bitstream Primer #1 vận hành với MCU thật, vẫn cần xác minh:
+Existing Ascon official/reference-backed KAT tests and forward-NTT tests remain part of the same regression.
 
-1. bus MCU–FPGA dùng SPI, UART hay bus song song;
-2. chân vật lý cụ thể ở cả SN32F407 và Primer 20K;
-3. register/command protocol;
-4. clock-domain crossing nếu hai phía khác clock;
-5. framing, timeout và recovery của đường điều khiển.
+## 11. Debug LEDs
 
-Các điểm trên không chặn Ascon core hoặc self-test BTN/LED hiện tại.
+| LED | Deployment meaning |
+|---|---|
+| LED1 | independent heartbeat |
+| LED2 | BTP/core busy |
+| LED3 | key_valid |
+| LED4 | session_active |
+| LED5 | irq_n asserted |
+| LED6 | fatal fault |
+| LED7 | protocol or endpoint error observed |
+
+All onboard LEDs are active-low.
+
+## 12. What is and is not ready
+
+### Implemented in this deployment branch
+
+- physical SPI slave logic for the FPST two-transaction BTP exchange;
+- CRC-32/ISO-HDLC BTP parsing/building;
+- duplicate transaction response cache;
+- atomic TX key/session staging, commit, activate and zeroize;
+- secure-enable gating;
+- STP telemetry header/nonce construction;
+- Ascon encrypt integration using the existing verified engine;
+- retained encrypted packet and sequence commit after complete MCU read;
+- forward-NTT BTP access;
+- heartbeat, reset, zeroize and board top;
+- FPGA-side J2 pin constraint and deployment source manifest;
+- SPI PING/duplicate-cache integration test.
+
+### Still required before claiming the **full FPST Primer #1 feature set**
+
+1. verified INTT core;
+2. verified pointwise-multiply / poly add-sub datapaths required by the final ML-KEM accelerator allocation;
+3. Gowin vendor synthesis/P&R/timing report for this deployment top;
+4. physical continuity check of the selected J2 harness;
+5. real-board SPI qualification beginning at 1 MHz;
+6. end-to-end SN32 -> Primer #1 -> Primer #2 telemetry test after the SN32 deployment firmware is rewritten for normative BTP v1.1.
+
+The self-test images remain useful diagnostic artifacts, but `kiwi_primer20k_fpst_tx_top` is the top intended for real system integration.
