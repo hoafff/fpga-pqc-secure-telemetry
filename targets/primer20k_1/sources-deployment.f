@@ -18,10 +18,12 @@ rtl/ascon/ascon_permutation.sv
 rtl/ascon/ascon_aead_encrypt.sv
 
 # Deployment transport/session/telemetry integration
+rtl/common/simple_dual_port_ram_2048x8.sv
 rtl/protocol/btp_spi_slave.sv
+rtl/protocol/btp_response_builder.sv
 rtl/boards/kiwi_primer_20k/primer1_session_context.sv
 rtl/telemetry/stp_tx_telemetry.sv
-rtl/boards/kiwi_primer_20k/primer1_btp_endpoint.sv
+rtl/boards/kiwi_primer_20k/primer1_btp_endpoint_v2.sv
 rtl/boards/kiwi_primer_20k/kiwi_primer20k_fpst_tx_top.sv
 
 constraints/kiwi_primer_20k/kiwi_primer20k_fpst_tx.cst
