@@ -16,6 +16,8 @@ add_library(fpst_firmware_core
     src/fpst_platform.c
     src/fpst_fpga_link.c
     src/fpst_primer1.c
+    src/fpst_primer2.c
+    src/fpst_pair_bridge.c
     src/fpst_session.c
     src/fpst_csprng.c
     src/fpst_entropy_rng.c
