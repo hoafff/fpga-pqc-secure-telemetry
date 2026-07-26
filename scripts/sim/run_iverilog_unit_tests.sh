@@ -140,16 +140,26 @@ run_test tb_primer1_session_manager \
     "${ROOT_DIR}/rtl/key_manager/primer1_session_manager.sv" \
     "${ROOT_DIR}/tb/unit/tb_primer1_session_manager.sv"
 
+PRIMER1_ENDPOINT_SOURCES=(
+    "${ROOT_DIR}/rtl/transport/btp_frame_validator.sv"
+    "${ROOT_DIR}/rtl/transport/btp_duplicate_guard.sv"
+    "${ROOT_DIR}/rtl/transport/btp_response_builder.sv"
+    "${ROOT_DIR}/rtl/key_manager/primer1_session_manager.sv"
+    "${ROOT_DIR}/rtl/telemetry/stp_v1_header_builder.sv"
+    "${ROOT_DIR}/rtl/telemetry/primer1_telemetry_tx.sv"
+    "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/ascon_encrypt_kat_selftest.sv"
+    "${COMMON_ASCON_SOURCES[@]}"
+    "${ROOT_DIR}/rtl/endpoint/primer1_endpoint_core.sv"
+)
+
 run_test tb_primer1_endpoint_core \
-    "${ROOT_DIR}/rtl/transport/btp_frame_validator.sv" \
-    "${ROOT_DIR}/rtl/transport/btp_duplicate_guard.sv" \
-    "${ROOT_DIR}/rtl/transport/btp_response_builder.sv" \
-    "${ROOT_DIR}/rtl/key_manager/primer1_session_manager.sv" \
-    "${ROOT_DIR}/rtl/telemetry/stp_v1_header_builder.sv" \
-    "${ROOT_DIR}/rtl/telemetry/primer1_telemetry_tx.sv" \
-    "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/ascon_encrypt_kat_selftest.sv" \
-    "${COMMON_ASCON_SOURCES[@]}" \
-    "${ROOT_DIR}/rtl/endpoint/primer1_endpoint_core.sv" \
+    "${PRIMER1_ENDPOINT_SOURCES[@]}" \
     "${ROOT_DIR}/tb/integration/tb_primer1_endpoint_core.sv"
+
+run_test tb_primer1_spi_endpoint \
+    "${ROOT_DIR}/rtl/transport/btp_spi_slave.sv" \
+    "${PRIMER1_ENDPOINT_SOURCES[@]}" \
+    "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/kiwi_primer20k_primer1_top.sv" \
+    "${ROOT_DIR}/tb/integration/tb_primer1_spi_endpoint.sv"
 
 echo "PASS: all RTL unit and integration tests completed"
