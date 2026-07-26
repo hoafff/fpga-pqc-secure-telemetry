@@ -43,9 +43,9 @@ Timing          : constraints/kiwi_primer_20k/kiwi_primer20k_fpst_tx.sdc
 ## 3. Deployment architecture
 
 ```text
-                          27 MHz domain
+                           27 MHz domain
 
-SPI pins ---> btp_spi_slave ---> primer1_btp_endpoint
+SPI pins ---> btp_spi_slave ---> primer1_btp_endpoint_v2
                     |                    |
                     |                    +--> primer1_session_context
                     |                    |
@@ -57,6 +57,8 @@ SPI pins ---> btp_spi_slave ---> primer1_btp_endpoint
                     |
                     +<---- cached BTP response <---+
 ```
+
+The BTP endpoint uses two reset-free 2048x8 byte memories for request/response storage so generic synthesis can preserve block-RAM inference. Raw key-load bytes are kept only in a 32-byte register window and are scrubbed after the key command or zeroize.
 
 `btp_spi_slave` synchronizes SCLK/CS/MOSI into the 27 MHz domain. The first board bring-up rate is **1 MHz**, as required by FPST v1.1. A faster SPI setting is not a release value until real-board qualification records zero CRC/frame errors and timing margin.
 
@@ -105,7 +107,7 @@ check          : "123456789" -> 0xCBF43926
 coverage       : bytes version through final payload byte
 ```
 
-Malformed frames are rejected before any architected state change. Exact duplicate `transaction_id` requests are served from the cached response and are not executed twice.
+Malformed frames are rejected before any architected state change. Exact duplicate `transaction_id + opcode + payload_len + request CRC` requests are served from the cached response and are not executed twice. The response RAM itself is the one-entry response cache.
 
 ## 5. Key/session deployment profile
 
@@ -135,7 +137,7 @@ ZEROIZE (0x45), 2-byte reason
 
 Staging and active context are separate. Commit is atomic. `key_valid` is cleared immediately when a replacement key load begins and on zeroize. Session activation resets TX sequence to zero.
 
-## 6. STP TX behavior
+## 6. STP TX behavior and commit rule
 
 `TELEMETRY_TX_SAMPLE (0x60)` accepts exactly the 24-byte telemetry record format `0x01`. The MCU sends plaintext telemetry, not a pre-encrypted STP packet.
 
@@ -164,7 +166,20 @@ packet = header[24] || ciphertext[24] || tag[16]
        = 64 bytes
 ```
 
-The complete encrypted packet is retained. `tx_sequence` increments only when the MCU has clocked the complete BTP response transaction. A truncated response does not advance the sequence. An exact duplicate BTP request returns the cached byte-identical response and does not re-encrypt.
+The complete encrypted packet remains retained after the MCU reads the BTP response. Merely clocking the response out does **not** advance `tx_sequence`.
+
+The SN32 orchestration rule is:
+
+```text
+1. send unique TELEMETRY_TX_SAMPLE for sequence N
+2. obtain the encrypted packet from Primer #1
+3. deliver/check it at the RX side and obtain receiver commit acknowledgement
+4. only after that acknowledgement, issue the next unique TELEMETRY_TX_SAMPLE
+```
+
+Acceptance of that next unique TX command commits the retained sequence exactly once, discards the old retained packet and encrypts the new sample with sequence `N+1`. If the response or forwarding operation is lost before receiver commit, firmware retries the **same transaction_id and identical request**; Primer #1 returns the byte-identical cached response and does not re-encrypt or advance sequence.
+
+This keeps retry distinct from re-encryption and prevents nonce reuse/desynchronization.
 
 Secure telemetry is rejected unless all of these are true:
 
@@ -218,6 +233,8 @@ The deployment `.cst` freezes FPGA-side J2 GPIO choices from the OneKiwi Primer 
 
 All are LVCMOS33. `CS_N`, reset and zeroize inputs have safe inactive pull-ups; `SECURE_ENABLE` defaults low.
 
+`BUSY` is advisory state. During a retained uncommitted TX packet it may remain asserted; firmware must follow the commit/retry rule above rather than treating BUSY as permission to change the transaction identity.
+
 **This locks the FPGA-side assignment, not the complete harness.** Before setting the system to hardware-verified, continuity-check each jumper from the SN32 header/Tiny header to these Primer socket pins and record the result.
 
 ## 9. Build in Gowin EDA
@@ -265,26 +282,35 @@ The normal RTL regression now includes:
 bash scripts/sim/run_iverilog_unit_tests.sh
 ```
 
-The deployment smoke test performs an actual Mode-0 SPI exchange against the board top:
+It covers the deployment top through the actual Mode-0 SPI pins, not only an internal function call:
 
 ```text
-BTP PING request transaction
-        -> parser + CRC32
-        -> response build + irq_n
-BTP response transaction
-        -> status/token/CRC32 checked
-exact duplicate request
-        -> cached response checked
+BTP PING + CRC32 + IRQ + response read
+exact duplicate transaction -> byte-identical cached response
+KEY_LOAD_BEGIN -> CHUNK -> COMMIT -> KEY_STATUS
+SESSION_ACTIVATE
+TELEMETRY_TX_SAMPLE sequence 0
+exact duplicate TX -> same encrypted response
+new unique TX after commit -> sequence 1
+ZEROIZE -> key/session indicators cleared
 ```
 
-Existing Ascon official/reference-backed KAT tests and forward-NTT tests remain part of the same regression.
+The same command also runs:
+
+```bash
+scripts/synth/check_kiwi_primer20k_deployment_yosys.sh
+```
+
+for a generic synthesis/hierarchy/resource sanity check of `kiwi_primer20k_fpst_tx_top`. Existing Ascon official/reference-backed KAT tests and forward-NTT golden-model tests remain part of the regression.
+
+Generic Yosys is supplemental evidence only. Gowin synthesis, place-and-route, timing and bitstream generation on the exact `GW2A-LV18PG256C8/I7` remain mandatory before board release.
 
 ## 11. Debug LEDs
 
 | LED | Deployment meaning |
 |---|---|
 | LED1 | independent heartbeat |
-| LED2 | BTP/core busy |
+| LED2 | BTP/core busy or retained TX state |
 | LED3 | key_valid |
 | LED4 | session_active |
 | LED5 | irq_n asserted |
@@ -295,20 +321,24 @@ All onboard LEDs are active-low.
 
 ## 12. What is and is not ready
 
-### Implemented in this deployment branch
+### Implemented and regression-covered in this deployment branch
 
 - physical SPI slave logic for the FPST two-transaction BTP exchange;
 - CRC-32/ISO-HDLC BTP parsing/building;
-- duplicate transaction response cache;
+- one-entry duplicate transaction response cache;
+- BRAM-oriented request/response storage without large reset loops;
+- raw key-load buffer scrubbing;
 - atomic TX key/session staging, commit, activate and zeroize;
 - secure-enable gating;
 - STP telemetry header/nonce construction;
 - Ascon encrypt integration using the existing verified engine;
-- retained encrypted packet and sequence commit after complete MCU read;
+- retained encrypted packet, duplicate replay and next-unique-command sequence commit;
 - forward-NTT BTP access;
 - heartbeat, reset, zeroize and board top;
 - FPGA-side J2 pin constraint and deployment source manifest;
-- SPI PING/duplicate-cache integration test.
+- SPI PING/duplicate-cache integration test;
+- key/session/STP/sequence/zeroize integration test;
+- generic Yosys deployment-top synthesis check.
 
 ### Still required before claiming the **full FPST Primer #1 feature set**
 
