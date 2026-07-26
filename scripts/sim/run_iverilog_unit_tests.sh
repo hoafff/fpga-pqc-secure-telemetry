@@ -86,6 +86,23 @@ run_test tb_forward_ntt_board_selftest \
     "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/forward_ntt_board_selftest.sv" \
     "${ROOT_DIR}/tb/integration/tb_forward_ntt_board_selftest.sv"
 
+COMMON_NTT_INTT_SOURCES=(
+    "${ROOT_DIR}/rtl/arithmetic/mod_add.sv"
+    "${ROOT_DIR}/rtl/arithmetic/mod_sub.sv"
+    "${ROOT_DIR}/rtl/arithmetic/mod_mul_3329_pipe.sv"
+    "${ROOT_DIR}/rtl/ntt/twiddle_rom_3329.sv"
+    "${ROOT_DIR}/rtl/ntt/forward_ntt_scheduler.sv"
+    "${ROOT_DIR}/rtl/ntt/inverse_ntt_scheduler.sv"
+    "${ROOT_DIR}/rtl/ntt/ntt_intt_butterfly_pipe.sv"
+    "${ROOT_DIR}/rtl/ntt/true_dual_port_ram_256x16.sv"
+    "${ROOT_DIR}/rtl/ntt/coefficient_pingpong_memory_256x16.sv"
+    "${ROOT_DIR}/rtl/ntt/mlkem_ntt_intt_core.sv"
+)
+
+run_test tb_mlkem_ntt_intt_core \
+    "${COMMON_NTT_INTT_SOURCES[@]}" \
+    "${ROOT_DIR}/tb/integration/tb_mlkem_ntt_intt_core.sv"
+
 COMMON_ASCON_SOURCES=(
     "${ROOT_DIR}/rtl/ascon/ascon_round.sv"
     "${ROOT_DIR}/rtl/ascon/ascon_permutation.sv"
