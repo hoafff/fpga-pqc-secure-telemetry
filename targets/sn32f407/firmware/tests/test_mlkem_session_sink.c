@@ -75,8 +75,10 @@ fpst_result_t fpst_session_establish(
     ++g_state.establish_calls;
     memcpy(g_state.captured_ss, shared_secret, sizeof(g_state.captured_ss));
 
-    /* Model the complete 26-byte generic no-data BTP response. */
-    memset(m->link->response_buf, 0xE1, FPST_LINK_MCU_GENERIC_NODATA_FRAME_BYTES);
+    /* Model a normal generic no-data BTP response. */
+    memset(m->link->response_buf, 0xE1,
+           FPST_FRAME_HEADER_BYTES + FPST_GENERIC_RESPONSE_BYTES +
+               FPST_FRAME_TRAILER_BYTES);
 
     m->state = FPST_SESSION_ACTIVE;
     m->session_id = session_id;
@@ -128,6 +130,12 @@ static void setup(fpst_fpga_link_t *link,
     rng->fill = dummy_rng_fill;
 }
 
+static void assert_ciphertext_scratch_wiped(const fpst_fpga_link_t *link) {
+    const uint8_t *scratch = &link->response_buf[FPST_LINK_MCU_SESSION_PREFIX_BYTES];
+    for (size_t i = 0u; i < FPST_MLKEM512_CIPHERTEXT_BYTES; ++i)
+        assert(scratch[i] == 0u);
+}
+
 static void test_success_keeps_session_and_wipes_scratch(void) {
     fpst_fpga_link_t link;
     fpst_platform_t platform;
@@ -150,10 +158,39 @@ static void test_success_keeps_session_and_wipes_scratch(void) {
     assert(session.state == FPST_SESSION_ACTIVE);
     assert(session.session_id == 0x11223344u);
     assert(memcmp(g_state.captured_ct, expected, sizeof(expected)) == 0);
+    assert_ciphertext_scratch_wiped(&link);
+}
 
-    const uint8_t *scratch = &link.response_buf[FPST_LINK_MCU_SESSION_PREFIX_BYTES];
-    for (size_t i = 0u; i < FPST_MLKEM512_CIPHERTEXT_BYTES; ++i)
-        assert(scratch[i] == 0u);
+static void test_routed_pair_status_response_preserves_ciphertext(void) {
+    fpst_fpga_link_t link;
+    fpst_platform_t p1_platform;
+    fpst_platform_t p2_platform;
+    fpst_session_manager_t session;
+    fpst_csprng_t rng;
+    uint8_t pk[FPST_MLKEM512_PUBLIC_KEY_BYTES];
+    uint8_t expected[FPST_MLKEM512_CIPHERTEXT_BYTES];
+    uint8_t ss[FPST_MLKEM512_SHARED_SECRET_BYTES];
+
+    setup(&link, &p1_platform, &session, &rng);
+    memset(&p2_platform, 0, sizeof(p2_platform));
+    fill_public_key(pk);
+    assert(fpst_mlkem512_encaps(expected, ss, pk, &rng) == FPST_OK);
+
+    setup(&link, &p1_platform, &session, &rng);
+    memset(&p2_platform, 0, sizeof(p2_platform));
+    assert(fpst_mlkem_session_establish_pair_routed_to_sink(
+               &session, &p1_platform, &p2_platform,
+               pk, 0x55667788u, &rng, capture_sink, &g_state) == FPST_OK);
+
+    /* Pair mock writes a 42-byte KEY_STATUS-sized response before the sink. */
+    assert(FPST_LINK_MCU_SESSION_CONTROL_MAX_FRAME_BYTES == 42u);
+    assert(FPST_LINK_MCU_SESSION_PREFIX_BYTES >= 42u);
+    assert(g_state.sink_calls == 1u);
+    assert(memcmp(g_state.captured_ct, expected, sizeof(expected)) == 0);
+    assert(session.state == FPST_SESSION_ACTIVE);
+    assert(session.session_id == 0x55667788u);
+    assert(link.platform == &p1_platform);
+    assert_ciphertext_scratch_wiped(&link);
 }
 
 static void test_sink_failure_rolls_back_session(void) {
@@ -196,8 +233,9 @@ static void test_zeroize_failure_dominates_sink_failure(void) {
 
 int main(void) {
     test_success_keeps_session_and_wipes_scratch();
+    test_routed_pair_status_response_preserves_ciphertext();
     test_sink_failure_rolls_back_session();
     test_zeroize_failure_dominates_sink_failure();
-    puts("PASS: SN32 ML-KEM committed ciphertext sink/rollback tests");
+    puts("PASS: SN32 ML-KEM ciphertext scratch, routed pair and rollback tests");
     return 0;
 }
