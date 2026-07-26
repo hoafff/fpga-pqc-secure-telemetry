@@ -28,6 +28,11 @@ src = src.replace(
     "            for (k=10; k<response_total; k=k+1) begin\n                spi_recv_byte(rx_byte);\n                response[k] = rx_byte;\n            end\n",
     1,
 )
+src = src.replace(
+    '$fatal(1,"opcode %02x returned error flag",opcode);',
+    '$fatal(1,"opcode %02x returned error flag status=%02x%02x detail=%02x%02x",opcode,response[10],response[11],response[12],response[13]);',
+    1,
+)
 Path("build/sim/tb_primer1_deployment_pqc_iverilog.sv").write_text(src)
 PY
 
