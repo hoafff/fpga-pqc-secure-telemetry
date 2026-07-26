@@ -124,10 +124,6 @@ fpst_result_t fpst_mlkem_session_establish_tx_to_sink(
 
     rc = sink(sink_ctx, ciphertext, FPST_MLKEM512_CIPHERTEXT_BYTES);
     if (rc != FPST_OK) {
-        /*
-         * Receiver did not obtain the public ciphertext, so keeping the new TX
-         * key active would create a one-sided session. Roll it back immediately.
-         */
         const fpst_result_t zeroize_rc = fpst_session_zeroize(session);
         fpst_secure_zero(ciphertext, FPST_MLKEM512_CIPHERTEXT_BYTES);
         return zeroize_rc != FPST_OK ? zeroize_rc : rc;
@@ -183,7 +179,6 @@ fpst_result_t fpst_mlkem_session_establish_pair_to_sink(
     fpst_mlkem512_unbind_primer1();
     if (rc != FPST_OK) goto cleanup_pair;
 
-    /* Both endpoint commits occur before the shared secret is destroyed. */
     rc = fpst_session_establish_pair(tx_session, primer2_link,
                                      shared_secret, session_id);
     fpst_secure_zero(shared_secret, sizeof(shared_secret));
@@ -204,5 +199,77 @@ cleanup_pair:
     fpst_secure_zero(shared_secret, sizeof(shared_secret));
 cleanup_pair_ciphertext:
     fpst_secure_zero(ciphertext, FPST_MLKEM512_CIPHERTEXT_BYTES);
+    return rc;
+}
+
+fpst_result_t fpst_mlkem_session_establish_pair_routed_to_sink(
+    fpst_session_manager_t *tx_session,
+    const fpst_platform_t *primer1_platform,
+    const fpst_platform_t *primer2_platform,
+    const uint8_t receiver_public_key[FPST_MLKEM512_PUBLIC_KEY_BYTES],
+    uint32_t session_id,
+    const fpst_csprng_t *rng,
+    fpst_mlkem_ciphertext_sink_fn sink,
+    void *sink_ctx) {
+    if (tx_session == NULL || tx_session->link == NULL ||
+        !fpst_platform_is_valid(primer1_platform) ||
+        !fpst_platform_is_valid(primer2_platform) ||
+        receiver_public_key == NULL || session_id == 0u ||
+        !fpst_csprng_is_valid(rng) || sink == NULL) {
+        return FPST_ERR_ARGUMENT;
+    }
+    if (tx_session->state == FPST_SESSION_STAGING)
+        return FPST_ERR_BUSY;
+
+    _Static_assert(FPST_LINK_MCU_SESSION_CIPHERTEXT_BYTES ==
+                       FPST_MLKEM512_CIPHERTEXT_BYTES,
+                   "link scratch must match ML-KEM-512 ciphertext size");
+
+    fpst_result_t rc = fpst_fpga_link_rebind(tx_session->link, primer1_platform);
+    if (rc != FPST_OK) return rc;
+
+    uint8_t *ciphertext =
+        &tx_session->link->response_buf[FPST_LINK_MCU_SESSION_PREFIX_BYTES];
+    uint8_t shared_secret[FPST_MLKEM512_SHARED_SECRET_BYTES];
+
+    rc = fpst_mlkem512_bind_primer1(tx_session->link);
+    if (rc != FPST_OK) {
+        fpst_secure_zero(shared_secret, sizeof(shared_secret));
+        fpst_secure_zero(ciphertext, FPST_MLKEM512_CIPHERTEXT_BYTES);
+        return rc;
+    }
+
+    rc = fpst_mlkem512_encaps(ciphertext, shared_secret,
+                              receiver_public_key, rng);
+    fpst_mlkem512_unbind_primer1();
+    if (rc != FPST_OK) goto cleanup_routed;
+
+    /* Both endpoint control responses remain below the ciphertext scratch. */
+    rc = fpst_session_establish_pair_routed(tx_session,
+                                            primer1_platform,
+                                            primer2_platform,
+                                            shared_secret, session_id);
+    fpst_secure_zero(shared_secret, sizeof(shared_secret));
+    if (rc != FPST_OK) goto cleanup_routed_ciphertext;
+
+    /* Routed pair establishment guarantees Primer #1 is rebound on return. */
+    rc = sink(sink_ctx, ciphertext, FPST_MLKEM512_CIPHERTEXT_BYTES);
+    if (rc != FPST_OK) {
+        const fpst_result_t zeroize_rc =
+            fpst_session_zeroize_pair_routed(tx_session,
+                                             primer1_platform,
+                                             primer2_platform);
+        fpst_secure_zero(ciphertext, FPST_MLKEM512_CIPHERTEXT_BYTES);
+        return zeroize_rc != FPST_OK ? zeroize_rc : rc;
+    }
+
+    fpst_secure_zero(ciphertext, FPST_MLKEM512_CIPHERTEXT_BYTES);
+    return FPST_OK;
+
+cleanup_routed:
+    fpst_secure_zero(shared_secret, sizeof(shared_secret));
+cleanup_routed_ciphertext:
+    fpst_secure_zero(ciphertext, FPST_MLKEM512_CIPHERTEXT_BYTES);
+    (void)fpst_fpga_link_rebind(tx_session->link, primer1_platform);
     return rc;
 }
