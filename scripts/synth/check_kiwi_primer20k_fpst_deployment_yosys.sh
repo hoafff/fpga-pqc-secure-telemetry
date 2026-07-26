@@ -28,6 +28,7 @@ sources = [
     "rtl/transport/btp_request_parser.sv",
     "rtl/transport/btp_response_builder.sv",
     "rtl/telemetry/primer1_stp_tx.sv",
+    "rtl/boards/kiwi_primer_20k/primer1_request_semantic_guard.sv",
     "rtl/boards/kiwi_primer_20k/primer1_btp_endpoint_deploy.sv",
 ]
 
@@ -59,6 +60,7 @@ yosys -ql "${LOG_FILE}" -p "
         rtl/ntt/true_dual_port_ram_256x16.sv \
         rtl/ntt/coefficient_pingpong_memory_256x16.sv \
         rtl/ntt/forward_ntt_core.sv \
+        ${FLAT_DIR}/primer1_request_semantic_guard.sv \
         ${FLAT_DIR}/primer1_btp_endpoint_deploy.sv \
         rtl/boards/kiwi_primer_20k/kiwi_primer20k_fpst_tx_top.sv;
     hierarchy -check -top kiwi_primer20k_fpst_tx_top;
