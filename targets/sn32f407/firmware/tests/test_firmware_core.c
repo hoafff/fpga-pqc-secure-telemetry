@@ -25,9 +25,13 @@ typedef struct {
     unsigned commit_count;
     unsigned activate_count;
     unsigned abort_count;
+    unsigned tx_commit_count;
+    unsigned tx_reconcile_count;
     uint32_t staged_session_id;
     uint8_t staged_material[FPST_TX_MATERIAL_BYTES];
     uint32_t committed_policy;
+    uint64_t last_tx_commit_sequence;
+    uint64_t last_rx_expected_sequence;
 } mock_hw_t;
 
 static uint32_t mock_millis(void *ctx) { return ((mock_hw_t *)ctx)->now_ms; }
@@ -85,6 +89,18 @@ static void mock_build_response(mock_hw_t *m) {
         case FPST_OP_KEY_LOAD_ABORT:
             assert(req.payload_len == 0u);
             ++m->abort_count;
+            break;
+
+        case FPST_OP_STP_TX_COMMIT:
+            assert(req.payload_len == 8u);
+            m->last_tx_commit_sequence = fpst_load_be64(req.payload);
+            ++m->tx_commit_count;
+            break;
+
+        case FPST_OP_STP_TX_RECONCILE:
+            assert(req.payload_len == 8u);
+            m->last_rx_expected_sequence = fpst_load_be64(req.payload);
+            ++m->tx_reconcile_count;
             break;
 
         case FPST_OP_ZEROIZE:
@@ -251,6 +267,29 @@ static void test_session_atomic_commit(void) {
     };
     assert(memcmp(hw.staged_material, expected_material,
                   sizeof expected_material) == 0);
+
+    /* A receiver commit for sequence 0 advances both MCU and Primer #1 once. */
+    assert(fpst_session_commit_tx(&session, 0u) == FPST_OK);
+    assert(session.next_sequence == 1u);
+    assert(hw.tx_commit_count == 1u && hw.last_tx_commit_sequence == 0u);
+    assert(fpst_session_commit_tx(&session, 0u) == FPST_ERR_TRANSACTION);
+
+    /* expected==current means the receiver did not commit: resend retained. */
+    bool resend = false;
+    assert(fpst_session_reconcile_tx(&session, 1u, &resend) == FPST_OK);
+    assert(resend && session.next_sequence == 1u);
+    assert(hw.tx_reconcile_count == 1u && hw.last_rx_expected_sequence == 1u);
+
+    /* expected==current+1 proves the prior packet was committed despite lost ACK. */
+    assert(fpst_session_reconcile_tx(&session, 2u, &resend) == FPST_OK);
+    assert(!resend && session.next_sequence == 2u);
+    assert(hw.tx_reconcile_count == 2u && hw.last_rx_expected_sequence == 2u);
+
+    /* Arbitrary gaps are a hard session desynchronization and are not sent. */
+    assert(fpst_session_reconcile_tx(&session, 9u, &resend) ==
+           FPST_ERR_TRANSACTION);
+    assert(session.state == FPST_SESSION_ERROR);
+    assert(hw.tx_reconcile_count == 2u);
 
     fpst_session_zeroize(&session);
     assert(session.state == FPST_SESSION_NO_KEY && hw.zeroized);
