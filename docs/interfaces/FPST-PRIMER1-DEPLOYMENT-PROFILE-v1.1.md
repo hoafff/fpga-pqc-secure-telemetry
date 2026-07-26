@@ -2,172 +2,153 @@
 
 **Target:** OneKiwi Kiwi Primer 20K #1 (`GW2A-LV18PG256C8/I7`)  
 **System baseline:** `FPST-SYS-SPEC-001 v1.1`  
-**Top module:** `kiwi_primer20k_fpst_tx_top`  
-**Source manifest:** `targets/primer20k_1/sources-fpst-deployment.f`
+**Top:** `kiwi_primer20k_fpst_tx_top`  
+**Sources:** `targets/primer20k_1/sources-fpst-deployment.f`  
+**CST:** `constraints/kiwi_primer_20k/kiwi_primer20k_fpst_tx.cst`  
+**SDC:** `constraints/kiwi_primer_20k/kiwi_primer20k_fpst_tx.sdc`
 
-This file records implementation bindings needed by the real Primer #1 RTL. It does **not** override a normative value in FPST v1.1. If an organizer document later supplies a conflicting frozen value, update this profile and both endpoints together before hardware qualification.
+This profile binds project-owned implementation details without overriding normative FPST v1.1 semantics. A later organizer-issued conflicting frozen value requires coordinated update of this profile and both communicating endpoints before hardware qualification.
 
-## 1. BTP transport
-
-The deployment path uses FPST v1 BTP framing directly over SPI:
+## 1. BTP transport binding
 
 - SPI mode 0, MSB first;
 - one complete BTP frame per `CS_N` assertion;
-- request and response are separate SPI transactions;
-- BTP `SOF=0xA55A`, `version=0x01`;
-- integer fields are big-endian at the wire boundary;
-- CRC-32/ISO-HDLC covers `version` through the final payload byte;
+- request and response use separate SPI transactions;
+- `SOF=0xA55A`, `version=0x01`;
+- multi-byte wire integers are big-endian;
+- CRC-32/ISO-HDLC covers `version` through final payload byte;
 - maximum BTP payload is 1024 bytes;
-- response bytes are cached for duplicate-safe retry;
-- same transaction ID + same opcode/length/request CRC returns the cached response without re-executing the command;
-- same transaction ID with different request content returns `ERR_BTP_TRANSACTION` and does not repeat a non-idempotent operation;
-- transaction ownership is tracked across the control and PQC endpoints, so cross-endpoint transaction-ID collisions are also rejected by the endpoint that owns the cached signature.
+- a complete response is cached before `irq_n` asserts;
+- an incomplete response read does not consume the cache;
+- exact duplicate transaction signature returns the byte-identical cached response without re-executing side effects;
+- same transaction ID with different content returns `ERR_BTP_TRANSACTION`;
+- the router tracks transaction ownership across control and PQC endpoints.
 
-`btp_spi_slave.sv` performs only the SCK-domain bit/byte transport. Parsing and command side effects occur in the 27 MHz system domain.
+`btp_spi_slave.sv` owns SCK-domain serialization. Parsing and command execution occur in the 27 MHz system domain through the reviewed CDC boundary.
 
-## 2. Primer #1 command coverage
+## 2. Runtime command coverage
 
-### 2.1 Implemented runtime deployment commands
-
-| Opcode | Operation | Deployment behavior |
+| Opcode | Operation | Primer #1 deployment behavior |
 |---:|---|---|
-| `0x01` | `GET_DEVICE_ID` | Returns Primer #1 deployment identifier |
-| `0x02` | `GET_STATUS` | Returns control/session deployment state |
-| `0x03` | `GET_ERROR` | Returns the control-endpoint error latch |
-| `0x04` | `CLEAR_ERROR` | Clears recoverable control-endpoint error; refuses fatal state |
-| `0x10` | `READ_REG` | Reads the deployment control/status registers below |
-| `0x11` | `WRITE_REG` | Used for retained-packet commit acknowledgement |
-| `0x20` | `PQC_WRITE_COEFF` | Writes one validated canonical coefficient |
-| `0x21` | `PQC_READ_COEFF` | Reads one previously covered coefficient |
-| `0x22` | `PQC_LOAD_POLY` | Two-pass validate-then-write polynomial load |
-| `0x23` | `PQC_READ_POLY` | Bulk reads 1..256 coefficients from a complete polynomial |
-| `0x24` | `PQC_START_NTT` | Starts forward ML-KEM NTT; standard domain required |
-| `0x25` | `PQC_START_INTT` | Starts inverse ML-KEM NTT; NTT domain required |
-| `0x26` | `PQC_POINTWISE_MUL` | ML-KEM `MultiplyNTTs` / base-case multiply with a second NTT-domain polynomial |
-| `0x27` | `PQC_POLY_ADD_SUB` | Coordinate-wise add or subtract with a second polynomial |
-| `0x28` | `PQC_GET_RESULT` | Returns accelerator busy/done/domain/bank/stage/completeness state |
-| `0x40` | `KEY_LOAD_BEGIN` | Invalidates active key and starts atomic 24-byte TX context staging |
-| `0x41` | `KEY_LOAD_CHUNK` | Stages context bytes; duplicate identical writes are allowed, conflicts are remembered |
-| `0x42` | `KEY_LOAD_COMMIT` | Atomic commit only after complete, conflict-free coverage |
-| `0x43` | `KEY_LOAD_ABORT` | Wipes staging state |
-| `0x44` | `KEY_STATUS` | Returns public session/key/sequence status only |
-| `0x45` | `ZEROIZE` | Clears Primer #1 secret/session/retained-packet state before responding |
-| `0x46` | `SESSION_ACTIVATE` | Activates only matching committed key/session while security is enabled |
-| `0x60` | `TELEMETRY_TX_SAMPLE` | Builds STP header, Ascon-encrypts exactly one 24-byte record, retains the complete packet |
-| `0x7F` | `PING` | Generic response plus exact token echo |
+| `0x01` | `GET_DEVICE_ID` | returns Primer #1 deployment ID |
+| `0x02` | `GET_STATUS` | control/session state |
+| `0x03` | `GET_ERROR` | control endpoint error latch |
+| `0x04` | `CLEAR_ERROR` | clears recoverable control error; fatal state refuses |
+| `0x10` | `READ_REG` | reads deployment control/status registers |
+| `0x11` | `WRITE_REG` | retained-packet commit acknowledgement |
+| `0x20` | `PQC_WRITE_COEFF` | write one canonical coefficient |
+| `0x21` | `PQC_READ_COEFF` | read one covered coefficient |
+| `0x22` | `PQC_LOAD_POLY` | validate-then-write polynomial load |
+| `0x23` | `PQC_READ_POLY` | bulk read 1..256 coefficients |
+| `0x24` | `PQC_START_NTT` | forward ML-KEM NTT |
+| `0x25` | `PQC_START_INTT` | inverse ML-KEM NTT |
+| `0x26` | `PQC_POINTWISE_MUL` | ML-KEM `MultiplyNTTs` base-case multiplication |
+| `0x27` | `PQC_POLY_ADD_SUB` | coordinate-wise add/sub modulo 3329 |
+| `0x28` | `PQC_GET_RESULT` | accelerator state/result metadata |
+| `0x40` | `KEY_LOAD_BEGIN` | begin atomic 24-byte TX context staging |
+| `0x41` | `KEY_LOAD_CHUNK` | stage context bytes with conflict detection |
+| `0x42` | `KEY_LOAD_COMMIT` | atomic complete/conflict-free commit |
+| `0x43` | `KEY_LOAD_ABORT` | wipe staging state |
+| `0x44` | `KEY_STATUS` | public key/session/sequence state |
+| `0x45` | `ZEROIZE` | clear secret/session/retained-packet state |
+| `0x46` | `SESSION_ACTIVATE` | activate matching committed session while enabled |
+| `0x60` | `TELEMETRY_TX_SAMPLE` | build STP, Ascon-encrypt one 24-byte sample, retain packet |
+| `0x7F` | `PING` | echo token in generic response |
 
-Unimplemented runtime diagnostic opcodes, including `SELF_TEST (0x06)` and `ASCON_KAT (0x50)`, return an explicit unsupported-operation error. Independent NTT and Ascon KAT **board self-test bitstreams** remain available for hardware bring-up; they are intentionally not duplicated inside the deployment bitstream.
+Runtime `SELF_TEST (0x06)` and `ASCON_KAT (0x50)` are intentionally not duplicated inside the deployment image; they return `ERR_UNSUPPORTED_OPCODE`. Dedicated NTT and Ascon KAT board bitstreams remain the hardware diagnostic path. `SOFT_RESET (0x05)` is likewise not given project-invented semantics where the baseline does not freeze a Primer #1 scope binding; reset/zeroize behavior is exercised by physical sidebands and `ZEROIZE`.
 
-The required Primer #1 PQC polynomial accelerator contract is therefore closed in deployment RTL. Full ML-KEM protocol orchestration remains an SN32 firmware/system-level responsibility rather than another FPGA primitive.
+## 3. PQC payload / domain binding
 
-## 3. PQC payload and domain binding
-
-All coefficients are canonical standard unsigned representatives `0..3328`, transferred as BE16 values. Polynomial length is `N=256`; modulus is `q=3329`.
+External polynomial coefficients are canonical BE16 values `0..3328`, with `q=3329`, `N=256`.
 
 ### `PQC_WRITE_COEFF (0x20)`
 
 ```text
-index_be16[2]       // 0..255
-coefficient_be16[2] // 0..3328
+index_be16[2]        // 0..255
+coefficient_be16[2]  // 0..3328
 ```
 
 ### `PQC_READ_COEFF (0x21)`
 
 ```text
-request:
-  index_be16[2]
-
-response data:
-  coefficient_be16[2]
+request:  index_be16[2]
+response: coefficient_be16[2]
 ```
-
-The requested coefficient must already be covered by a successful write/load.
 
 ### `PQC_LOAD_POLY (0x22)`
 
 ```text
-count_be16[2]       // 1..256
+count_be16[2]                // 1..256
 coefficient_be16[count]
 ```
 
-The endpoint performs a full validation pass before any writeback. Invalid count, length, or coefficient range produces no partial polynomial update.
-
-A 256-coefficient load marks the image `STANDARD`; a shorter load is `PARTIAL` and cannot enter NTT.
+The endpoint validates count, exact payload length and every coefficient before writeback. A complete 256-coefficient load becomes `STANDARD`; a shorter image remains `PARTIAL`.
 
 ### `PQC_READ_POLY (0x23)`
 
 ```text
-request:
-  count_be16[2]     // 1..256
-
-response data:
-  coefficient_be16[count]
+request:  count_be16[2]      // 1..256
+response: coefficient_be16[count]
 ```
 
-Bulk read is permitted only after all 256 coefficient positions are covered.
+Bulk read requires complete coverage.
 
 ### `PQC_START_NTT (0x24)` / `PQC_START_INTT (0x25)`
 
-The deployment binding retains the existing 4-byte command payload. The four bytes are currently not interpreted; SN32 SHOULD send all zeros for forward compatibility.
-
-NTT requires a complete `STANDARD` polynomial. INTT requires a complete `NTT` polynomial.
-
-Forward transform uses the ML-KEM schedule with standard-domain twiddles. Inverse transform consumes twiddles in reverse order (`127 -> 1`) and applies `128^-1 mod 3329 = 3303` at the final normalization stage.
+The current binding retains a reserved four-byte command payload; SN32 sends all zeroes. NTT requires a complete `STANDARD` polynomial. INTT requires a complete `NTT` polynomial. INTT uses reverse twiddle schedule and final normalization `128^-1 mod 3329 = 3303`.
 
 ### `PQC_POINTWISE_MUL (0x26)`
 
 ```text
-second_polynomial_ntt_be16[256] // exactly 512 bytes
+second_polynomial_ntt_be16[256]   // exactly 512 bytes
 ```
 
-This is FIPS-203-style ML-KEM `MultiplyNTTs` using 128 base-case degree-1 products and the appropriate `gamma` twiddles. It is **not** simple coefficient-by-coefficient multiplication. Both operands must be complete and in NTT representation.
-
-The entire second operand is range-validated before any result writeback.
+Implements ML-KEM `MultiplyNTTs` base cases, not scalar coefficient-wise multiplication. The entire second operand is validated before any result writeback.
 
 ### `PQC_POLY_ADD_SUB (0x27)`
 
 ```text
-mode[1]                  // 0 = add, 1 = subtract
+mode[1]                            // 0 add, 1 subtract
 second_polynomial_be16[256]
 ```
 
-The operation is coordinate-wise modulo 3329 and preserves the current representation domain. The second operand is fully validated before any writeback.
+Operation preserves the current representation domain and validates all input before writeback.
 
 ### `PQC_GET_RESULT (0x28)`
 
-Response data is 8 bytes:
+Response data:
 
 ```text
 byte 0  accelerator_busy
 byte 1  done_latched
-byte 2  domain            // 0 PARTIAL, 1 STANDARD, 2 NTT
+byte 2  domain              // 0 PARTIAL, 1 STANDARD, 2 NTT
 byte 3  active_bank
-byte 4  stage             // transform stage when applicable
+byte 4  stage
 byte 5  inverse_active
 byte 6  polynomial_complete
-byte 7  last_operation    // 0 none, 1 NTT, 2 INTT, 3 pointwise, 4 add, 5 sub
+byte 7  last_operation      // 0 none, 1 NTT, 2 INTT, 3 pointwise, 4 add, 5 sub
 ```
 
-## 4. Atomic TX context binding
+## 4. Atomic TX context
 
-Primer #1 needs exactly 24 secret context bytes:
+Primer #1 stores exactly:
 
 ```text
-K_TX       16 bytes
-NP_TX       8 bytes
+K_TX  = 16 bytes
+NP_TX =  8 bytes
 ```
 
-The BTP payload binding is:
+Payloads:
 
 ```text
 KEY_LOAD_BEGIN:
   session_id_be[4]
   direction[1]
-  total_len_be[2]     // must be 24
+  total_len_be[2]       // must be 24
 
 KEY_LOAD_CHUNK:
   offset_be[2]
-  bytes[N]            // offset + N <= 24
+  bytes[N]              // offset + N <= 24
 
 KEY_LOAD_COMMIT:
   session_id_be[4]
@@ -175,123 +156,89 @@ KEY_LOAD_COMMIT:
   total_len_be[2]
 ```
 
-`KEY_DIRECTION_ID` is a top-level/profile parameter, currently `0x01`. The SN32 firmware must use the same profile value.
+`KEY_DIRECTION_ID=0x01`. A new begin invalidates the old active key. Commit is all-or-nothing. Rewriting the same offset/value is idempotent; rewriting a covered byte with a different value records a conflict and prevents commit.
 
-A new `KEY_LOAD_BEGIN` immediately invalidates the previous active key. Commit is all-or-nothing. A repeated write of the same byte/value is idempotent; a repeated write with a different value marks the staging context conflicted and prevents commit.
+## 5. STP telemetry TX / retention
 
-## 5. STP telemetry TX and packet retention
-
-`TELEMETRY_TX_SAMPLE` accepts exactly the 24-byte FPST telemetry record. Primer #1 constructs the 24-byte STP v1 clear header and uses it as Ascon associated data. The telemetry record is the 24-byte plaintext.
-
-Output packet layout:
+`TELEMETRY_TX_SAMPLE` accepts exactly 24 plaintext bytes. Primer #1 constructs the 24-byte STP v1 clear header and uses it as Ascon associated data.
 
 ```text
 STP header     24 bytes
 ciphertext     24 bytes
 tag            16 bytes
 ----------------------
-total           64 bytes
+retained       64 bytes
 ```
 
-The 64-byte packet and its sequence number are retained byte-for-byte. A BTP response read does **not** advance the sequence and does not release the packet.
+Nonce is `NP_TX[63:0] || tx_sequence[63:0]`. The retained image and sequence stay byte-identical across response retries. Reading a response does not advance sequence.
 
-The system-control acknowledgement is carried through normative `WRITE_REG`:
+Register binding:
 
 | Address | Width | Access | Meaning |
 |---:|---:|---|---|
-| `0x00000000` | 4 | R | control/session device-state bitmap |
+| `0x00000000` | 4 | R | control/session state bitmap |
 | `0x00000108` | 8 | R | current `tx_sequence` |
-| `0x00000110` | 8 | R | retained-packet sequence |
+| `0x00000110` | 8 | R | retained packet sequence |
 | `0x00000120` | 8 | W | `TX_COMMIT_SEQUENCE` |
 
-A write of the exact retained sequence to `0x00000120` releases that packet and increments `tx_sequence` once. A mismatched sequence is rejected. SN32 must perform this write only after receiver commit/reconciliation.
+Writing the exact retained sequence to `TX_COMMIT_SEQUENCE` releases the retained packet and increments `tx_sequence` once. SN32 does this only after receiver commit reconciliation.
 
-## 6. Response state fields
+## 6. Single-datapath deployment
 
-The deployment currently has two command endpoints behind one global transaction router. Therefore the generic response `device_state` field is endpoint-local; software should use `PQC_GET_RESULT` for PQC state rather than interpreting control-endpoint NTT legacy bits.
+All `0x20..0x28` commands route to `primer1_pqc_btp_endpoint_v2.sv` / `mlkem_pqc_accelerator`. The legacy `forward_ntt_core` instance still present in the control endpoint source is bound in deployment to `forward_ntt_core_disabled.sv`, so the bitstream contains one real transform datapath rather than two coefficient images.
 
-### Control/session response `device_state`
+## 7. Supervisor / heartbeat binding
 
-```text
-bit 0  KEY_LOADING
-bit 1  KEY_VALID
-bit 2  SESSION_ACTIVE
-bit 3  RETAINED_PACKET_VALID
-bit 4  0 in complete deployment (legacy NTT path disabled)
-bit 5  0 in complete deployment (legacy NTT path disabled)
-bit 6  SECURE_ENABLE
-bit31  FATAL_LATCHED
-```
+Tiny-side `secure_enable_i`, `zeroize_ni` and `fatal_latched_i` are asynchronous to the 27 MHz domain.
 
-### PQC response `device_state`
+- `secure_enable_i`: two-clock fail-safe synchronizer;
+- `zeroize_ni`: asynchronous assertion, synchronized release;
+- `fatal_latched_i`: fail-safe asynchronous local assertion, synchronized release;
+- `heartbeat_o`: transition every exactly `2,700,000` system clocks = 100 ms at 27 MHz.
 
-```text
-bit 0    POLYNOMIAL_COMPLETE
-bits2:1  DOMAIN              // 0 PARTIAL, 1 STANDARD, 2 NTT
-bit 3    ACCELERATOR_BUSY
-bit 4    DONE_LATCHED
-bit 5    INVERSE_ACTIVE
-bit 6    ACTIVE_BANK
-```
+The heartbeat implementation uses a terminal-count divider rather than a counter bit because no power-of-two divider meets the 100 ms ±20% target at 27 MHz.
 
-`busy_o` at the physical top is the OR of control-endpoint and PQC-endpoint activity.
+## 8. Frozen FPGA-side harness
 
-PQC errors are always returned directly in the failing command response. `GET_ERROR/CLEAR_ERROR` currently operate on the control/session endpoint latch; software must not use `GET_ERROR` as a substitute for checking PQC command status.
-
-## 7. Single-datapath deployment binding
-
-The legacy control endpoint source still contains a `forward_ntt_core` instance for source/backward compatibility. All PQC opcodes are intercepted by `primer1_endpoint_router_v2.sv` and sent to `primer1_pqc_btp_endpoint_v2.sv`.
-
-The production manifest therefore binds the unreachable legacy instance to `forward_ntt_core_disabled.sv` (`host_ready_o=0`) and includes only one real ML-KEM transform datapath: `mlkem_pqc_accelerator` / `mlkem_ntt_intt_core`.
-
-This is fail-closed: a routing fault into the legacy PQC command path returns busy rather than operating on a second coefficient image.
-
-## 8. Deployment top sidebands
-
-Logical top-level ports are frozen in RTL:
+The current deployment `.cst` freezes:
 
 ```text
-SPI: spi_sck_i, spi_cs_ni, spi_mosi_i, spi_miso_o
-MCU status: irq_no, busy_o, fault_o
-Supervisor: secure_enable_i, zeroize_ni, fatal_latched_i, heartbeat_o
-Board: sys_clk_i, rst_ni, LED1..LED7
+J2-3   P16   spi_sck_i
+J2-5   P15   spi_mosi_i
+J2-7   T15   spi_miso_o
+J2-8   R14   spi_cs_ni
+J2-10  T14   irq_no
+J2-11  R13   busy_o
+J2-12  T13   fault_o
+J2-13  R12   fatal_latched_i
+J2-15  T12   secure_enable_i
+J2-16  R11   zeroize_ni
+J2-18  T11   heartbeat_o
 ```
 
-The FPGA package pins for SPI and supervisor sidebands are **not frozen by this file**. They must be selected from the actual Primer #1 header, continuity-checked against the assembled harness, and then committed to the final Gowin `.cst`.
+Board clock/reset/LED constraints are H11, A5 and J1/J2/H1/H2/G1/G2/F1 respectively.
 
-The verified existing board assignments may continue to be used for clock/reset/LED diagnostics, but a deployment bitstream is not release-qualified while any top-level port is physically unverified or unconstrained.
+This is the **wiring contract**, not proof that an assembled harness is correct. Before power-on of the connected system, continuity-check each signal and ground against this table. Any intentional pin change is a profile change and must update both `.cst` and harness documentation.
 
-## 9. Verification gate
-
-The regression suite exercises both the transport and the completed PQC path.
-
-`tb_primer1_deployment_btp.sv` verifies a CRC-correct BTP PING through the real deployment top. `tb_primer1_deployment_btp_retry.sv` verifies truncated response recovery, byte-identical duplicate retry and transaction collision rejection.
-
-`tb_primer1_deployment_pqc.sv` drives the same deployment top through SPI/BTP and executes:
+## 9. Timing profile
 
 ```text
-WRITE_COEFF
-READ_COEFF
-LOAD_POLY
-POLY_ADD
-exact duplicate POLY_ADD with same transaction ID
-READ_COEFF to prove side effect occurred once
-POLY_SUB to restore input
-START_NTT
-POINTWISE_MUL by NTT base-case identity
-GET_RESULT
-START_INTT
-READ_POLY 256 coefficients
+sys_clk_i : 27 MHz, 37.037 ns
+spi_sck_i : implementation envelope 5 MHz, 200.000 ns
 ```
 
-The final bulk polynomial must match the original input byte-for-byte.
+`sys_clk` and `spi_sck` are declared asynchronous clock groups. Board bring-up begins at 1 MHz SPI; the release rate is raised only after measured qualification.
 
-Before calling the target **hardware ready**, require:
+## 10. Verification gate
 
-- all RTL/unit/integration and wire-level deployment regressions pass in CI;
-- generic deployment-top Yosys synthesis passes with the single PQC datapath;
-- Gowin synthesis/P&R/timing passes on `GW2A-LV18PG256C8/I7`;
-- final `.cst` has no unconstrained deployment port;
-- board characterization starts at 1 MHz SPI;
-- logic-analyzer capture confirms mode 0 and complete two-transaction BTP behavior;
-- CRC corruption, truncated response/retry, duplicate request, transaction collision, reset, zeroize and fatal-state tests pass on hardware.
+Required host gates:
+
+```bash
+bash scripts/sim/run_iverilog_unit_tests.sh
+bash scripts/sim/run_primer1_pqc_wire_test.sh
+bash scripts/synth/check_kiwi_primer20k_fpst_deployment_yosys.sh
+```
+
+Coverage includes BTP PING/CRC/two-CS framing, IRQ, truncated response recovery, byte-identical duplicate retry, transaction collision rejection, non-idempotent duplicate protection, semantic validation, key/session/zeroize behavior, Ascon KAT, heartbeat terminal count, NTT/INTT round trip, add/sub, MultiplyNTTs and a full polynomial flow over the actual SPI/BTP top.
+
+Generic Yosys synthesis is a synthesizability gate only. Hardware-ready status additionally requires exact-device Gowin synthesis/P&R/timing, continuity evidence and real-board logic-analyzer/fault/reset/zeroize testing.
