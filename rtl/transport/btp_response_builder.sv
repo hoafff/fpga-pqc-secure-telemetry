@@ -36,6 +36,14 @@ module btp_response_builder #(
     } state_t;
 
     state_t state_q;
+
+    /*
+     * Do not reset/zeroize this RAM array in parallel.  Every byte in the
+     * advertised payload length is overwritten before start_i, and responses
+     * never contain traffic_key/nonce_prefix.  Leaving the array without a
+     * reset preserves block-RAM inference on Gowin instead of synthesizing a
+     * 1024-byte resettable flip-flop bank.
+     */
     logic [7:0] payload_mem [0:MAX_PAYLOAD_BYTES-1];
     logic [7:0] opcode_q;
     logic [15:0] transaction_id_q;
@@ -48,7 +56,6 @@ module btp_response_builder #(
     logic [31:0] crc_q;
     logic [31:0] final_crc_q;
     logic [7:0] current_header_byte;
-    integer i;
 
     assign busy_o = (state_q != ST_IDLE) && (state_q != ST_DONE);
 
@@ -110,8 +117,6 @@ module btp_response_builder #(
             final_crc_q <= '0;
             frame_len_o <= '0;
             done_o <= 1'b0;
-            for (i = 0; i < MAX_PAYLOAD_BYTES; i = i + 1)
-                payload_mem[i] <= 8'h00;
         end else begin
             done_o <= 1'b0;
 
@@ -203,8 +208,6 @@ module btp_response_builder #(
                 final_crc_q <= '0;
                 frame_len_o <= '0;
                 done_o <= 1'b0;
-                for (i = 0; i < MAX_PAYLOAD_BYTES; i = i + 1)
-                    payload_mem[i] <= 8'h00;
             end
         end
     end
