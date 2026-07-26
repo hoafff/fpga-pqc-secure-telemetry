@@ -3,6 +3,11 @@ project(fpst_sn32f407_core C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+option(FPST_ENABLE_MLKEM_NATIVE "Build pinned mlkem-native ML-KEM-512 integration" OFF)
+set(FPST_MLKEM_NATIVE_ROOT
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../software/third_party/mlkem-native/src"
+    CACHE PATH "Path to pq-code-package/mlkem-native v1.0.0 checkout")
+
 add_library(fpst_firmware_core
     src/fpst_crc32.c
     src/fpst_sha3.c
@@ -11,9 +16,30 @@ add_library(fpst_firmware_core
     src/fpst_platform.c
     src/fpst_fpga_link.c
     src/fpst_primer1.c
-    src/fpst_session.c)
+    src/fpst_session.c
+    src/fpst_mlkem512_wrapper.c)
 target_include_directories(fpst_firmware_core PUBLIC include)
 target_compile_options(fpst_firmware_core PRIVATE -Wall -Wextra -Werror -Wpedantic)
+
+if(FPST_ENABLE_MLKEM_NATIVE)
+    set(FPST_MLKEM_NATIVE_MONOLITHIC "${FPST_MLKEM_NATIVE_ROOT}/mlkem/mlkem_native.c")
+    set(FPST_MLKEM_NATIVE_API_DIR "${FPST_MLKEM_NATIVE_ROOT}/mlkem")
+    if(NOT EXISTS "${FPST_MLKEM_NATIVE_MONOLITHIC}")
+        message(FATAL_ERROR
+            "Pinned mlkem-native source not found. See software/third_party/mlkem-native/LOCK.md")
+    endif()
+
+    add_library(fpst_mlkem_native_upstream STATIC "${FPST_MLKEM_NATIVE_MONOLITHIC}")
+    target_include_directories(fpst_mlkem_native_upstream PRIVATE
+        "${FPST_MLKEM_NATIVE_API_DIR}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_compile_definitions(fpst_mlkem_native_upstream PRIVATE
+        MLK_CONFIG_FILE=\"fpst_mlkem512_config.h\")
+
+    target_include_directories(fpst_firmware_core PRIVATE "${FPST_MLKEM_NATIVE_API_DIR}")
+    target_compile_definitions(fpst_firmware_core PRIVATE FPST_MLKEM_NATIVE_ENABLED=1)
+    target_link_libraries(fpst_firmware_core PUBLIC fpst_mlkem_native_upstream)
+endif()
 
 add_executable(test_firmware_core tests/test_firmware_core.c)
 target_link_libraries(test_firmware_core PRIVATE fpst_firmware_core)
