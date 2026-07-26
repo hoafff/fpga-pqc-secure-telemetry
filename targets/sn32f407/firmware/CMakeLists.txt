@@ -36,8 +36,6 @@ if(FPST_ENABLE_MLKEM_NATIVE)
             "Pinned mlkem-native source not found. See software/third_party/mlkem-native/LOCK.md")
     endif()
 
-    # Production profile: upstream ML-KEM-512 primitives with the qualified
-    # Primer #1 forward-NTT backend hook.
     add_library(fpst_mlkem_native_upstream STATIC "${FPST_MLKEM_NATIVE_MONOLITHIC}")
     target_include_directories(fpst_mlkem_native_upstream PRIVATE
         "${FPST_MLKEM_NATIVE_API_DIR}"
@@ -51,8 +49,6 @@ if(FPST_ENABLE_MLKEM_NATIVE)
         MLK_CONFIG_FILE=\"fpst_mlkem512_config.h\")
     target_link_libraries(fpst_firmware_core PUBLIC fpst_mlkem_native_upstream)
 
-    # Independent pure-C instance from the exact same upstream revision. It is
-    # linked only into the host differential test and never into board firmware.
     add_library(fpst_mlkem_native_reference STATIC "${FPST_MLKEM_NATIVE_MONOLITHIC}")
     target_include_directories(fpst_mlkem_native_reference PRIVATE
         "${FPST_MLKEM_NATIVE_API_DIR}"
@@ -81,8 +77,6 @@ if(FPST_ENABLE_MLKEM_NATIVE)
         fpst_mlkem_native_upstream
         fpst_mlkem_native_reference)
 
-    # Source-level SRAM regression guard for the dominant persistent objects.
-    # This supplements, but never replaces, the ARM Compiler 6 map/stack gate.
     add_executable(test_mlkem_memory_preflight
         tests/test_mlkem_memory_preflight.c)
     target_link_libraries(test_mlkem_memory_preflight PRIVATE fpst_firmware_core)
@@ -97,6 +91,10 @@ target_compile_options(test_firmware_core PRIVATE -Wall -Wextra -Werror -Wpedant
 add_executable(test_primer_pair tests/test_primer_pair.c)
 target_link_libraries(test_primer_pair PRIVATE fpst_firmware_core)
 target_compile_options(test_primer_pair PRIVATE -Wall -Wextra -Werror -Wpedantic)
+
+add_executable(test_primer_pair_routed tests/test_primer_pair_routed.c)
+target_link_libraries(test_primer_pair_routed PRIVATE fpst_firmware_core)
+target_compile_options(test_primer_pair_routed PRIVATE -Wall -Wextra -Werror -Wpedantic)
 
 add_executable(test_entropy_rng tests/test_entropy_rng.c)
 target_link_libraries(test_entropy_rng PRIVATE fpst_firmware_core)
@@ -117,6 +115,7 @@ target_compile_options(test_mlkem_session_sink PRIVATE -Wall -Wextra -Werror -Wp
 enable_testing()
 add_test(NAME firmware_core COMMAND test_firmware_core)
 add_test(NAME primer_pair COMMAND test_primer_pair)
+add_test(NAME primer_pair_routed COMMAND test_primer_pair_routed)
 add_test(NAME entropy_rng COMMAND test_entropy_rng)
 add_test(NAME telemetry COMMAND test_telemetry)
 add_test(NAME mlkem_session_sink COMMAND test_mlkem_session_sink)
