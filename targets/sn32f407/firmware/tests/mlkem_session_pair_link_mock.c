@@ -6,6 +6,10 @@
  * the portable firmware integration tests; these tests only need to keep the
  * ML-KEM object link-complete after adding paired public entrypoints.
  */
+bool fpst_platform_is_valid(const fpst_platform_t *p) {
+    return p != NULL;
+}
+
 fpst_result_t fpst_fpga_link_rebind(fpst_fpga_link_t *link,
                                     const fpst_platform_t *platform) {
     if (link == NULL || platform == NULL) return FPST_ERR_ARGUMENT;
