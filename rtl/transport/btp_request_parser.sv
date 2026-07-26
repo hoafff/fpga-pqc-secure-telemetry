@@ -19,6 +19,7 @@ module btp_request_parser #(
     output logic [7:0] request_flags_o,
     output logic [15:0] request_transaction_id_o,
     output logic [15:0] request_payload_len_o,
+    output logic [31:0] request_crc32_o,
     output logic request_error_o,
     output logic [15:0] request_error_code_o,
 
@@ -42,20 +43,29 @@ module btp_request_parser #(
     logic [15:0] payload_len_q;
     logic [31:0] crc_q;
     logic [31:0] observed_crc_q;
+    logic [31:0] request_crc32_q;
 
     logic [31:0] observed_crc_with_current;
     logic [31:0] expected_crc;
     logic [COUNT_W-1:0] expected_frame_len;
+    logic crc_data_region;
+    logic crc_wire_region;
 
     assign request_valid_o = (state_q == ST_HOLD);
     assign request_opcode_o = opcode_q;
     assign request_flags_o = flags_q;
     assign request_transaction_id_o = transaction_id_q;
     assign request_payload_len_o = payload_len_q;
+    assign request_crc32_o = request_crc32_q;
 
     assign expected_crc = crc32_finalize(crc_q);
     assign observed_crc_with_current = {observed_crc_q[23:0], frame_rd_data_i};
     assign expected_frame_len = BTP_HEADER_BYTES + payload_len_q + BTP_CRC_BYTES;
+    assign crc_data_region = (frame_len_q >= BTP_CRC_BYTES) &&
+                             (scan_index_q >= 2) &&
+                             (scan_index_q < (frame_len_q - BTP_CRC_BYTES));
+    assign crc_wire_region = (frame_len_q >= BTP_CRC_BYTES) &&
+                             (scan_index_q >= (frame_len_q - BTP_CRC_BYTES));
 
     /* During HOLD the endpoint reads payload bytes directly from immutable rx_mem. */
     always_comb begin
@@ -81,6 +91,7 @@ module btp_request_parser #(
             payload_len_q <= '0;
             crc_q <= 32'hFFFFFFFF;
             observed_crc_q <= '0;
+            request_crc32_q <= '0;
             request_error_o <= 1'b0;
             request_error_code_o <= ERR_OK;
             frame_accept_o <= 1'b0;
@@ -102,6 +113,7 @@ module btp_request_parser #(
                         payload_len_q <= '0;
                         crc_q <= 32'hFFFFFFFF;
                         observed_crc_q <= '0;
+                        request_crc32_q <= '0;
                         request_error_o <= 1'b0;
                         request_error_code_o <= ERR_OK;
                         state_q <= ST_SCAN;
@@ -125,15 +137,14 @@ module btp_request_parser #(
                     endcase
 
                     /* CRC covers version..payload and excludes SOF + CRC field. */
-                    if ((scan_index_q >= 2) &&
-                        (scan_index_q < (frame_len_q - BTP_CRC_BYTES)))
+                    if (crc_data_region)
                         crc_q <= crc32_update_byte(crc_q, frame_rd_data_i);
 
-                    if ((frame_len_q >= BTP_CRC_BYTES) &&
-                        (scan_index_q >= (frame_len_q - BTP_CRC_BYTES)))
+                    if (crc_wire_region)
                         observed_crc_q <= {observed_crc_q[23:0], frame_rd_data_i};
 
                     if (scan_index_q + 1'b1 >= frame_len_q) begin
+                        request_crc32_q <= expected_crc;
                         request_error_o <= 1'b0;
                         request_error_code_o <= ERR_OK;
 
@@ -149,7 +160,10 @@ module btp_request_parser #(
                             request_error_o <= 1'b1;
                             request_error_code_o <= ERR_BTP_VERSION;
                         end else if (reserved_q != 8'h00 ||
-                                     ((flags_q & BTP_FLAG_RESERVED_M) != 0)) begin
+                                     ((flags_q & BTP_FLAG_RESERVED_M) != 0) ||
+                                     ((flags_q & (BTP_FLAG_RESPONSE |
+                                                  BTP_FLAG_ERROR |
+                                                  BTP_FLAG_ASYNC_EVENT)) != 0)) begin
                             request_error_o <= 1'b1;
                             request_error_code_o <= ERR_RESERVED_FIELD;
                         end else if (payload_len_q > BTP_MAX_PAYLOAD ||
@@ -193,6 +207,7 @@ module btp_request_parser #(
                 payload_len_q <= '0;
                 crc_q <= 32'hFFFFFFFF;
                 observed_crc_q <= '0;
+                request_crc32_q <= '0;
                 request_error_o <= 1'b0;
                 request_error_code_o <= ERR_OK;
                 frame_accept_o <= 1'b0;
