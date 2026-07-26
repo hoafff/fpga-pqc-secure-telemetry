@@ -73,10 +73,11 @@ module btp_duplicate_guard #(
             duplicate_o            <= 1'b0;
             collision_o            <= 1'b0;
         end else begin
+            /* Decision values are held stable after decision_valid_o pulses.
+             * Consumers MUST qualify them with decision_valid_o. Holding the
+             * values avoids a one-cycle diagnostic race with registered actions
+             * taken from the decision on the following edge. */
             decision_valid_o <= 1'b0;
-            new_request_o    <= 1'b0;
-            duplicate_o      <= 1'b0;
-            collision_o      <= 1'b0;
 
             if (cache_valid_q) begin
                 if (age_q >= CACHE_CYCLES-1) begin
