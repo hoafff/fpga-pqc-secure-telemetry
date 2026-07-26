@@ -148,6 +148,7 @@ Still open on Primer #1:
 - pointwise/poly wrapper operations;
 - full RTL ML-KEM offload;
 - exact physical Primer SPI/sideband pin `.cst`;
+- final non-conflicting system carrier for Primer #2 commit evidence;
 - Gowin place-and-route/timing and real-board BTP evidence.
 
 Therefore the current claim is **hardware-assisted PQC with forward-NTT acceleration + secure transmitter**, not a full-RTL ML-KEM implementation.
@@ -162,10 +163,11 @@ Implemented:
 - two-transaction request/response flow;
 - transaction-ID retry behavior;
 - session key-load/commit/activate flow;
-- TX commit-ack relay profile;
 - register-level SONiX UART0/SPI0/GPIO port;
 - verified EVK connector mapping from organizer schematic;
 - Keil build/programming instructions.
+
+Receiver commit evidence remains a logical system-integration input to Primer #1; no private BTP opcode is allocated because FPST v1.1 already reserves `0x61` for `STP_RX_PACKET`.
 
 Physical BTP traffic remains intentionally guarded while `FPST_SN32F407_HARNESS_VERIFIED=0` until the Primer-side pin map and real harness are verified.
 
@@ -219,7 +221,7 @@ Required physical sign-off before claiming the complete link works on hardware:
 - exact Primer connector pins + `.cst`;
 - common GND / 3.3 V compatibility;
 - Mode-0 1 MHz logic-analyzer capture;
-- PING/GET_CAPS;
+- PING/GET_DEVICE_ID/GET_STATUS;
 - bad-CRC rejection;
 - key stage/commit/activate/zeroize;
 - telemetry TX byte comparison;
