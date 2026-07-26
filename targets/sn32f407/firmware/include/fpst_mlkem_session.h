@@ -47,14 +47,25 @@ fpst_result_t fpst_mlkem_session_establish_tx_to_sink(
     fpst_mlkem_ciphertext_sink_fn sink,
     void *sink_ctx);
 
-/*
- * Full MVP local two-Primer path. The same K_TX || NP_TX direction context is
- * atomically provisioned to Primer #1 encrypt and Primer #2 decrypt before the
- * shared secret is wiped and before the public ciphertext is released.
- */
+/* Full MVP local two-Primer path with independent BTP link objects. */
 fpst_result_t fpst_mlkem_session_establish_pair_to_sink(
     fpst_session_manager_t *tx_session,
     fpst_fpga_link_t *primer2_link,
+    const uint8_t receiver_public_key[FPST_MLKEM512_PUBLIC_KEY_BYTES],
+    uint32_t session_id,
+    const fpst_csprng_t *rng,
+    fpst_mlkem_ciphertext_sink_fn sink,
+    void *sink_ctx);
+
+/*
+ * SN32 8-KiB deployment path: one BTP link/buffer set is routed between the
+ * two physical Primer platforms. K_TX || NP_TX is committed on both endpoints
+ * before the shared secret is wiped and before the public ciphertext is exposed.
+ */
+fpst_result_t fpst_mlkem_session_establish_pair_routed_to_sink(
+    fpst_session_manager_t *tx_session,
+    const fpst_platform_t *primer1_platform,
+    const fpst_platform_t *primer2_platform,
     const uint8_t receiver_public_key[FPST_MLKEM512_PUBLIC_KEY_BYTES],
     uint32_t session_id,
     const fpst_csprng_t *rng,
