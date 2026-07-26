@@ -2,15 +2,18 @@
 #define FPST_SN32F407_BOARD_PROFILE_H
 
 /*
- * Hardware evidence source:
- *   - official contest SN32F400 CMSIS/Firmware Library V1.5R
- *   - SONiX DFP / Keil project target SN32F407F
- *   - EVK schematic revision 32F407 EVK V1.0 is present in the organizer pack
+ * Evidence:
+ *   - organizer SN32F400 CMSIS/Firmware Library V1.5R
+ *   - SONiX DFP / Keil SN32F407F target
+ *   - organizer 32F407 EVK V1.0 schematic
  *
- * Keep silicon/peripheral verification separate from the external jumper
- * harness. The MCU-side peripheral routes below are confirmed by the SONiX
- * PFPA tables; the final point-to-point wiring to Primer #1 must still be
- * checked against the physical boards before declaring an end-to-end image.
+ * EVK J12 DB_SPI exposes P1.0/P1.1/P1.2 for SCK/MISO/MOSI.  P1.8 is the
+ * onboard W25Q16 CE# net, therefore it MUST NOT be used as the Primer chip
+ * select.  Primer selects/IRQs are routed to ordinary GPIO on J7 instead.
+ *
+ * FPGA-side connector pins are still a physical sign-off item; leave harness
+ * verified at zero until the OneKiwi Primer 20K schematic/user-guide mapping
+ * and continuity capture are recorded.
  */
 #define FPST_SN32F407_DEVICE_VERIFIED       1
 #define FPST_SN32F407_MCU_PINMUX_VERIFIED  1
@@ -22,46 +25,42 @@
 #define FPST_SN32F407_RAM_BYTES             0x2000u
 #define FPST_SN32F407_HCLK_HZ               12000000u
 
-/*
- * Selected SONiX peripheral routes. PFPA selector value 0 chooses these pins.
- * SPI0: SCK=P0.0, SEL=P0.1, MISO=P0.2, MOSI=P0.3
- * UART0: TX=P0.10, RX=P0.11
- */
 #define FPST_SN32F407_SPI_INSTANCE           0
 #define FPST_SN32F407_PC_UART_INSTANCE       0
-#define FPST_SN32F407_PFPA_SPI0_VALUE        0x00000000u
-#define FPST_SN32F407_PFPA_UART0_VALUE       0x00000000u
-
-#define FPST_SN32F407_SPI_SCK_PORT           0u
-#define FPST_SN32F407_SPI_SCK_PIN            0u
-#define FPST_SN32F407_SPI_CS_PORT            0u
-#define FPST_SN32F407_SPI_CS_PIN             1u
-#define FPST_SN32F407_SPI_MISO_PORT          0u
-#define FPST_SN32F407_SPI_MISO_PIN           2u
-#define FPST_SN32F407_SPI_MOSI_PORT          0u
-#define FPST_SN32F407_SPI_MOSI_PIN           3u
-#define FPST_SN32F407_UART_TX_PORT           0u
-#define FPST_SN32F407_UART_TX_PIN            10u
-#define FPST_SN32F407_UART_RX_PORT           0u
-#define FPST_SN32F407_UART_RX_PIN            11u
 
 /*
- * Proposed sideband jumper profile. These pins remain ordinary GPIO because
- * their alternate-function selectors stay disabled in this firmware.
+ * SN_PFPA->SPI0 fields from organizer PFPA source:
+ *   bits 1:0 MISO0, 3:2 MOSI0, 5:4 SCK0, 7:6 SEL0.
+ * Select route 2 for MISO/MOSI/SCK -> P1.1/P1.2/P1.0, but leave SEL0 route
+ * at 0 because hardware SEL is disabled and P1.8 must remain the flash CE#.
  */
-#define FPST_SN32F407_READY_PORT             1u
-#define FPST_SN32F407_READY_PIN              4u
-#define FPST_SN32F407_IRQ_PORT               1u
-#define FPST_SN32F407_IRQ_PIN                5u
-#define FPST_SN32F407_RESET_N_PORT           1u
-#define FPST_SN32F407_RESET_N_PIN            6u
-#define FPST_SN32F407_ZEROIZE_N_PORT         1u
-#define FPST_SN32F407_ZEROIZE_N_PIN          7u
+#define FPST_SN32F407_PFPA_SPI0_VALUE        0x0000002Au
+#define FPST_SN32F407_PFPA_UART0_VALUE       0x00000000u
 
-/* Active levels at the MCU/FPGA link boundary. */
-#define FPST_SN32F407_READY_ACTIVE_HIGH      1
-#define FPST_SN32F407_IRQ_ACTIVE_HIGH        1
-#define FPST_SN32F407_RESET_ACTIVE_LOW       1
-#define FPST_SN32F407_ZEROIZE_ACTIVE_LOW     1
+#define FPST_SN32F407_SPI_SCK_PORT            1u
+#define FPST_SN32F407_SPI_SCK_PIN             0u
+#define FPST_SN32F407_SPI_MISO_PORT           1u
+#define FPST_SN32F407_SPI_MISO_PIN            1u
+#define FPST_SN32F407_SPI_MOSI_PORT           1u
+#define FPST_SN32F407_SPI_MOSI_PIN            2u
+
+/* J7 I/O_1 proposed/board-visible harness. */
+#define FPST_SN32F407_P1_CS_N_PORT             2u
+#define FPST_SN32F407_P1_CS_N_PIN              1u
+#define FPST_SN32F407_P2_CS_N_PORT             2u
+#define FPST_SN32F407_P2_CS_N_PIN              2u
+#define FPST_SN32F407_P1_IRQ_N_PORT            2u
+#define FPST_SN32F407_P1_IRQ_N_PIN             3u
+#define FPST_SN32F407_P2_IRQ_N_PORT            2u
+#define FPST_SN32F407_P2_IRQ_N_PIN              8u
+#define FPST_SN32F407_J7_RESERVE_PORT           2u
+#define FPST_SN32F407_J7_RESERVE_PIN            9u
+
+#define FPST_SN32F407_UART_TX_PORT              0u
+#define FPST_SN32F407_UART_TX_PIN              10u
+#define FPST_SN32F407_UART_RX_PORT              0u
+#define FPST_SN32F407_UART_RX_PIN              11u
+
+#define FPST_SN32F407_IRQ_ACTIVE_LOW             1
 
 #endif
