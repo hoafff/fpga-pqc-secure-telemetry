@@ -45,21 +45,21 @@ module fpst_btp_spi_slave #(
     localparam logic [15:0] ERR_BTP_VERSION     = 16'h0102;
     localparam logic [15:0] ERR_BTP_LENGTH      = 16'h0103;
     localparam logic [15:0] ERR_BTP_CRC         = 16'h0104;
+    localparam logic [15:0] ERR_BTP_TRANSACTION = 16'h0105;
 
-    localparam logic [7:0] BTP_VERSION = 8'h01;
+    localparam logic [7:0] BTP_VERSION  = 8'h01;
     localparam logic [7:0] FLAG_RESPONSE = 8'h01;
-    localparam logic [7:0] FLAG_ERROR = 8'h02;
+    localparam logic [7:0] FLAG_ERROR    = 8'h02;
 
     logic [7:0] rx_mem [0:MAX_FRAME_BYTES-1];
     logic [7:0] tx_mem [0:MAX_FRAME_BYTES-1];
     logic [7:0] rsp_payload_mem [0:MAX_PAYLOAD_BYTES-1];
 
     /*
-     * Bring-up profile: SYS_CLK=27 MHz, SPI=3 MHz. The external SPI pins are
-     * treated as asynchronous inputs and synchronized before edge detection.
-     * Nine system clocks per SPI period leave margin for a two-flop
-     * synchronizer while keeping all BTP/key-bearing buffers in one clock
-     * domain so zeroize can scrub them deterministically.
+     * FPST v1.1 bring-up profile is SPI Mode 0, MSB first, 1 MHz. SYS_CLK is
+     * 27 MHz, therefore SCLK/CS/MOSI are synchronized and edge-detected in the
+     * system domain. This keeps request/response/key-bearing memories in one
+     * clock domain and gives zeroize deterministic ownership over them.
      */
     logic sclk_meta_q, sclk_sync_q, sclk_prev_q;
     logic cs_meta_q, cs_sync_q, cs_prev_q;
@@ -93,21 +93,25 @@ module fpst_btp_spi_slave #(
     logic [FRAME_COUNT_W-1:0] crc_index_q;
     logic [31:0] crc_q;
     logic [31:0] crc_next;
+    logic [31:0] crc_final;
     logic [15:0] parsed_payload_len_q;
     logic [15:0] parsed_transaction_id_q;
     logic [7:0] parsed_opcode_q;
     logic [7:0] parsed_flags_q;
+    logic [31:0] parsed_request_crc_q;
 
     logic [15:0] build_payload_len_q;
     logic [15:0] build_payload_index_q;
     logic [7:0] build_opcode_q;
     logic [15:0] build_transaction_id_q;
+    logic build_cacheable_q;
 
     logic cache_valid_q;
     logic [15:0] cache_transaction_id_q;
     logic [7:0] cache_opcode_q;
+    logic [31:0] cache_request_crc_q;
 
-    logic auto_error_start_q;
+    logic auto_error_pending_q;
     logic [15:0] auto_error_code_q;
 
     integer i;
@@ -148,13 +152,16 @@ module fpst_btp_spi_slave #(
                     (control_state_q != C_IDLE);
     assign fault_o = 1'b0;
     assign rsp_ready_o = (control_state_q == C_IDLE) && !request_pending_q &&
-                         !cmd_valid_o && !rsp_pending_q;
+                         !cmd_valid_o && !rsp_pending_q && !auto_error_pending_q;
 
     always_comb begin
-        crc_next = crc32_byte(crc_q,
-                    (control_state_q == C_REQ_CRC) ? rx_mem[crc_index_q] :
-                    (control_state_q == C_RSP_HEADER_CRC) ? tx_mem[crc_index_q] :
-                    rsp_payload_mem[build_payload_index_q]);
+        if (control_state_q == C_REQ_CRC)
+            crc_next = crc32_byte(crc_q, rx_mem[crc_index_q]);
+        else if (control_state_q == C_RSP_HEADER_CRC)
+            crc_next = crc32_byte(crc_q, tx_mem[crc_index_q]);
+        else
+            crc_next = crc32_byte(crc_q, rsp_payload_mem[build_payload_index_q]);
+        crc_final = ~crc_q;
     end
 
     always_ff @(posedge sys_clk_i) begin
@@ -167,6 +174,7 @@ module fpst_btp_spi_slave #(
             cs_prev_q <= 1'b1;
             mosi_meta_q <= 1'b0;
             mosi_sync_q <= 1'b0;
+
             transaction_response_q <= 1'b0;
             rx_shift_q <= 8'h00;
             rx_bit_q <= 3'd0;
@@ -176,6 +184,7 @@ module fpst_btp_spi_slave #(
             request_len_q <= '0;
             request_pending_q <= 1'b0;
             miso_q <= 1'b0;
+
             rsp_pending_q <= 1'b0;
             rsp_frame_len_q <= '0;
             control_state_q <= C_IDLE;
@@ -185,15 +194,22 @@ module fpst_btp_spi_slave #(
             parsed_transaction_id_q <= '0;
             parsed_opcode_q <= '0;
             parsed_flags_q <= '0;
+            parsed_request_crc_q <= '0;
+
             build_payload_len_q <= '0;
             build_payload_index_q <= '0;
             build_opcode_q <= '0;
             build_transaction_id_q <= '0;
+            build_cacheable_q <= 1'b0;
+
             cache_valid_q <= 1'b0;
             cache_transaction_id_q <= '0;
             cache_opcode_q <= '0;
-            auto_error_start_q <= 1'b0;
+            cache_request_crc_q <= '0;
+
+            auto_error_pending_q <= 1'b0;
             auto_error_code_q <= '0;
+
             cmd_valid_o <= 1'b0;
             cmd_opcode_o <= '0;
             cmd_flags_o <= '0;
@@ -201,6 +217,7 @@ module fpst_btp_spi_slave #(
             cmd_payload_len_o <= '0;
             link_error_valid_o <= 1'b0;
             link_error_code_o <= 16'h0000;
+
             for (i = 0; i < MAX_FRAME_BYTES; i = i + 1) begin
                 rx_mem[i] <= 8'h00;
                 tx_mem[i] <= 8'h00;
@@ -219,13 +236,13 @@ module fpst_btp_spi_slave #(
 
             link_error_valid_o <= 1'b0;
             link_error_code_o <= 16'h0000;
-            auto_error_start_q <= 1'b0;
 
             if (zeroize_i) begin
                 request_pending_q <= 1'b0;
                 cmd_valid_o <= 1'b0;
                 rsp_pending_q <= 1'b0;
                 cache_valid_q <= 1'b0;
+                auto_error_pending_q <= 1'b0;
                 control_state_q <= C_IDLE;
                 rx_shift_q <= 8'h00;
                 rx_bit_q <= 3'd0;
@@ -243,6 +260,9 @@ module fpst_btp_spi_slave #(
                 if (rsp_payload_we_i && rsp_payload_addr_i < MAX_PAYLOAD_BYTES)
                     rsp_payload_mem[rsp_payload_addr_i] <= rsp_payload_data_i;
 
+                /* Start of one CS-bounded BTP transaction. If a response is
+                 * pending this transaction is response-only; otherwise it is
+                 * request-only. */
                 if (cs_fall) begin
                     transaction_response_q <= rsp_pending_q;
                     rx_shift_q <= 8'h00;
@@ -250,12 +270,10 @@ module fpst_btp_spi_slave #(
                     tx_bit_q <= 3'd0;
                     rx_count_q <= '0;
                     tx_count_q <= '0;
-                    if (rsp_pending_q)
-                        miso_q <= tx_mem[0][7];
-                    else
-                        miso_q <= 1'b0;
+                    miso_q <= rsp_pending_q ? tx_mem[0][7] : 1'b0;
                 end
 
+                /* Mode-0 request capture: MOSI sampled on rising SCLK. */
                 if (!cs_sync_q && !transaction_response_q && sclk_rise) begin
                     rx_shift_q <= {rx_shift_q[6:0], mosi_sync_q};
                     if (rx_bit_q == 3'd7) begin
@@ -269,26 +287,28 @@ module fpst_btp_spi_slave #(
                     end
                 end
 
+                /* Mode-0 response drive: next MISO bit changes after falling
+                 * SCLK and is stable before the following rising SCLK. */
                 if (!cs_sync_q && transaction_response_q && sclk_fall) begin
                     if (tx_bit_q == 3'd7) begin
                         tx_bit_q <= 3'd0;
-                        if (tx_count_q + 1'b1 < rsp_frame_len_q) begin
-                            tx_count_q <= tx_count_q + 1'b1;
+                        tx_count_q <= tx_count_q + 1'b1;
+                        if (tx_count_q + 1'b1 < rsp_frame_len_q)
                             miso_q <= tx_mem[tx_count_q + 1'b1][7];
-                        end else begin
-                            tx_count_q <= tx_count_q + 1'b1;
+                        else
                             miso_q <= 1'b0;
-                        end
                     end else begin
                         tx_bit_q <= tx_bit_q + 1'b1;
                         miso_q <= tx_mem[tx_count_q][6-tx_bit_q];
                     end
                 end
 
+                /* End of transaction. Exactly one request or one response frame
+                 * exists under one CS assertion. */
                 if (cs_rise) begin
                     miso_q <= 1'b0;
                     if (transaction_response_q) begin
-                        if (tx_count_q >= rsp_frame_len_q - 1'b1)
+                        if (tx_count_q >= rsp_frame_len_q)
                             rsp_pending_q <= 1'b0;
                     end else if (!request_pending_q && !cmd_valid_o &&
                                  rx_count_q >= HEADER_BYTES + TRAILER_BYTES) begin
@@ -302,7 +322,30 @@ module fpst_btp_spi_slave #(
 
                 case (control_state_q)
                     C_IDLE: begin
-                        if (request_pending_q && !cmd_valid_o && !rsp_pending_q) begin
+                        if (auto_error_pending_q && !rsp_pending_q) begin
+                            rsp_payload_mem[0] <= auto_error_code_q[15:8];
+                            rsp_payload_mem[1] <= auto_error_code_q[7:0];
+                            build_opcode_q <= parsed_opcode_q;
+                            build_transaction_id_q <= parsed_transaction_id_q;
+                            build_payload_len_q <= 16'd2;
+                            build_cacheable_q <= 1'b0;
+                            tx_mem[0] <= 8'hA5;
+                            tx_mem[1] <= 8'h5A;
+                            tx_mem[2] <= BTP_VERSION;
+                            tx_mem[3] <= parsed_opcode_q;
+                            tx_mem[4] <= FLAG_RESPONSE | FLAG_ERROR;
+                            tx_mem[5] <= 8'h00;
+                            tx_mem[6] <= parsed_transaction_id_q[15:8];
+                            tx_mem[7] <= parsed_transaction_id_q[7:0];
+                            tx_mem[8] <= 8'h00;
+                            tx_mem[9] <= 8'h02;
+                            crc_q <= 32'hFFFFFFFF;
+                            crc_index_q <= 2;
+                            auto_error_pending_q <= 1'b0;
+                            link_error_valid_o <= 1'b1;
+                            link_error_code_o <= auto_error_code_q;
+                            control_state_q <= C_RSP_HEADER_CRC;
+                        end else if (request_pending_q && !cmd_valid_o && !rsp_pending_q) begin
                             parsed_opcode_q <= rx_mem[3];
                             parsed_flags_q <= rx_mem[4];
                             parsed_transaction_id_q <= {rx_mem[6], rx_mem[7]};
@@ -316,6 +359,7 @@ module fpst_btp_spi_slave #(
                                 build_opcode_q <= rsp_opcode_i;
                                 build_transaction_id_q <= rsp_transaction_id_i;
                                 build_payload_len_q <= rsp_payload_len_i;
+                                build_cacheable_q <= 1'b1;
                                 tx_mem[0] <= 8'hA5;
                                 tx_mem[1] <= 8'h5A;
                                 tx_mem[2] <= BTP_VERSION;
@@ -337,23 +381,27 @@ module fpst_btp_spi_slave #(
                         if (request_len_q < HEADER_BYTES + TRAILER_BYTES ||
                             rx_mem[0] != 8'hA5 || rx_mem[1] != 8'h5A) begin
                             auto_error_code_q <= ERR_BTP_SOF;
-                            auto_error_start_q <= 1'b1;
+                            auto_error_pending_q <= 1'b1;
                             request_pending_q <= 1'b0;
                             control_state_q <= C_IDLE;
                         end else if (rx_mem[2] != BTP_VERSION) begin
                             auto_error_code_q <= ERR_BTP_VERSION;
-                            auto_error_start_q <= 1'b1;
+                            auto_error_pending_q <= 1'b1;
                             request_pending_q <= 1'b0;
                             control_state_q <= C_IDLE;
                         end else if (rx_mem[5] != 8'h00 ||
+                                     rx_mem[4][7:3] != 5'b00000 ||
+                                     rx_mem[4][0] != 1'b0 ||
                                      {rx_mem[8], rx_mem[9]} > MAX_PAYLOAD_BYTES ||
                                      request_len_q != HEADER_BYTES +
                                          {rx_mem[8], rx_mem[9]} + TRAILER_BYTES) begin
                             auto_error_code_q <= ERR_BTP_LENGTH;
-                            auto_error_start_q <= 1'b1;
+                            auto_error_pending_q <= 1'b1;
                             request_pending_q <= 1'b0;
                             control_state_q <= C_IDLE;
                         end else begin
+                            parsed_request_crc_q <=
+                                rx_load_be32(HEADER_BYTES + {rx_mem[8], rx_mem[9]});
                             crc_q <= 32'hFFFFFFFF;
                             crc_index_q <= 2;
                             control_state_q <= C_REQ_CRC;
@@ -363,16 +411,22 @@ module fpst_btp_spi_slave #(
                     C_REQ_CRC: begin
                         crc_q <= crc_next;
                         if (crc_index_q == HEADER_BYTES + parsed_payload_len_q - 1) begin
-                            if ((~crc_next) !=
-                                rx_load_be32(HEADER_BYTES + parsed_payload_len_q)) begin
+                            if ((~crc_next) != parsed_request_crc_q) begin
                                 auto_error_code_q <= ERR_BTP_CRC;
-                                auto_error_start_q <= 1'b1;
+                                auto_error_pending_q <= 1'b1;
                                 request_pending_q <= 1'b0;
                                 control_state_q <= C_IDLE;
                             end else if (cache_valid_q &&
-                                         parsed_transaction_id_q == cache_transaction_id_q &&
-                                         parsed_opcode_q == cache_opcode_q) begin
-                                rsp_pending_q <= 1'b1;
+                                         parsed_transaction_id_q == cache_transaction_id_q) begin
+                                if (parsed_opcode_q == cache_opcode_q &&
+                                    parsed_request_crc_q == cache_request_crc_q) begin
+                                    /* Lost response: replay byte-identical cached response. */
+                                    rsp_pending_q <= 1'b1;
+                                end else begin
+                                    /* Same transaction ID carrying a different request. */
+                                    auto_error_code_q <= ERR_BTP_TRANSACTION;
+                                    auto_error_pending_q <= 1'b1;
+                                end
                                 request_pending_q <= 1'b0;
                                 control_state_q <= C_IDLE;
                             end else begin
@@ -418,46 +472,23 @@ module fpst_btp_spi_slave #(
                     end
 
                     C_RSP_FINALIZE: begin
-                        tx_mem[HEADER_BYTES + build_payload_len_q + 0] <= (~crc_q)[31:24];
-                        tx_mem[HEADER_BYTES + build_payload_len_q + 1] <= (~crc_q)[23:16];
-                        tx_mem[HEADER_BYTES + build_payload_len_q + 2] <= (~crc_q)[15:8];
-                        tx_mem[HEADER_BYTES + build_payload_len_q + 3] <= (~crc_q)[7:0];
+                        tx_mem[HEADER_BYTES + build_payload_len_q + 0] <= crc_final[31:24];
+                        tx_mem[HEADER_BYTES + build_payload_len_q + 1] <= crc_final[23:16];
+                        tx_mem[HEADER_BYTES + build_payload_len_q + 2] <= crc_final[15:8];
+                        tx_mem[HEADER_BYTES + build_payload_len_q + 3] <= crc_final[7:0];
                         rsp_frame_len_q <= HEADER_BYTES + build_payload_len_q + TRAILER_BYTES;
                         rsp_pending_q <= 1'b1;
-                        cache_valid_q <= 1'b1;
-                        cache_transaction_id_q <= build_transaction_id_q;
-                        cache_opcode_q <= build_opcode_q;
+                        if (build_cacheable_q) begin
+                            cache_valid_q <= 1'b1;
+                            cache_transaction_id_q <= build_transaction_id_q;
+                            cache_opcode_q <= build_opcode_q;
+                            cache_request_crc_q <= parsed_request_crc_q;
+                        end
                         control_state_q <= C_IDLE;
                     end
 
                     default: control_state_q <= C_IDLE;
                 endcase
-
-                /* Link-level malformed request response. It is built only while
-                 * the response builder is idle, and uses the canonical 16-bit
-                 * Appendix-C error code as the generic response payload. */
-                if (auto_error_start_q && control_state_q == C_IDLE && !rsp_pending_q) begin
-                    link_error_valid_o <= 1'b1;
-                    link_error_code_o <= auto_error_code_q;
-                    rsp_payload_mem[0] <= auto_error_code_q[15:8];
-                    rsp_payload_mem[1] <= auto_error_code_q[7:0];
-                    build_opcode_q <= parsed_opcode_q;
-                    build_transaction_id_q <= parsed_transaction_id_q;
-                    build_payload_len_q <= 16'd2;
-                    tx_mem[0] <= 8'hA5;
-                    tx_mem[1] <= 8'h5A;
-                    tx_mem[2] <= BTP_VERSION;
-                    tx_mem[3] <= parsed_opcode_q;
-                    tx_mem[4] <= FLAG_RESPONSE | FLAG_ERROR;
-                    tx_mem[5] <= 8'h00;
-                    tx_mem[6] <= parsed_transaction_id_q[15:8];
-                    tx_mem[7] <= parsed_transaction_id_q[7:0];
-                    tx_mem[8] <= 8'h00;
-                    tx_mem[9] <= 8'h02;
-                    crc_q <= 32'hFFFFFFFF;
-                    crc_index_q <= 2;
-                    control_state_q <= C_RSP_HEADER_CRC;
-                end
             end
         end
     end
