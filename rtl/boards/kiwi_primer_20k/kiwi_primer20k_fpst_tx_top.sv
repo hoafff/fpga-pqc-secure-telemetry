@@ -248,6 +248,21 @@ module kiwi_primer20k_fpst_tx_top #(
             if (endpoint_irq_pending)
                 assert (tx_frame_ready)
                     else $error("kiwi_primer20k_fpst_tx_top: IRQ without cached response");
+            if (tx_wr_en && tx_wr_addr < 10)
+                $display("P1TRACE write t=%0t addr=%0d data=%02x pqc_wr=%0b ctrl_wr=%0b",
+                         $time, tx_wr_addr, tx_wr_data,
+                         u_endpoint_router.pqc_tx_wr_en,
+                         u_endpoint_router.control_tx_wr_en);
+            if (tx_frame_commit)
+                $display("P1TRACE commit t=%0t len=%0d pqc_commit=%0b ctrl_commit=%0b mem=%02x %02x %02x %02x %02x %02x %02x %02x %02x %02x",
+                         $time, tx_frame_len,
+                         u_endpoint_router.pqc_tx_commit,
+                         u_endpoint_router.control_tx_commit,
+                         u_btp_spi_slave.tx_mem[0], u_btp_spi_slave.tx_mem[1],
+                         u_btp_spi_slave.tx_mem[2], u_btp_spi_slave.tx_mem[3],
+                         u_btp_spi_slave.tx_mem[4], u_btp_spi_slave.tx_mem[5],
+                         u_btp_spi_slave.tx_mem[6], u_btp_spi_slave.tx_mem[7],
+                         u_btp_spi_slave.tx_mem[8], u_btp_spi_slave.tx_mem[9]);
         end
     end
 `endif
