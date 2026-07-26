@@ -25,6 +25,8 @@ module kiwi_primer20k_primer1_top #(
     localparam integer HB_COUNT_WIDTH =
         (HEARTBEAT_TOGGLE_CYCLES <= 1) ? 1 : $clog2(HEARTBEAT_TOGGLE_CYCLES);
 
+    wire reset_async_n = board_rst_ni & system_reset_ni;
+
     logic [1:0] reset_sync_q;
     logic internal_rst_n;
     logic [1:0] secure_enable_sync_q;
@@ -49,10 +51,10 @@ module kiwi_primer20k_primer1_top #(
     logic [15:0] last_error;
     logic safe_locked_q;
 
-    /* Reset assertion is asynchronous at the board boundary; release is
-     * synchronized into the 27 MHz system domain. */
-    always_ff @(posedge sys_clk_i or negedge board_rst_ni or negedge system_reset_ni) begin
-        if (!board_rst_ni || !system_reset_ni)
+    /* Both physical reset sources are combined before the synchronizer. This
+     * gives one asynchronous assertion edge and a two-clock synchronous release. */
+    always_ff @(posedge sys_clk_i or negedge reset_async_n) begin
+        if (!reset_async_n)
             reset_sync_q <= 2'b00;
         else
             reset_sync_q <= {reset_sync_q[0], 1'b1};
@@ -67,13 +69,15 @@ module kiwi_primer20k_primer1_top #(
             secure_enable_sync_q <= {secure_enable_sync_q[0], secure_enable_i};
     end
 
-    /* key_zeroize_i is security critical: asynchronous assertion is captured,
-     * then deassertion is stretched/synchronized for two system clocks. */
-    always_ff @(posedge sys_clk_i or posedge key_zeroize_i or negedge internal_rst_n) begin
-        if (!internal_rst_n)
-            zeroize_release_q <= 2'b00;
-        else if (key_zeroize_i)
+    /* key_zeroize_i is security critical: assertion is asynchronous, while
+     * release is synchronous and stretched for two system-clock cycles. There
+     * is only one asynchronous control edge in this process for Gowin/Yosys
+     * synthesis compatibility. */
+    always_ff @(posedge sys_clk_i or posedge key_zeroize_i) begin
+        if (key_zeroize_i)
             zeroize_release_q <= 2'b11;
+        else if (!internal_rst_n)
+            zeroize_release_q <= 2'b00;
         else
             zeroize_release_q <= {1'b0, zeroize_release_q[1]};
     end
