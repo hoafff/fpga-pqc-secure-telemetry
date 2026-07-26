@@ -16,6 +16,7 @@ module kiwi_primer20k_fpst_tx_top #(
     /* Supervisor security plane. Physical pin assignment remains TBC. */
     input  logic secure_enable_i,
     input  logic zeroize_ni,
+    input  logic fatal_latched_i,
     output logic heartbeat_o,
 
     /* On-board deployment diagnostics, active low. */
@@ -86,7 +87,7 @@ module kiwi_primer20k_fpst_tx_top #(
     assign transport_zeroize = !zeroize_ni;
 
     always_ff @(posedge sys_clk_i) begin
-        if (!internal_rst_n || transport_zeroize)
+        if (!internal_rst_n || transport_zeroize || fatal_latched_i)
             heartbeat_counter_q <= '0;
         else
             heartbeat_counter_q <= heartbeat_counter_q + 1'b1;
@@ -157,7 +158,7 @@ module kiwi_primer20k_fpst_tx_top #(
         .rst_ni                    (internal_rst_n),
         .transport_zeroize_i       (transport_zeroize),
         .secure_enable_i           (secure_enable_i),
-        .fatal_latched_i           (1'b0),
+        .fatal_latched_i           (fatal_latched_i),
         .request_valid_i           (request_valid),
         .request_accept_o          (request_accept),
         .request_opcode_i          (request_opcode),
@@ -188,9 +189,7 @@ module kiwi_primer20k_fpst_tx_top #(
     /* BTP IRQ is active low and remains asserted while a complete response is ready. */
     assign irq_no = ~endpoint_irq_pending;
     assign busy_o = endpoint_busy;
-
-    /* No independent fatal source is yet physically assigned on Primer #1. */
-    assign fault_o = 1'b0;
+    assign fault_o = fatal_latched_i;
 
     /* Active-low LEDs make deployment bring-up observable without a debugger. */
     assign led1_no = ~heartbeat_o;
@@ -199,7 +198,7 @@ module kiwi_primer20k_fpst_tx_top #(
     assign led4_no = ~key_valid;
     assign led5_no = ~session_active;
     assign led6_no = ~retained_packet;
-    assign led7_no = ~(last_error_code != 16'h0000);
+    assign led7_no = ~(fatal_latched_i || (last_error_code != 16'h0000));
 
 `ifndef SYNTHESIS
     always_ff @(posedge sys_clk_i) begin
