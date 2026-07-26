@@ -1,57 +1,126 @@
-# Project Requirements
+# Project Implementation Requirements
 
-Tài liệu này là bản yêu cầu ban đầu. Các mục đánh dấu **TBD** phải được chốt trước khi thiết kế RTL chi tiết.
+**Normative baseline:** `FPST-SYS-SPEC-001 v1.1`
 
-## 1. Functional requirements
+Tài liệu này tóm tắt các quyết định triển khai hiện hành của repository. Nó không thay thế system spec. Khi có khác biệt, FPST v1.1 được ưu tiên.
 
-- FR-01: Hệ thống tạo hoặc tiếp nhận session key từ luồng ML-KEM.
-- FR-02: NTT/INTT accelerator nhận dữ liệu đa thức và trả kết quả đúng theo golden model.
-- FR-03: Hệ thống mã hóa và xác thực telemetry bằng Ascon-AEAD128.
-- FR-04: Mỗi packet có version, type, sequence counter, payload length, nonce-related fields và authentication tag.
-- FR-05: Receiver từ chối packet có tag sai.
-- FR-06: Receiver từ chối packet bị phát lại theo chính sách sequence counter.
-- FR-07: Supervisor ghi nhận timeout, authentication failure, replay và tamper event.
-- FR-08: Sự kiện nghiêm trọng kích hoạt zeroize hoặc vô hiệu hóa session key.
-- FR-09: Host có thể thu latency, cycle count và trạng thái lỗi.
+## 1. Các quyết định đã khóa
 
-## 2. Verification requirements
+| Hạng mục | Quyết định hiện hành |
+|---|---|
+| PQC scheme | ML-KEM-512 |
+| Polynomial accelerator | RTL NTT/INTT trên Kiwi Primer 20K #1 |
+| AEAD | NIST Ascon-AEAD128 |
+| Primer 20K #1 | accelerator + Ascon encrypt + STP TX |
+| Primer 20K #2 | Ascon decrypt/verify + STP RX + replay protection |
+| Kiwi Tiny 1P5 | independent supervisor/watchdog/tamper |
+| SONiX SN32F407 | firmware control, SHAKE/KDF, session and PC–FPGA bridge |
+| PC | host application, golden model, simulation and benchmark |
+| HDL | SystemVerilog ưu tiên |
+| System baseline | FPST-SYS-SPEC-001 v1.1 |
+
+## 2. Functional requirements
+
+- FR-01: Hệ thống thiết lập shared secret bằng ML-KEM-512.
+- FR-02: NTT/INTT accelerator nhận dữ liệu đa thức và trả kết quả đúng với golden reference.
+- FR-03: Không dùng trực tiếp ML-KEM shared secret làm Ascon key; MCU dẫn xuất traffic key và nonce prefix bằng SHAKE256/KDF.
+- FR-04: Primer #1 mã hóa telemetry bằng Ascon-AEAD128 và tạo STP packet.
+- FR-05: Mỗi packet có header/AD, payload length, sequence/nonce-related fields, ciphertext và 128-bit tag theo FPST.
+- FR-06: Primer #2 kiểm tra format/length trước AEAD khi có thể.
+- FR-07: Primer #2 không release plaintext trước khi tag hợp lệ.
+- FR-08: Receiver từ chối packet bị replay hoặc vi phạm sequence policy.
+- FR-09: Primer #1 giữ packet cần retransmit theo commit/retry policy; không tự ý mã hóa lại và làm sai nonce policy.
+- FR-10: Supervisor ghi nhận heartbeat loss, timeout, fatal và tamper event.
+- FR-11: Sự kiện nghiêm trọng kích hoạt zeroize, session invalidation hoặc safe-state theo FPST.
+- FR-12: Host thu được latency, cycle count, trạng thái operation và error code mà không làm lộ secret.
+
+## 3. Interface requirements
+
+- IR-01: Interface Ascon integration phải tương thích Section 13.2 của FPST v1.1.
+- IR-02: Encrypt-only/decrypt-only engines có thể tách nội bộ, nhưng system boundary dùng compatibility wrapper khi interface đã đóng băng.
+- IR-03: Ready/valid transfer chỉ xảy ra khi `valid && ready`.
+- IR-04: Output và tag giữ ổn định dưới backpressure.
+- IR-05: Error code lấy từ FPST Appendix C, không tự định nghĩa tùy module.
+- IR-06: Key staging/commit phải atomic; partial key không trở thành active key.
+- IR-07: Zeroize có ưu tiên cao hơn normal completion/result.
+- IR-08: Byte ordering phải được khóa rõ ở mọi bus song song và stream boundary.
+
+## 4. Verification requirements
 
 - VR-01: Mỗi arithmetic primitive có unit test.
-- VR-02: NTT và INTT được kiểm tra round-trip và so sánh vector chuẩn.
-- VR-03: Ascon được kiểm tra bằng known-answer test chính thức hoặc vector tham chiếu đáng tin cậy.
-- VR-04: Test tích hợp phải bao gồm packet hợp lệ, tag sai, replay, counter bất thường và timeout.
-- VR-05: Mọi lỗi kiểm thử phải tái tạo được bằng seed hoặc vector lưu trong repository.
+- VR-02: NTT và INTT được kiểm tra vector chuẩn, round-trip và software differential test.
+- VR-03: Ascon được kiểm tra bằng official/reliable KAT và independent executable oracle.
+- VR-04: Test Ascon bao gồm độ dài AD/data bắt buộc trong FPST v1.1.
+- VR-05: Integration test bao gồm valid packet, malformed length, tag sai, replay, sequence anomaly, timeout, reset, zeroize và backpressure.
+- VR-06: Không release plaintext khi authentication thất bại.
+- VR-07: Mọi lỗi kiểm thử phải tái tạo được bằng seed/vector lưu trong repository.
+- VR-08: Reference snapshot/KAT phải ghi provenance như commit SHA và file hash khi được freeze.
+- VR-09: Vendor synthesis, timing, resource mapping và physical-board test là bắt buộc trước khi coi target deployable.
 
-## 3. Performance requirements
+## 5. Performance requirements
 
-Các ngưỡng sau đang để TBD:
+Các mục sau vẫn phải đo và khóa sau khi tích hợp:
 
-- Clock target: **TBD MHz**.
-- NTT latency target: **TBD cycles**.
-- ML-KEM encapsulation/decapsulation latency: **TBD**.
-- Telemetry throughput: **TBD packet/s**.
-- LUT/FF/BRAM/DSP budget: **TBD theo board**.
+- Clock/Fmax theo từng FPGA target.
+- NTT và INTT latency.
+- ML-KEM encapsulation/decapsulation latency.
+- Ascon latency tại payload 0, 24, 64 và 128 byte.
+- Telemetry throughput packet/s.
+- LUT, FF, BRAM và DSP cho từng bitstream.
+- MCU firmware latency cho KDF/session operations.
+- End-to-end latency từ host command tới verified plaintext/status.
 
-## 4. Platform requirements
+Không tự đặt ngưỡng thi đấu khi chưa có target requirement chính thức; ghi kết quả đo riêng với pass/fail criterion được phê duyệt.
 
-- Board chính: **TBD**.
-- Toolchain: **TBD theo board**.
-- HDL ưu tiên: SystemVerilog; có thể dùng Verilog khi toolchain hạn chế.
-- Simulation: ưu tiên công cụ có thể tự động hóa bằng command line.
-- Host software: Python hoặc C/C++, lựa chọn sau khi chốt giao tiếp.
+## 6. Platform requirements
 
-## 5. Security assumptions
+### Kiwi Primer 20K #1 và #2
 
-- Thiết kế hiện tại tập trung vào tính đúng chức năng và kiến trúc hệ thống.
-- Side-channel resistance, fault injection resistance và secure key storage chưa được mặc định coi là đã giải quyết.
-- Không công bố secret key, seed bí mật hoặc token trong log và repository.
-- Không dùng kết quả nghiên cứu này cho production trước khi được đánh giá độc lập.
+```text
+Device : GW2A-LV18PG256C8/I7
+Clock  : 27 MHz SYS_CLK tại H11
+Tool   : Gowin EDA cho final synthesis/P&R/bitstream
+```
 
-## 6. Quyết định cần chốt sớm
+### Kiwi Tiny 1P5
 
-1. Board nào dùng làm mục tiêu chính?
-2. Chọn ML-KEM-512, ML-KEM-768 hay ML-KEM-1024?
-3. Giao tiếp PC–FPGA dùng UART, SPI, USB hay soft-core bus?
-4. NTT accelerator nhận cả đa thức hay chỉ thực hiện butterfly/multiply service?
-5. Ascon triển khai RTL hoàn toàn hay software trước, RTL sau?
-6. Demo cuối cần chứng minh các chỉ số nào?
+```text
+Device : GW1NUV1P5QN48XC7/I6
+Role   : supervisor only
+```
+
+### SONiX MCU
+
+```text
+Family : SN32F407
+Tool   : SONiX-compatible tool/device support, final selection TBD
+```
+
+Không giả định SN32F407 là STM32F407.
+
+## 7. Các quyết định còn TBD
+
+Chỉ các mục sau còn mở và phải được xác minh trước integration cuối:
+
+1. Giao tiếp vật lý MCU–Primer #1 và MCU–Primer #2: SPI/UART/parallel register bus.
+2. Pin map chính xác cho giao tiếp MCU–FPGA.
+3. Command/register/frame protocol giữa MCU và FPGA.
+4. Top module cuối và tên artifact release cho từng bitstream.
+5. Timeout bounds và performance acceptance thresholds cuối.
+6. Host transport và UI format cuối.
+7. Exact SN32F407 package/suffix, device pack, startup và linker configuration.
+
+Các mục TBD phải được ghi rõ; không tự suy đoán từ board tương tự.
+
+## 8. Repository placement
+
+- Shared reusable RTL: `rtl/`.
+- Device-specific build/deployment entry points: `targets/`.
+- PC golden models: `software/reference/`.
+- PC host: `software/host/`.
+- Tests: `tb/`.
+- Full ownership map: `docs/architecture/deployment-map-fpst-v1.1.md`.
+
+## 9. Security assumptions
+
+Thiết kế hiện tập trung vào functional correctness và system architecture. Side-channel resistance, fault injection resistance, secure key storage và production hardening chưa mặc định được giải quyết. Không công bố key, seed bí mật hoặc token trong source, vector, log hay artifact.

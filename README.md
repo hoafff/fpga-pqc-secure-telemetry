@@ -1,118 +1,137 @@
 # FPGA PQC Secure Telemetry
 
-Hệ thống truyền dữ liệu giám sát an toàn trên FPGA, kết hợp:
+Hệ thống truyền telemetry an toàn nhiều thiết bị, kết hợp:
 
-- **ML-KEM** để thiết lập khóa bí mật dùng chung.
-- **NTT/INTT accelerator** để tăng tốc các phép toán đa thức nặng trong ML-KEM.
-- **Ascon-AEAD128** để mã hóa và xác thực gói telemetry.
-- **Replay protection** để từ chối gói tin cũ hoặc bị phát lại.
-- **Tamper detection và supervisor FSM** để giám sát trạng thái an toàn của hệ thống.
+- **ML-KEM-512** để thiết lập shared secret;
+- **NTT/INTT accelerator** trên FPGA để tăng tốc phép toán đa thức;
+- **Ascon-AEAD128** để mã hóa, xác thực và kiểm tra tag;
+- **STP secure telemetry**, sequence counter và replay protection;
+- **supervisor độc lập** để giám sát heartbeat, timeout, tamper và zeroize.
 
-> Trạng thái hiện tại: khởi tạo kiến trúc và bộ khung phát triển. Các module RTL ban đầu là nền tảng để kiểm thử từng khối trước khi tích hợp toàn hệ thống.
+> **System baseline:** `FPST-SYS-SPEC-001 v1.1`.
+>
+> Các tài liệu cũ chỉ được dùng để tham khảo lịch sử. Nếu có khác biệt, FPST v1.1 là nguồn ưu tiên cho kiến trúc, interface và phân vai thiết bị.
 
-## 1. Mục tiêu dự án
+## 1. Bản đồ thiết bị và phần mềm
 
-Mục tiêu chính là xây dựng một MVP chạy được trên FPGA với luồng xử lý:
+| Đích | Vai trò theo FPST v1.1 | Loại code | Artifact sử dụng |
+|---|---|---|---|
+| Kiwi Primer 20K #1 | NTT/INTT accelerator, Ascon encrypt, STP TX | SystemVerilog RTL | Gowin bitstream `.fs` |
+| Kiwi Primer 20K #2 | Ascon decrypt/verify, STP RX, replay protection | SystemVerilog RTL | Gowin bitstream `.fs` |
+| Kiwi Tiny 1P5 | Supervisor, watchdog, tamper/fault latch, safe-state | SystemVerilog RTL | Gowin bitstream `.fs` |
+| SONiX SN32F407 EVK | ML-KEM control, SHAKE/KDF, session control, bridge PC–FPGA | Firmware C | MCU `.hex`/`.bin` |
+| PC/Host | Điều khiển demo, log, benchmark, golden model và simulation | Python/C++/testbench | Chạy trực tiếp trên PC |
 
-```text
-PC/Host
-   │
-   │  thiết lập phiên và trao đổi dữ liệu
-   ▼
-ML-KEM control + NTT/INTT accelerator
-   │
-   │  shared secret
-   ▼
-Ascon-AEAD128
-   │
-   │  authenticated ciphertext
-   ▼
-Secure telemetry packet
-   │
-   ├── counter/nonce chống replay
-   └── supervisor theo dõi lỗi và tamper
-```
+Chi tiết build và nạp cho từng nơi nằm trong [`targets/`](targets/README.md).
 
-## 2. Phạm vi cốt lõi
-
-### NTT/INTT accelerator
-
-- Butterfly unit.
-- Modular addition/subtraction.
-- Modular multiplication và modular reduction.
-- Twiddle-factor storage.
-- Controller và bộ nhớ hệ số.
-- Đối chiếu kết quả RTL với golden reference model.
-
-### Secure telemetry
-
-- Định dạng gói dữ liệu rõ ràng.
-- Counter và nonce không tái sử dụng.
-- Mã hóa/xác thực bằng Ascon-AEAD128.
-- Kiểm tra tag trước khi chấp nhận dữ liệu.
-
-### Supervisor
-
-- Quản lý các trạng thái khởi tạo, sẵn sàng, bận và lỗi.
-- Theo dõi timeout, replay, authentication failure và tamper event.
-- Đưa hệ thống về trạng thái an toàn khi phát hiện lỗi nghiêm trọng.
-
-### Benchmark
-
-- Latency và throughput.
-- Fmax.
-- LUT, FF, BRAM và DSP.
-- So sánh software reference với hardware accelerator.
-
-## 3. Cấu trúc repository
+## 2. Luồng hệ thống
 
 ```text
-docs/                   Tài liệu yêu cầu, kiến trúc và kế hoạch
-rtl/
-  arithmetic/           Các phép toán modulo
-  ntt/                  NTT/INTT accelerator
-  ascon/                Ascon-AEAD128
-  telemetry/            Packet formatter/parser và replay protection
-  supervisor/           FSM giám sát an toàn
-  top/                  Tích hợp cấp hệ thống
-tb/
-  unit/                 Testbench từng module
-  integration/          Testbench tích hợp
-  vectors/              Test vector chuẩn
-software/
-  reference/            Golden model ML-KEM, NTT và Ascon
-  host/                 Chương trình PC giao tiếp với FPGA
-  firmware/             Firmware cho MCU/soft-core nếu sử dụng
-constraints/             Pin, clock và timing constraint theo board
-scripts/                 Script mô phỏng, tạo vector và benchmark
-results/                 Báo cáo mô phỏng, tổng hợp và benchmark
+PC host
+   |
+   | USB/UART
+   v
+SONiX SN32F407
+   |-- ML-KEM control + SHAKE256/KDF + session/key commit
+   |
+   +------------------------+
+   |                        |
+   v                        v
+Primer 20K #1          Primer 20K #2
+NTT/INTT               STP parser
+Ascon encrypt          replay check
+STP packet TX   ---->  Ascon decrypt/verify
+   |                        |
+   +-----------+------------+
+               |
+               v
+          Kiwi Tiny 1P5
+     supervisor/watchdog/tamper
 ```
 
-## 4. Nguyên tắc phát triển
+Giao tiếp vật lý MCU–FPGA chưa được coi là đóng băng cho đến khi pin và protocol được xác minh. Không tự giả định UART/SPI pin từ board khác.
 
-1. Mỗi module phải có testbench độc lập trước khi tích hợp.
-2. Kết quả RTL phải được so sánh với golden reference model.
-3. Không commit khóa bí mật, token, file sinh tự động hoặc bitstream không cần thiết.
-4. Mỗi thay đổi lớn thực hiện trên branch riêng và merge qua pull request.
-5. Tài liệu kiến trúc phải được cập nhật cùng với thay đổi giao diện module.
+## 3. Quy tắc tổ chức repository
 
-## 5. Các mốc triển khai
+```text
+targets/                       Điểm vào theo từng thiết bị cần nạp/chạy
+  primer20k_1/                 FPGA phát / accelerator
+  primer20k_2/                 FPGA nhận / verify
+  tiny1p5/                     FPGA supervisor
+  sn32f407/                    MCU firmware
+  pc/                          Host và verification trên máy tính
 
-- [ ] Hoàn thiện đặc tả hệ thống và giao diện các khối.
-- [ ] Xây dựng golden model cho modular arithmetic và NTT/INTT.
-- [ ] Hoàn thiện arithmetic primitives.
-- [ ] Hoàn thiện butterfly và NTT/INTT core.
-- [ ] Tích hợp accelerator với luồng ML-KEM.
-- [ ] Triển khai Ascon-AEAD128.
-- [ ] Triển khai packet telemetry và replay protection.
-- [ ] Hoàn thiện supervisor, tamper handling và fault response.
-- [ ] Tích hợp trên board mục tiêu.
-- [ ] Đo benchmark và chuẩn bị demo.
+rtl/                           RTL dùng chung, không gắn cứng một board
+  arithmetic/                  Modular add/sub/multiply
+  ntt/                         NTT/INTT reusable cores
+  ascon/                       Ascon reusable cores
+  telemetry/                   STP formatter/parser và replay logic
+  supervisor/                  Reusable supervisor blocks
+  boards/                      Board wrappers hiện có hoặc legacy support
 
-## 6. Board mục tiêu
+tb/                            Unit/integration testbench, không nạp vào chip
+software/reference/            Golden model và vector generator, chạy trên PC
+software/host/                 Host application, chạy trên PC
+software/firmware/             Firmware reusable trước khi target hóa
+constraints/                   Constraint hiện có theo board
+docs/                          Spec, kiến trúc và quyết định thiết kế
+scripts/                       Simulation, synthesis và benchmark scripts
+results/                       Báo cáo kết quả
+```
 
-Repository được tổ chức để có thể duy trì constraint và top-level riêng cho từng board. Board sử dụng chính thức sẽ được chốt trong `docs/requirements.md`.
+### Nguyên tắc tách code
+
+1. **RTL thuật toán dùng chung** chỉ có một bản trong `rtl/`.
+2. **Top-level, source manifest, constraint và hướng dẫn nạp** được quản lý theo từng thư mục `targets/<target>/`.
+3. Code trong `tb/` và `software/reference/` chỉ dùng để kiểm chứng trên PC, không được đưa vào bitstream sản phẩm.
+4. Mỗi target phải ghi rõ top module, device, clock, source list, constraint, output artifact và trạng thái triển khai.
+5. Thay đổi interface phải được đối chiếu với FPST v1.1 và cập nhật tài liệu cùng commit.
+
+## 4. Trạng thái hiện tại
+
+### Đã có và đã kiểm chứng trong repo
+
+- modular arithmetic cho ML-KEM modulus;
+- pipelined modular multiplier và NTT butterfly;
+- twiddle ROM và forward-NTT scheduler;
+- ping-pong coefficient RAM;
+- forward NTT 256 hệ số;
+- Python golden vector, testbench và synthesis checks;
+- board self-test cho **Kiwi Primer 20K #1**, báo PASS/FAIL bằng LED.
+
+### Chưa hoàn tất
+
+- INTT hoàn chỉnh;
+- ML-KEM control tích hợp với accelerator;
+- Ascon encrypt RTL theo design spec mới;
+- Ascon decrypt/verify RTL;
+- STP TX/RX, retained packet và replay protection;
+- firmware SN32F407;
+- giao tiếp MCU–FPGA đã xác minh pin;
+- supervisor bitstream cho Tiny 1P5;
+- PC host application;
+- end-to-end demo và benchmark.
+
+Không hiểu các thư mục target chưa có RTL là đã triển khai xong; README của từng target ghi rõ `CURRENT`, `PLANNED` và `TBD`.
+
+## 5. Bắt đầu từ đâu?
+
+- Muốn nạp self-test NTT hiện tại: đọc [`targets/primer20k_1/README.md`](targets/primer20k_1/README.md).
+- Muốn viết Ascon encrypt: đọc [`targets/primer20k_1/README.md`](targets/primer20k_1/README.md) và design spec Ascon trong `docs/`.
+- Muốn viết receiver/decrypt: đọc [`targets/primer20k_2/README.md`](targets/primer20k_2/README.md).
+- Muốn viết supervisor: đọc [`targets/tiny1p5/README.md`](targets/tiny1p5/README.md).
+- Muốn viết firmware MCU: đọc [`targets/sn32f407/README.md`](targets/sn32f407/README.md).
+- Muốn viết chương trình máy tính/golden model: đọc [`targets/pc/README.md`](targets/pc/README.md).
+- Muốn xem toàn bộ mapping FPST v1.1: đọc [`docs/architecture/deployment-map-fpst-v1.1.md`](docs/architecture/deployment-map-fpst-v1.1.md).
+
+## 6. Kiểm chứng bắt buộc
+
+- Mỗi module RTL có unit test trước khi tích hợp.
+- NTT/INTT so sánh với golden reference.
+- Ascon chạy KAT/differential test byte-for-byte.
+- Integration test phải có packet hợp lệ, tag sai, replay, timeout, reset và zeroize.
+- Vendor synthesis, place-and-route, timing và BRAM mapping phải được kiểm tra trên đúng part trước khi nạp board.
 
 ## 7. Cảnh báo bảo mật
 
-Đây là dự án nghiên cứu và thi đấu. Không sử dụng trực tiếp trong hệ thống sản xuất trước khi có kiểm thử độc lập, đánh giá side-channel, quản lý khóa an toàn và rà soát giao thức đầy đủ.
+Đây là dự án nghiên cứu và thi đấu. Không dùng trực tiếp trong production trước khi có kiểm thử độc lập, đánh giá side-channel/fault injection, secure key storage và rà soát giao thức đầy đủ. Không commit secret key, seed bí mật, token hoặc log chứa bí mật.
