@@ -8,8 +8,8 @@
  *   - organizer schematic "32F407 EVK V1.0"
  *
  * The schematic closes the MCU-side connector map. The final harness is still
- * marked unverified until continuity and a 3 MHz Mode-0 logic-analyzer capture
- * are recorded with the selected Primer #1 pins.
+ * marked unverified until continuity and a 1 MHz Mode-0 logic-analyzer capture
+ * are recorded with the selected Primer #1 connector pins.
  */
 #define FPST_SN32F407_DEVICE_VERIFIED       1
 #define FPST_SN32F407_MCU_PINMUX_VERIFIED  1
