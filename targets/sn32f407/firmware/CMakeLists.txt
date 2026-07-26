@@ -19,6 +19,7 @@ add_library(fpst_firmware_core
     src/fpst_session.c
     src/fpst_csprng.c
     src/fpst_entropy_rng.c
+    src/fpst_telemetry.c
     src/fpst_mlkem512_wrapper.c
     src/fpst_mlkem_session.c)
 target_include_directories(fpst_firmware_core PUBLIC include)
@@ -80,9 +81,14 @@ add_executable(test_entropy_rng tests/test_entropy_rng.c)
 target_link_libraries(test_entropy_rng PRIVATE fpst_firmware_core)
 target_compile_options(test_entropy_rng PRIVATE -Wall -Wextra -Werror -Wpedantic)
 
+add_executable(test_telemetry tests/test_telemetry.c)
+target_link_libraries(test_telemetry PRIVATE fpst_firmware_core)
+target_compile_options(test_telemetry PRIVATE -Wall -Wextra -Werror -Wpedantic)
+
 enable_testing()
 add_test(NAME firmware_core COMMAND test_firmware_core)
 add_test(NAME entropy_rng COMMAND test_entropy_rng)
+add_test(NAME telemetry COMMAND test_telemetry)
 if(FPST_ENABLE_MLKEM_NATIVE)
     add_test(NAME mlkem_native_wrapper COMMAND test_mlkem_native_wrapper)
 endif()
