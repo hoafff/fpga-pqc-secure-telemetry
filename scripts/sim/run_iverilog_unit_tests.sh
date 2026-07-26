@@ -74,11 +74,16 @@ COMMON_NTT_SOURCES=(
     "${ROOT_DIR}/rtl/ntt/true_dual_port_ram_256x16.sv"
     "${ROOT_DIR}/rtl/ntt/coefficient_pingpong_memory_256x16.sv"
     "${ROOT_DIR}/rtl/ntt/forward_ntt_core.sv"
+    "${ROOT_DIR}/rtl/ntt/inverse_ntt_core.sv"
 )
 
 run_test tb_forward_ntt_core \
     "${COMMON_NTT_SOURCES[@]}" \
     "${ROOT_DIR}/tb/integration/tb_forward_ntt_core.sv"
+
+run_test tb_inverse_ntt_core \
+    "${COMMON_NTT_SOURCES[@]}" \
+    "${ROOT_DIR}/tb/integration/tb_inverse_ntt_core.sv"
 
 run_test tb_forward_ntt_board_selftest \
     "${COMMON_NTT_SOURCES[@]}" \
