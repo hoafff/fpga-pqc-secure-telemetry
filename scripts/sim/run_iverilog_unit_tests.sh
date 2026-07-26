@@ -154,24 +154,24 @@ COMMON_PRIMER1_DEPLOY_SOURCES=(
     "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/kiwi_primer20k_fpst_tx_top.sv"
 )
 
-# Deployment testbenches use a short divider only for simulation. Production
-# top defaults to 2,700,000 cycles per transition (100 ms at 27 MHz).
+# The smoke test uses 14 active heartbeat cycles plus the two-cycle synchronized
+# zeroize release, so the visible transition occurs on the 16th observed clock.
+# Production remains 2,700,000 active cycles = 100 ms at 27 MHz.
 python3 - <<'PY'
 from pathlib import Path
 build = Path("build/sim")
 for name in ("tb_primer1_deployment_btp.sv", "tb_primer1_deployment_btp_retry.sv"):
     src = (Path("tb/integration") / name).read_text()
-    src = src.replace(".HEARTBEAT_BIT(8)", ".HEARTBEAT_TOGGLE_CYCLES(16)")
+    src = src.replace(".HEARTBEAT_BIT(8)", ".HEARTBEAT_TOGGLE_CYCLES(14)")
     if name == "tb_primer1_deployment_btp.sv":
         needle = "        rst_n = 1'b1;\n        repeat (8) @(posedge sys_clk);\n"
-        insert = needle + "\n        /* Verify the parameterized heartbeat transition count before SPI traffic. */\n        zeroize_n = 1'b0;\n        repeat (2) @(posedge sys_clk);\n        zeroize_n = 1'b1;\n        begin : check_heartbeat\n            logic hb_start;\n            hb_start = heartbeat;\n            repeat (15) @(posedge sys_clk);\n            #1ns;\n            if (heartbeat !== hb_start)\n                $fatal(1, \"Heartbeat toggled before configured terminal count\");\n            @(posedge sys_clk);\n            #1ns;\n            if (heartbeat === hb_start)\n                $fatal(1, \"Heartbeat did not toggle at configured terminal count\");\n        end\n"
+        insert = needle + "\n        /* Verify heartbeat timing including synchronized zeroize release. */\n        zeroize_n = 1'b0;\n        repeat (2) @(posedge sys_clk);\n        zeroize_n = 1'b1;\n        begin : check_heartbeat\n            logic hb_start;\n            hb_start = heartbeat;\n            repeat (15) @(posedge sys_clk);\n            #1ns;\n            if (heartbeat !== hb_start)\n                $fatal(1, \"Heartbeat toggled before configured terminal count\");\n            @(posedge sys_clk);\n            #1ns;\n            if (heartbeat === hb_start)\n                $fatal(1, \"Heartbeat did not toggle at configured terminal count\");\n        end\n"
         if needle not in src:
             raise SystemExit("heartbeat insertion point not found")
         src = src.replace(needle, insert, 1)
     (build / name).write_text(src)
 PY
 
-# Exercise the actual deployment top through mode-0 SPI rather than bypassing transport.
 run_test tb_primer1_deployment_btp \
     "${COMMON_PRIMER1_DEPLOY_SOURCES[@]}" \
     "${BUILD_DIR}/tb_primer1_deployment_btp.sv"
