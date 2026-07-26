@@ -85,7 +85,7 @@ fpst_result_t fpst_fpga_link_init(fpst_fpga_link_t *link,
 void fpst_fpga_link_recover(fpst_fpga_link_t *link, bool reset_fpga) {
     if (link == NULL || link->platform == NULL) return;
     link->platform->spi_end(link->platform->ctx);
-    if (reset_fpga) {
+    if (reset_fpga && link->platform->fpga_reset != NULL) {
         link->platform->fpga_reset(link->platform->ctx,
                                    FPST_LINK_RESET_PULSE_MS);
     }
