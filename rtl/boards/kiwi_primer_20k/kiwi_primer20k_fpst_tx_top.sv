@@ -79,7 +79,9 @@ module kiwi_primer20k_fpst_tx_top #(
     logic key_valid;
     logic session_active;
     logic retained_packet;
-    logic ntt_busy;
+    logic pqc_busy;
+    logic [1:0] pqc_domain;
+    logic pqc_complete;
     logic [15:0] last_error_code;
 
     /* Asynchronous assertion, synchronous release for the 27 MHz domain. */
@@ -180,11 +182,16 @@ module kiwi_primer20k_fpst_tx_top #(
         .guarded_error_code_o        (guarded_request_error_code)
     );
 
-    primer1_btp_endpoint_deploy #(
+    /*
+     * Control/session/telemetry and the complete PQC accelerator share one
+     * serialized BTP response channel. The router preserves a global retry
+     * signature so duplicate transaction IDs cannot cross endpoint boundaries.
+     */
+    primer1_endpoint_router #(
         .CLOCK_HZ(27_000_000),
         .MAX_FRAME_BYTES(MAX_FRAME_BYTES),
         .COUNT_W(COUNT_W)
-    ) u_endpoint (
+    ) u_endpoint_router (
         .clk_i                     (sys_clk_i),
         .rst_ni                    (internal_rst_n),
         .transport_zeroize_i       (transport_zeroize),
@@ -213,7 +220,9 @@ module kiwi_primer20k_fpst_tx_top #(
         .key_valid_o               (key_valid),
         .session_active_o          (session_active),
         .retained_packet_o         (retained_packet),
-        .ntt_busy_o                (ntt_busy),
+        .pqc_busy_o                (pqc_busy),
+        .pqc_domain_o              (pqc_domain),
+        .pqc_complete_o            (pqc_complete),
         .last_error_code_o         (last_error_code)
     );
 
@@ -243,6 +252,6 @@ module kiwi_primer20k_fpst_tx_top #(
     end
 `endif
 
-    logic unused_ntt_busy;
-    always_comb unused_ntt_busy = ntt_busy;
+    logic unused_pqc_status;
+    always_comb unused_pqc_status = ^{pqc_busy,pqc_domain,pqc_complete};
 endmodule
