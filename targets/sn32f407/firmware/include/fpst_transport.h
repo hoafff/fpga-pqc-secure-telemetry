@@ -9,7 +9,8 @@
 #define FPST_FRAME_FLAG_RESPONSE        0x01u
 #define FPST_FRAME_FLAG_ERROR           0x02u
 #define FPST_FRAME_FLAG_MORE            0x04u
-#define FPST_FRAME_ALLOWED_FLAGS        0x07u
+#define FPST_FRAME_FLAG_ASYNC_EVENT     0x08u
+#define FPST_FRAME_ALLOWED_FLAGS        0x0Fu
 #define FPST_FRAME_HEADER_BYTES         10u
 #define FPST_FRAME_TRAILER_BYTES         4u
 
@@ -17,7 +18,7 @@
  * 0..1 SOF=0xA55A
  * 2    version=0x01
  * 3    opcode
- * 4    flags
+ * 4    flags: RESPONSE, ERROR, MORE, ASYNC_EVENT
  * 5    reserved=0
  * 6..7 transaction_id, BE
  * 8..9 payload_len, BE
