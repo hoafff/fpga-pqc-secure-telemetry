@@ -51,7 +51,7 @@ module primer1_telemetry_tx (
     logic [7:0] packet_mem [0:PACKET_BYTES-1];
     logic [191:0] header_bus;
     logic [191:0] telemetry_q;
-    logic [47:0]  feed_index_q;
+    logic [5:0]   feed_index_q;
     logic [4:0]   ciphertext_index_q;
     logic [31:0]  timeout_count_q;
     logic [127:0] nonce_bus;
@@ -100,10 +100,10 @@ module primer1_telemetry_tx (
 
     assign core_start = (state_q == TX_CORE_START);
     assign core_in_valid = (state_q == TX_FEED);
-    assign core_in_data = (feed_index_q < 48'd24)
-        ? header_bus[8*feed_index_q[4:0] +: 8]
-        : telemetry_q[8*(feed_index_q[4:0] - 5'd24) +: 8];
-    assign core_in_last = (feed_index_q == 48'd47);
+    assign core_in_data = (feed_index_q < 6'd24)
+        ? header_bus[8*feed_index_q +: 8]
+        : telemetry_q[8*(feed_index_q - 6'd24) +: 8];
+    assign core_in_last = (feed_index_q == 6'd47);
 
     ascon_aead_encrypt #(
         .MAX_DATA_BYTES(128)
@@ -199,9 +199,9 @@ module primer1_telemetry_tx (
                                 error_valid_o <= 1'b1;
                                 error_code_o  <= ERR_INVALID_STATE;
                             end else begin
-                                telemetry_q        <= telemetry_i;
-                                feed_index_q       <= '0;
-                                ciphertext_index_q <= '0;
+                                telemetry_q         <= telemetry_i;
+                                feed_index_q        <= '0;
+                                ciphertext_index_q  <= '0;
                                 retained_sequence_o <= tx_sequence_i;
                                 for (i = 0; i < 24; i = i + 1)
                                     packet_mem[i] <= header_bus[8*i +: 8];
@@ -216,10 +216,10 @@ module primer1_telemetry_tx (
 
                     TX_FEED: begin
                         if (core_in_valid && core_in_ready) begin
-                            if (feed_index_q == 48'd47)
+                            if (feed_index_q == 6'd47)
                                 state_q <= TX_WAIT;
                             else
-                                feed_index_q <= feed_index_q + 48'd1;
+                                feed_index_q <= feed_index_q + 6'd1;
                         end
                     end
 
