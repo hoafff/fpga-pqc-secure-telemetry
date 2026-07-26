@@ -80,6 +80,10 @@ run_test tb_btp_response_builder \
     "${ROOT_DIR}/rtl/transport/btp_response_builder.sv" \
     "${ROOT_DIR}/tb/unit/tb_btp_response_builder.sv"
 
+run_test tb_btp_duplicate_guard \
+    "${ROOT_DIR}/rtl/transport/btp_duplicate_guard.sv" \
+    "${ROOT_DIR}/tb/unit/tb_btp_duplicate_guard.sv"
+
 COMMON_NTT_SOURCES=(
     "${ROOT_DIR}/rtl/arithmetic/mod_add.sv"
     "${ROOT_DIR}/rtl/arithmetic/mod_sub.sv"
