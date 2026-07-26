@@ -48,8 +48,10 @@ static void console(const char *s) {
 }
 
 static void console_hex_nibble(uint8_t value) {
-    const char digit = (char)(value < 10u ? ('0' + value) : ('A' + value - 10u));
-    fpst_sn32f407_uart0_write((const uint8_t *)&digit, 1u);
+    const uint8_t digit = value < 10u
+                              ? (uint8_t)((uint8_t)'0' + value)
+                              : (uint8_t)((uint8_t)'A' + value - 10u);
+    fpst_sn32f407_uart0_write(&digit, 1u);
 }
 
 static void console_hex8(uint8_t value) {
@@ -188,7 +190,7 @@ static void finish_public_key_input(void) {
     }
 
     console("\r\nKEM_PK_OK; establishing ML-KEM-512 P1-TX/P2-RX session...\r\n");
-    const uint32_t session_id = g_pending_session_id;
+    uint32_t session_id = g_pending_session_id;
     fpst_result_t rc = fpst_mlkem_session_establish_pair_routed_to_sink(
         &g_session,
         &g_platform_p1, &g_platform_p2,
