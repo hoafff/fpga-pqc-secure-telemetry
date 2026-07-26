@@ -1,8 +1,10 @@
 #include "fpst_sn32f407_port.h"
 #include "board_profile.h"
+#include "fpst_entropy_rng.h"
 #include "fpst_profile.h"
 
 #include <SN32F400.h>
+#include <SN32F400_Def.h>
 #include <string.h>
 
 #if !FPST_SN32F407_DEVICE_VERIFIED
@@ -19,6 +21,11 @@
 #endif
 #if (FPST_HOST_UART_BAUD != 115200u)
 #error "UART0 divider constants below are validated for 115200 baud"
+#endif
+#if (FPST_SN32F407_ENTROPY_ADC_PORT != 2u) || \
+    (FPST_SN32F407_ENTROPY_ADC_PIN != 0u) || \
+    (FPST_SN32F407_ENTROPY_ADC_CHANNEL != 0u)
+#error "EVK entropy profile is locked to ADC_P20 = P2.0/AIN0"
 #endif
 
 enum {
@@ -38,11 +45,20 @@ enum {
 
     GPIO_CFG_PULL_UP = 0u,
     GPIO_CFG_PULL_DOWN = 1u,
-    GPIO_CFG_INACTIVE_SCHMITT_EN = 2u
+    GPIO_CFG_INACTIVE_SCHMITT_EN = 2u,
+
+    ADC_CALIBRATION_TIMEOUT_MS = 20u,
+    ADC_CONVERSION_TIMEOUT_MS = 5u
 };
 
 static volatile uint32_t g_millis;
+static volatile uint32_t g_millis_high;
+static volatile uint16_t g_heartbeat_countdown;
+static volatile bool g_heartbeat_level;
+static volatile bool g_heartbeat_ready;
 static bool g_spi_selected;
+static bool g_adc_ready;
+static fpst_entropy_rng_t g_entropy_rng;
 
 static uint32_t port_millis(void *ctx);
 static void port_delay_ms(void *ctx, uint32_t ms);
@@ -53,9 +69,29 @@ static fpst_result_t port_spi_transfer(void *ctx,
                                        uint16_t len, uint32_t timeout_ms);
 static void port_spi_end(void *ctx);
 static void port_watchdog_feed(void *ctx);
+static void gpio_write(unsigned port, unsigned pin, bool high);
+static fpst_result_t entropy_adc_sample(void *ctx, uint16_t *sample);
 
 void SysTick_Handler(void) {
-    ++g_millis;
+    const uint32_t next = g_millis + 1u;
+    if (next == 0u) ++g_millis_high;
+    g_millis = next;
+
+    /*
+     * MCU heartbeat is interrupt-driven, not main-loop driven, so waiting for a
+     * long FPGA command cannot falsely advertise a hung application as healthy.
+     */
+    if (g_heartbeat_ready) {
+        if (g_heartbeat_countdown > 1u) {
+            --g_heartbeat_countdown;
+        } else {
+            g_heartbeat_countdown = FPST_SN32F407_MCU_HEARTBEAT_PERIOD_MS;
+            g_heartbeat_level = !g_heartbeat_level;
+            gpio_write(FPST_SN32F407_MCU_HEARTBEAT_PORT,
+                       FPST_SN32F407_MCU_HEARTBEAT_PIN,
+                       g_heartbeat_level);
+        }
+    }
 }
 
 static volatile uint32_t *gpio_mode_reg(unsigned port) {
@@ -166,6 +202,20 @@ static void init_link_gpio(void) {
                     GPIO_CFG_PULL_UP);
 }
 
+static void init_heartbeat_gpio(void) {
+    g_heartbeat_ready = false;
+    g_heartbeat_level = false;
+    g_heartbeat_countdown = FPST_SN32F407_MCU_HEARTBEAT_PERIOD_MS;
+    gpio_write(FPST_SN32F407_MCU_HEARTBEAT_PORT,
+               FPST_SN32F407_MCU_HEARTBEAT_PIN, false);
+    gpio_set_mode(FPST_SN32F407_MCU_HEARTBEAT_PORT,
+                  FPST_SN32F407_MCU_HEARTBEAT_PIN, true);
+    gpio_set_config(FPST_SN32F407_MCU_HEARTBEAT_PORT,
+                    FPST_SN32F407_MCU_HEARTBEAT_PIN,
+                    GPIO_CFG_INACTIVE_SCHMITT_EN);
+    g_heartbeat_ready = true;
+}
+
 static void init_uart0(void) {
     SN_SYS1->AHBCLKEN |= UART0_CLK_EN;
 
@@ -206,6 +256,53 @@ static void init_spi0(void) {
 
 static bool deadline_expired(uint32_t start, uint32_t timeout_ms) {
     return (uint32_t)(g_millis - start) >= timeout_ms;
+}
+
+static fpst_result_t init_adc0(void) {
+    g_adc_ready = false;
+
+    /* Exact register flow follows the SONiX SN32F400 ADC example. */
+    __ADC_ENABLE_HCLK;
+    SN_ADC->ADM_b.AVREFHSEL = 0u; /* internal reference */
+    SN_ADC->ADM_b.VHS = 4u;       /* internal 2 V/VDD reference profile */
+    SN_ADC->ADM_b.OVRMODE = 1u;   /* overwrite on overrun */
+    SN_ADC->ADM_b.GCHS = 1u;      /* global channel enabled */
+    SN_ADC->ADM_b.ADLEN = 1u;     /* 12-bit */
+    SN_ADC->ADM_b.ADCKS = 0u;     /* PCLK / 1 */
+    SN_ADC->CONVCTRL_b.SCMODE = 0u; /* single conversion */
+    SN_ADC->CONVCTRL_b.CH = 0u;     /* single channel */
+    SN_ADC->CONVCTRL_b.CHS0 = 1u;   /* AIN0 = P2.0 = ADC_P20 */
+    SN_ADC->ADM_b.ADENB = 1u;
+    port_delay_ms(NULL, 1u);
+
+    SN_ADC->ADM1_b.ACS = 1u;
+    const uint32_t start = g_millis;
+    while (SN_ADC->ADM1_b.ACS != 0u) {
+        if (deadline_expired(start, ADC_CALIBRATION_TIMEOUT_MS))
+            return FPST_ERR_TIMEOUT;
+    }
+    SN_ADC->ADM1_b.CALIVALENB = 1u;
+    g_adc_ready = true;
+    return FPST_OK;
+}
+
+fpst_result_t fpst_sn32f407_adc_read(uint16_t *sample_12bit) {
+    if (sample_12bit == NULL) return FPST_ERR_ARGUMENT;
+    if (!g_adc_ready) return FPST_ERR_STATE;
+
+    SN_ADC->ADM_b.ADS = 1u;
+    const uint32_t start = g_millis;
+    while (SN_ADC->ADM_b.EOC == 0u) {
+        if (deadline_expired(start, ADC_CONVERSION_TIMEOUT_MS))
+            return FPST_ERR_TIMEOUT;
+    }
+    *sample_12bit = (uint16_t)(SN_ADC->ADB & 0x0FFFu);
+    return FPST_OK;
+}
+
+static fpst_result_t entropy_adc_sample(void *ctx, uint16_t *sample) {
+    (void)ctx;
+    return fpst_sn32f407_adc_read(sample);
 }
 
 static fpst_result_t spi_xfer_byte(uint8_t tx, uint8_t *rx,
@@ -315,6 +412,46 @@ bool fpst_sn32f407_uart0_read_byte(uint8_t *out) {
     return true;
 }
 
+fpst_result_t fpst_sn32f407_csprng_init(fpst_csprng_t *out) {
+    if (out == NULL || !g_adc_ready) return FPST_ERR_ARGUMENT;
+
+    const fpst_entropy_source_t source = {
+        .ctx = NULL,
+        .sample = entropy_adc_sample
+    };
+    fpst_result_t rc = fpst_entropy_rng_init(&g_entropy_rng, &source);
+    if (rc != FPST_OK) {
+        memset(out, 0, sizeof(*out));
+        return rc;
+    }
+    rc = fpst_entropy_rng_bind(&g_entropy_rng, out);
+    if (rc != FPST_OK) {
+        fpst_entropy_rng_zeroize(&g_entropy_rng);
+        memset(out, 0, sizeof(*out));
+    }
+    return rc;
+}
+
+bool fpst_sn32f407_csprng_ready(void) {
+    return fpst_entropy_rng_ready(&g_entropy_rng);
+}
+
+void fpst_sn32f407_csprng_zeroize(void) {
+    fpst_entropy_rng_zeroize(&g_entropy_rng);
+}
+
+uint64_t fpst_sn32f407_uptime_ms64(void) {
+    uint32_t high_before;
+    uint32_t high_after;
+    uint32_t low;
+    do {
+        high_before = g_millis_high;
+        low = g_millis;
+        high_after = g_millis_high;
+    } while (high_before != high_after);
+    return ((uint64_t)high_before << 32) | low;
+}
+
 bool fpst_sn32f407_link_wiring_verified(void) {
     return FPST_SN32F407_HARNESS_VERIFIED != 0;
 }
@@ -326,12 +463,18 @@ fpst_result_t fpst_sn32f407_platform_init(fpst_platform_t *out) {
     if (SystemCoreClock != FPST_SN32F407_HCLK_HZ) return FPST_ERR_STATE;
 
     g_millis = 0u;
+    g_millis_high = 0u;
+    g_heartbeat_ready = false;
+    memset(&g_entropy_rng, 0, sizeof(g_entropy_rng));
     if (SysTick_Config(SystemCoreClock / 1000u) != 0u) return FPST_ERR_STATE;
 
     init_pinmux();
     init_link_gpio();
+    init_heartbeat_gpio();
     init_uart0();
     init_spi0();
+    fpst_result_t rc = init_adc0();
+    if (rc != FPST_OK) return rc;
 
     memset(out, 0, sizeof(*out));
     out->ctx = NULL;
