@@ -16,7 +16,9 @@ module tb_btp_duplicate_guard;
 
     assign req_rdata = mem[req_raddr];
 
-    btp_duplicate_guard #(.MAX_FRAME_BYTES(16), .CACHE_CYCLES(8)) dut (
+    /* Production cache lifetime is ~1 second. Keep this TB lifetime long enough
+     * that the compare FSM itself cannot expire the cache while checking 4 bytes. */
+    btp_duplicate_guard #(.MAX_FRAME_BYTES(16), .CACHE_CYCLES(128)) dut (
         .clk_i(clk), .rst_ni(rst_n), .zeroize_i(zeroize),
         .check_i(check), .frame_len_i(frame_len),
         .transaction_id_i(txid), .opcode_i(opcode),
@@ -70,7 +72,7 @@ module tb_btp_duplicate_guard;
             $fatal(1,"collision response cache not reusable");
 
         /* Let the one-entry cache expire, then the request becomes new again. */
-        repeat(10) @(negedge clk);
+        repeat(140) @(negedge clk);
         if (cache_valid) $fatal(1,"cache did not expire");
         start_check();
         if (!is_new || duplicate || collision)
