@@ -16,6 +16,10 @@ from pathlib import Path
 # scalar byte, then assign response[k] explicitly in the simulator-only copy.
 src = Path("tb/integration/tb_primer1_deployment_pqc.sv").read_text()
 src = src.replace(
+    ".HEARTBEAT_BIT(8)",
+    ".HEARTBEAT_TOGGLE_CYCLES(16)",
+)
+src = src.replace(
     "        integer response_payload_len;\n",
     "        integer response_payload_len;\n        logic [7:0] rx_byte;\n",
     1,
