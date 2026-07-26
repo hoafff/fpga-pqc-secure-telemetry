@@ -17,6 +17,7 @@ add_library(fpst_firmware_core
     src/fpst_fpga_link.c
     src/fpst_primer1.c
     src/fpst_session.c
+    src/fpst_csprng.c
     src/fpst_mlkem512_wrapper.c)
 target_include_directories(fpst_firmware_core PUBLIC include)
 target_compile_options(fpst_firmware_core PRIVATE -Wall -Wextra -Werror -Wpedantic)
@@ -53,6 +54,8 @@ if(FPST_ENABLE_MLKEM_NATIVE)
 
     add_executable(test_mlkem_native_wrapper
         tests/test_mlkem_native_wrapper.c
+        tests/mlkem_reference_randombytes_forbidden.c
+        src/fpst_csprng.c
         src/fpst_mlkem512_wrapper.c)
     target_include_directories(test_mlkem_native_wrapper PRIVATE
         include
