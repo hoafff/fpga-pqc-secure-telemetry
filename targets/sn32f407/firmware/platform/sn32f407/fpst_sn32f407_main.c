@@ -1,5 +1,6 @@
 #include "fpst_sn32f407_port.h"
 #include "fpst_fpga_link.h"
+#include "fpst_primer1.h"
 #include "fpst_session.h"
 #include "fpst_profile.h"
 
@@ -19,26 +20,44 @@ static void console(const char *s) {
     fpst_sn32f407_uart0_write_cstr(s);
 }
 
+static void console_hex_nibble(uint8_t value) {
+    const char digit = (char)(value < 10u ? ('0' + value) : ('A' + value - 10u));
+    fpst_sn32f407_uart0_write((const uint8_t *)&digit, 1u);
+}
+
+static void console_hex16(uint16_t value) {
+    for (int shift = 12; shift >= 0; shift -= 4)
+        console_hex_nibble((uint8_t)((value >> shift) & 0x0Fu));
+}
+
+static void console_hex32(uint32_t value) {
+    for (int shift = 28; shift >= 0; shift -= 4)
+        console_hex_nibble((uint8_t)((value >> shift) & 0x0Fu));
+}
+
 static void print_result(fpst_result_t rc) {
     if (rc == FPST_OK) {
         console("OK\r\n");
+    } else if (rc == FPST_ERR_REMOTE && g_link_initialized) {
+        console("REMOTE_ERR status=0x");
+        console_hex16(g_link.last_remote_status);
+        console(" detail=0x");
+        console_hex16(g_link.last_remote_detail);
+        console("\r\n");
     } else {
         console("ERR\r\n");
     }
 }
 
-static fpst_result_t link_simple_command(fpst_opcode_t opcode) {
-    uint8_t response[64];
-    uint16_t response_len = 0u;
-    if (!g_link_initialized) return FPST_ERR_STATE;
-    return fpst_fpga_link_command(&g_link, opcode, NULL, 0u,
-                                  response, sizeof(response), &response_len,
-                                  FPST_LINK_COMMAND_TIMEOUT_MS);
+static bool require_link(void) {
+    if (g_link_initialized) return true;
+    console("BLOCKED: Primer #1 harness is not verified/initialized.\r\n");
+    return false;
 }
 
 static void handle_command(const char *line) {
     if (strcmp(line, "help") == 0) {
-        console("help ping caps status zeroize reset wiring\r\n");
+        console("help wiring ping id status error key-status pqc-status zeroize reset\r\n");
         return;
     }
     if (strcmp(line, "wiring") == 0) {
@@ -48,31 +67,82 @@ static void handle_command(const char *line) {
         return;
     }
     if (strcmp(line, "ping") == 0) {
-        print_result(link_simple_command(FPST_OP_PING));
+        if (!require_link()) return;
+        static const uint8_t token[] = {'S','N','3','2'};
+        print_result(fpst_primer1_ping(&g_link, token, sizeof(token)));
         return;
     }
-    if (strcmp(line, "caps") == 0) {
-        print_result(link_simple_command(FPST_OP_GET_CAPS));
-        return;
-    }
-    if (strcmp(line, "status") == 0) {
-        print_result(link_simple_command(FPST_OP_GET_STATUS));
-        return;
-    }
-    if (strcmp(line, "zeroize") == 0) {
-        if (!g_link_initialized) {
-            g_platform.fpga_zeroize(g_platform.ctx,
-                                    FPST_LINK_ZEROIZE_PULSE_MS);
-            console("OK\r\n");
+    if (strcmp(line, "id") == 0) {
+        if (!require_link()) return;
+        char id[FPST_PRIMER1_DEVICE_ID_BYTES + 1u];
+        const fpst_result_t rc = fpst_primer1_get_device_id(&g_link, id);
+        if (rc == FPST_OK) {
+            console("device=");
+            console(id);
+            console("\r\n");
         } else {
-            fpst_session_zeroize(&g_session);
-            console("OK\r\n");
+            print_result(rc);
         }
         return;
     }
-    if (strcmp(line, "reset") == 0) {
-        g_platform.fpga_reset(g_platform.ctx, FPST_LINK_RESET_PULSE_MS);
+    if (strcmp(line, "status") == 0) {
+        if (!require_link()) return;
+        uint32_t state = 0u;
+        const fpst_result_t rc = fpst_primer1_get_status(&g_link, &state);
+        if (rc == FPST_OK) {
+            console("state=0x");
+            console_hex32(state);
+            console("\r\n");
+        } else {
+            print_result(rc);
+        }
+        return;
+    }
+    if (strcmp(line, "error") == 0) {
+        if (!require_link()) return;
+        uint16_t error_code = 0u;
+        const fpst_result_t rc = fpst_primer1_get_error(&g_link, &error_code);
+        if (rc == FPST_OK) {
+            console("error=0x");
+            console_hex16(error_code);
+            console("\r\n");
+        } else {
+            print_result(rc);
+        }
+        return;
+    }
+    if (strcmp(line, "key-status") == 0) {
+        if (!require_link()) return;
+        fpst_primer1_key_status_t status;
+        const fpst_result_t rc = fpst_primer1_key_status(&g_link, &status);
+        if (rc == FPST_OK) {
+            console("session_id=0x");
+            console_hex32(status.session_id);
+            console(status.session_active ? " active=1\r\n" : " active=0\r\n");
+        } else {
+            print_result(rc);
+        }
+        return;
+    }
+    if (strcmp(line, "pqc-status") == 0) {
+        if (!require_link()) return;
+        fpst_primer1_pqc_status_t status;
+        const fpst_result_t rc = fpst_primer1_pqc_get_result(&g_link, &status);
+        if (rc == FPST_OK) {
+            console(status.busy ? "pqc=busy\r\n" : "pqc=idle\r\n");
+        } else {
+            print_result(rc);
+        }
+        return;
+    }
+    if (strcmp(line, "zeroize") == 0) {
+        if (!require_link()) return;
+        fpst_session_zeroize(&g_session);
         console("OK\r\n");
+        return;
+    }
+    if (strcmp(line, "reset") == 0) {
+        console("UNAVAILABLE: Primer reset/zeroize sidebands are supervisor-owned.\r\n");
         return;
     }
 
@@ -91,12 +161,12 @@ int main(void) {
     }
 
     console("\r\nFPST SN32F407F control firmware\r\n");
-    console("baseline=FPST-SYS-SPEC-001-v1.1\r\n");
-    console("host=UART0-115200 link=SPI0-3MHz-mode0\r\n");
+    console("baseline=FPST-SYS-SPEC-001-v1.1 Primer1-BTP-v1\r\n");
+    console("host=UART0-115200 link=SPI0-1MHz-mode0-direct-BTP\r\n");
 
     if (!fpst_sn32f407_link_wiring_verified()) {
-        console("WARNING: MCU-to-Primer harness is not yet verified.\r\n");
-        console("SPI mailbox commands are intentionally blocked.\r\n");
+        console("WARNING: MCU-to-Primer harness is not yet continuity-verified.\r\n");
+        console("BTP SPI transactions are intentionally blocked.\r\n");
         g_link_initialized = false;
     } else {
         rc = fpst_fpga_link_init(&g_link, &g_platform);
@@ -125,8 +195,7 @@ int main(void) {
                 line[used++] = (char)ch;
             }
         }
-        if (g_platform.watchdog_feed != NULL) {
+        if (g_platform.watchdog_feed != NULL)
             g_platform.watchdog_feed(g_platform.ctx);
-        }
     }
 }
