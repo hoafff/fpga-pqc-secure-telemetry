@@ -29,6 +29,8 @@ module tb_btp_spi_slave;
     logic irq_n;
     logic overflow;
 
+    logic [7:0] r0, r1, r2, r3;
+
     btp_spi_slave #(.MAX_FRAME_BYTES(64)) dut (
         .clk_i(clk), .rst_ni(rst_n), .zeroize_i(zeroize),
         .spi_sclk_i(spi_sclk), .spi_mosi_i(spi_mosi),
@@ -45,8 +47,9 @@ module tb_btp_spi_slave;
     );
 
     task spi_write_byte(input [7:0] value);
+        integer bitn;
         begin
-            for (integer bitn = 7; bitn >= 0; bitn = bitn - 1) begin
+            for (bitn = 7; bitn >= 0; bitn = bitn - 1) begin
                 spi_mosi = value[bitn];
                 #500;
                 spi_sclk = 1'b1;
@@ -57,9 +60,10 @@ module tb_btp_spi_slave;
     endtask
 
     task spi_read_byte(output [7:0] value);
+        integer bitn;
         begin
             value = 8'h00;
-            for (integer bitn = 7; bitn >= 0; bitn = bitn - 1) begin
+            for (bitn = 7; bitn >= 0; bitn = bitn - 1) begin
                 #500;
                 spi_sclk = 1'b1;
                 #100;
@@ -90,6 +94,7 @@ module tb_btp_spi_slave;
         rsp_len = 0;
         rsp_commit = 0;
         rsp_rearm = 0;
+        r0 = 0; r1 = 0; r2 = 0; r3 = 0;
 
         repeat (4) @(negedge clk);
         rst_n = 1;
@@ -136,7 +141,6 @@ module tb_btp_spi_slave;
             $fatal(1, "response commit did not assert active-low IRQ");
 
         /* Response is a separate SPI transaction. */
-        logic [7:0] r0, r1, r2, r3;
         spi_cs_n = 1'b0;
         #300;
         spi_read_byte(r0);
