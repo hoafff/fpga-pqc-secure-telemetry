@@ -29,12 +29,16 @@
  * output. Its final wire to Tiny 1P5 is still evidence-dependent and does not
  * change the frozen Primer #1 contract.
  *
- * This is the intended wiring contract, not continuity evidence. Keep the
- * harness guard zero until the assembled jumper harness is measured.
+ * This is the intended wiring contract, not continuity evidence. The harness
+ * guard defaults to zero. After physical continuity and common-ground checks,
+ * release builds may pass FPST_SN32F407_HARNESS_VERIFIED=1 from Keil/compiler
+ * settings without editing this source file.
  */
 #define FPST_SN32F407_DEVICE_VERIFIED       1
 #define FPST_SN32F407_MCU_PINMUX_VERIFIED  1
+#ifndef FPST_SN32F407_HARNESS_VERIFIED
 #define FPST_SN32F407_HARNESS_VERIFIED     0
+#endif
 
 #define FPST_SN32F407_DEVICE_NAME           "SN32F407F"
 #define FPST_SN32F407_CPU_NAME              "Cortex-M0"
