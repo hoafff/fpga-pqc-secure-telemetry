@@ -67,10 +67,13 @@ module tb_primer1_deployment_btp;
             rx = 8'h00;
             for (b = 7; b >= 0; b = b - 1) begin
                 spi_mosi_i = tx[b];
-                #500;
-                spi_sclk_i = 1'b1;
+                // Mode 0: the master samples MISO at the rising edge. Sample
+                // the stable pre-edge value before allowing the synchronized
+                // FPGA slave to advance to the next bit.
                 #500;
                 rx[b] = spi_miso_o;
+                spi_sclk_i = 1'b1;
+                #500;
                 spi_sclk_i = 1'b0;
             end
         end
@@ -135,7 +138,7 @@ module tb_primer1_deployment_btp;
             #3000;
 
             if (response[0] != 8'ha5 || response[1] != 8'h5a)
-                $fatal(1, "bad response SOF");
+                $fatal(1, "bad response SOF: %02x %02x", response[0], response[1]);
             if (response[2] != 8'h01 || response[3] != 8'h7f)
                 $fatal(1, "bad response version/opcode");
             if ((response[4] & 8'h01) == 0)
