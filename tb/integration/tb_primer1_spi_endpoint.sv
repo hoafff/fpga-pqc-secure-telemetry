@@ -158,6 +158,16 @@ module tb_primer1_spi_endpoint;
         /* End-to-end PING request and second-transaction response. */
         build_zero_payload_request(8'h7F,16'h1234);
         send_request();
+        wait(irq_n===1'b0);
+        #200;
+        if (dut.u_spi_slave.rsp_len_q !== 11'd30)
+            $fatal(1,"SPI response length cache wrong: %0d",dut.u_spi_slave.rsp_len_q);
+        if ({dut.u_spi_slave.rsp_mem[26],dut.u_spi_slave.rsp_mem[27],
+             dut.u_spi_slave.rsp_mem[28],dut.u_spi_slave.rsp_mem[29]} !==
+            32'hA9F9A8EE)
+            $fatal(1,"response RAM CRC wrong: %02x%02x%02x%02x",
+                   dut.u_spi_slave.rsp_mem[26],dut.u_spi_slave.rsp_mem[27],
+                   dut.u_spi_slave.rsp_mem[28],dut.u_spi_slave.rsp_mem[29]);
         read_response(30,1'b0);
         check_response_crc(30,1'b0);
 
