@@ -19,9 +19,15 @@ typedef struct {
     bool selected;
     bool response_phase;
     bool zeroized;
-    unsigned staged;
-    unsigned committed;
-    uint8_t staged_context[40];
+
+    unsigned begin_count;
+    unsigned chunk_count;
+    unsigned commit_count;
+    unsigned activate_count;
+    unsigned abort_count;
+    uint32_t staged_session_id;
+    uint8_t staged_material[FPST_TX_MATERIAL_BYTES];
+    uint32_t committed_policy;
 } mock_hw_t;
 
 static uint32_t mock_millis(void *ctx) { return ((mock_hw_t *)ctx)->now_ms; }
@@ -44,16 +50,50 @@ static void mock_build_response(mock_hw_t *m) {
     fpst_frame_view_t req;
     assert(fpst_frame_decode(m->request, m->request_len, &req) == FPST_OK);
 
-    if (req.opcode == FPST_OP_STAGE_CONTEXT) {
-        assert(req.payload_len == 40u);
-        memcpy(m->staged_context, req.payload, 40u);
-        ++m->staged;
-    } else if (req.opcode == FPST_OP_COMMIT_CONTEXT) {
-        assert(req.payload_len == 4u);
-        assert(fpst_load_be32(req.payload) == fpst_load_be32(m->staged_context));
-        ++m->committed;
-    } else if (req.opcode == FPST_OP_ZEROIZE) {
-        m->zeroized = true;
+    switch ((fpst_opcode_t)req.opcode) {
+        case FPST_OP_KEY_LOAD_BEGIN:
+            assert(req.payload_len == 7u);
+            m->staged_session_id = fpst_load_be32(&req.payload[0]);
+            assert(m->staged_session_id != 0u);
+            assert(req.payload[4] == FPST_KEY_DIRECTION_TX);
+            assert(fpst_load_be16(&req.payload[5]) == FPST_TX_MATERIAL_BYTES);
+            ++m->begin_count;
+            break;
+
+        case FPST_OP_KEY_LOAD_CHUNK: {
+            assert(req.payload_len == 2u + FPST_TX_MATERIAL_BYTES);
+            const uint16_t offset = fpst_load_be16(&req.payload[0]);
+            assert(offset == 0u);
+            memcpy(m->staged_material, &req.payload[2], FPST_TX_MATERIAL_BYTES);
+            ++m->chunk_count;
+            break;
+        }
+
+        case FPST_OP_KEY_LOAD_COMMIT:
+            assert(req.payload_len == 8u);
+            assert(fpst_load_be32(&req.payload[0]) == m->staged_session_id);
+            m->committed_policy = fpst_load_be32(&req.payload[4]);
+            ++m->commit_count;
+            break;
+
+        case FPST_OP_SESSION_ACTIVATE:
+            assert(req.payload_len == 4u);
+            assert(fpst_load_be32(req.payload) == m->staged_session_id);
+            ++m->activate_count;
+            break;
+
+        case FPST_OP_KEY_LOAD_ABORT:
+            assert(req.payload_len == 0u);
+            ++m->abort_count;
+            break;
+
+        case FPST_OP_ZEROIZE:
+            assert(req.payload_len == 2u);
+            m->zeroized = true;
+            break;
+
+        default:
+            break;
     }
 
     uint8_t generic[FPST_GENERIC_RESPONSE_BYTES] = {0};
@@ -148,7 +188,7 @@ static void test_frame(void) {
     const uint8_t payload[] = {1u,2u,3u,4u,5u};
     uint8_t frame[64];
     size_t len = 0u;
-    assert(fpst_frame_encode(0x60u, 0u, 0x1234u,
+    assert(fpst_frame_encode(FPST_OP_TELEMETRY_TX_SAMPLE, 0u, 0x1234u,
                              payload, sizeof payload,
                              frame, sizeof frame, &len) == FPST_OK);
     assert(frame[0] == 0xA5u && frame[1] == 0x5Au);
@@ -158,7 +198,8 @@ static void test_frame(void) {
 
     fpst_frame_view_t v;
     assert(fpst_frame_decode(frame, len, &v) == FPST_OK);
-    assert(v.opcode == 0x60u && v.transaction_id == 0x1234u);
+    assert(v.opcode == FPST_OP_TELEMETRY_TX_SAMPLE &&
+           v.transaction_id == 0x1234u);
     assert(v.payload_len == sizeof payload);
     assert(memcmp(v.payload, payload, sizeof payload) == 0);
 
@@ -187,11 +228,29 @@ static void test_session_atomic_commit(void) {
 
     assert(fpst_fpga_link_init(&link, &platform) == FPST_OK);
     assert(fpst_session_init(&session, &link) == FPST_OK);
-    assert(fpst_session_establish(&session, ss, 0x01020304u,
-                                  0x0102030405060708ULL, 0u) == FPST_OK);
+
+    /* The frozen STP policy starts every new session at sequence zero. */
+    assert(fpst_session_establish(&session, ss, 0x01020304u, 1u, 0u) ==
+           FPST_ERR_ARGUMENT);
+
+    assert(fpst_session_establish(&session, ss, 0x01020304u, 0u,
+                                  0x11223344u) == FPST_OK);
     assert(session.state == FPST_SESSION_ACTIVE);
-    assert(hw.staged == 1u && hw.committed == 1u);
-    assert(fpst_load_be32(&hw.staged_context[0]) == 0x01020304u);
+    assert(session.session_id == 0x01020304u);
+    assert(session.next_sequence == 0u);
+    assert(hw.begin_count == 1u);
+    assert(hw.chunk_count == 1u);
+    assert(hw.commit_count == 1u);
+    assert(hw.activate_count == 1u);
+    assert(hw.committed_policy == 0x11223344u);
+
+    const uint8_t expected_material[24] = {
+        0xf5,0xa7,0x56,0x7f,0x10,0x98,0x4c,0x3d,
+        0xa6,0x24,0x2e,0x36,0x5c,0xca,0x33,0x8d,
+        0x4c,0xd5,0x7e,0xb7,0x8c,0x49,0x4d,0x3d
+    };
+    assert(memcmp(hw.staged_material, expected_material,
+                  sizeof expected_material) == 0);
 
     fpst_session_zeroize(&session);
     assert(session.state == FPST_SESSION_NO_KEY && hw.zeroized);
