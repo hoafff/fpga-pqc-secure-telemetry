@@ -66,6 +66,9 @@ work/
 obj_dir/
 coverage/
 
+# External pinned source checkouts (lock metadata stays tracked)
+software/third_party/mlkem-native/src/
+
 # Generated results
 results/**/*.csv
 results/**/*.json
