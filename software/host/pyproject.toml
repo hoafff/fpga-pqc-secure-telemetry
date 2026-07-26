@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fpst-host"
+version = "0.1.0"
+description = "FPST v1.1 PC host for the SN32F407F control node"
+requires-python = ">=3.10"
+dependencies = [
+  "pyserial>=3.5",
+]
+
+[project.scripts]
+fpst-host = "fpst_host.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["fpst_host*"]
