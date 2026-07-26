@@ -86,4 +86,19 @@ run_test tb_forward_ntt_board_selftest \
     "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/forward_ntt_board_selftest.sv" \
     "${ROOT_DIR}/tb/integration/tb_forward_ntt_board_selftest.sv"
 
+COMMON_ASCON_SOURCES=(
+    "${ROOT_DIR}/rtl/ascon/ascon_round.sv"
+    "${ROOT_DIR}/rtl/ascon/ascon_permutation.sv"
+    "${ROOT_DIR}/rtl/ascon/ascon_aead_encrypt.sv"
+)
+
+run_test tb_ascon_aead_encrypt \
+    "${COMMON_ASCON_SOURCES[@]}" \
+    "${ROOT_DIR}/tb/integration/tb_ascon_aead_encrypt.sv"
+
+run_test tb_ascon_encrypt_kat_selftest \
+    "${COMMON_ASCON_SOURCES[@]}" \
+    "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/ascon_encrypt_kat_selftest.sv" \
+    "${ROOT_DIR}/tb/integration/tb_ascon_encrypt_kat_selftest.sv"
+
 echo "PASS: all RTL unit and integration tests completed"
