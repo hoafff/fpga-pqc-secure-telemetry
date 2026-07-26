@@ -29,7 +29,13 @@ module btp_response_builder #(
     localparam integer GENERIC_BYTES = 12;
     localparam integer MAX_APP_BYTES = MAX_PAYLOAD_BYTES - GENERIC_BYTES;
 
-    logic active_q;
+    typedef enum logic [1:0] {
+        B_IDLE,
+        B_EMIT,
+        B_COMMIT
+    } state_t;
+
+    state_t state_q;
     logic [10:0] index_q;
     logic [15:0] payload_len_q;
     logic [31:0] crc_q;
@@ -62,9 +68,17 @@ module btp_response_builder #(
         end
     endfunction
 
-    assign busy_o = active_q;
+    assign busy_o = (state_q != B_IDLE);
     assign crc_final = crc_q ^ 32'hFFFF_FFFF;
     assign app_raddr_o = (index_q >= 11'd22) ? index_q - 11'd22 : 10'd0;
+
+    /* These are combinational write-bus outputs. The consumer samples them on
+     * the same rising edge on which index_q is retired. B_COMMIT is a separate
+     * cycle so the response cache cannot be marked valid before its final CRC
+     * byte has physically been written. */
+    assign rsp_we_o    = (state_q == B_EMIT);
+    assign rsp_waddr_o = index_q;
+    assign rsp_wdata_o = emit_byte;
 
     always_comb begin
         emit_byte = 8'h00;
@@ -109,7 +123,7 @@ module btp_response_builder #(
 
     always_ff @(posedge clk_i) begin
         if (!rst_ni || zeroize_i) begin
-            active_q          <= 1'b0;
+            state_q           <= B_IDLE;
             index_q           <= '0;
             payload_len_q     <= '0;
             crc_q             <= 32'hFFFF_FFFF;
@@ -121,57 +135,59 @@ module btp_response_builder #(
             device_state_q    <= '0;
             result_meta_q     <= '0;
             app_len_q         <= '0;
-            rsp_we_o          <= 1'b0;
-            rsp_waddr_o       <= '0;
-            rsp_wdata_o       <= '0;
             rsp_len_o         <= '0;
             rsp_commit_o      <= 1'b0;
             done_o            <= 1'b0;
             argument_error_o  <= 1'b0;
         end else begin
-            rsp_we_o         <= 1'b0;
             rsp_commit_o     <= 1'b0;
             done_o           <= 1'b0;
             argument_error_o <= 1'b0;
 
-            if (!active_q) begin
-                if (start_i) begin
-                    if (app_len_i > MAX_APP_BYTES) begin
-                        argument_error_o <= 1'b1;
-                    end else begin
-                        opcode_q         <= opcode_i;
-                        flags_q          <= flags_i;
-                        transaction_id_q <= transaction_id_i;
-                        status_code_q    <= status_code_i;
-                        detail_code_q    <= detail_code_i;
-                        device_state_q   <= device_state_i;
-                        result_meta_q    <= result_meta_i;
-                        app_len_q        <= app_len_i;
-                        payload_len_q    <= GENERIC_BYTES + app_len_i;
-                        rsp_len_o        <= 11'd14 + GENERIC_BYTES + app_len_i;
-                        index_q          <= 11'd0;
-                        crc_q            <= 32'hFFFF_FFFF;
-                        active_q         <= 1'b1;
+            case (state_q)
+                B_IDLE: begin
+                    if (start_i) begin
+                        if (app_len_i > MAX_APP_BYTES) begin
+                            argument_error_o <= 1'b1;
+                        end else begin
+                            opcode_q         <= opcode_i;
+                            flags_q          <= flags_i;
+                            transaction_id_q <= transaction_id_i;
+                            status_code_q    <= status_code_i;
+                            detail_code_q    <= detail_code_i;
+                            device_state_q   <= device_state_i;
+                            result_meta_q    <= result_meta_i;
+                            app_len_q        <= app_len_i;
+                            payload_len_q    <= GENERIC_BYTES + app_len_i;
+                            rsp_len_o        <= 11'd14 + GENERIC_BYTES + app_len_i;
+                            index_q          <= 11'd0;
+                            crc_q            <= 32'hFFFF_FFFF;
+                            state_q          <= B_EMIT;
+                        end
                     end
                 end
-            end else begin
-                rsp_we_o    <= 1'b1;
-                rsp_waddr_o <= index_q;
-                rsp_wdata_o <= emit_byte;
 
-                if ((index_q >= 11'd2) &&
-                    (index_q < 11'd10 + payload_len_q)) begin
-                    crc_q <= crc32_update_byte(crc_q, emit_byte);
+                B_EMIT: begin
+                    if ((index_q >= 11'd2) &&
+                        (index_q < 11'd10 + payload_len_q)) begin
+                        crc_q <= crc32_update_byte(crc_q, emit_byte);
+                    end
+
+                    if (index_q == rsp_len_o - 11'd1) begin
+                        state_q <= B_COMMIT;
+                    end else begin
+                        index_q <= index_q + 11'd1;
+                    end
                 end
 
-                if (index_q == rsp_len_o - 11'd1) begin
+                B_COMMIT: begin
                     rsp_commit_o <= 1'b1;
-                    active_q     <= 1'b0;
                     done_o       <= 1'b1;
-                end else begin
-                    index_q <= index_q + 11'd1;
+                    state_q      <= B_IDLE;
                 end
-            end
+
+                default: state_q <= B_IDLE;
+            endcase
         end
     end
 
