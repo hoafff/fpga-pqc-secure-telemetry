@@ -21,7 +21,7 @@ run_test() {
     iverilog -g2012 -Wall -s "${top}" \
         -o "${BUILD_DIR}/${top}.vvp" \
         "$@"
-    vvp "${BUILD_DIR}/${top}.vvp"
+    timeout 60s vvp "${BUILD_DIR}/${top}.vvp"
 }
 
 run_test tb_mod_arithmetic \
