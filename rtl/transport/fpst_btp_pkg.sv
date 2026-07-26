@@ -41,6 +41,9 @@ package fpst_btp_pkg;
     localparam logic [7:0] OP_SESSION_ACTIVATE    = 8'h46;
     localparam logic [7:0] OP_ASCON_KAT           = 8'h50;
     localparam logic [7:0] OP_TELEMETRY_TX_SAMPLE = 8'h60;
+    localparam logic [7:0] OP_STP_RX_PACKET        = 8'h61;
+    localparam logic [7:0] OP_STP_GET_COUNTERS     = 8'h62;
+    localparam logic [7:0] OP_STP_CLEAR_COUNTERS   = 8'h63;
     localparam logic [7:0] OP_PING                = 8'h7F;
 
     /* Appendix C common 16-bit error registry. */
@@ -54,6 +57,7 @@ package fpst_btp_pkg;
     localparam logic [15:0] ERR_RESERVED_FIELD     = 16'h0202;
     localparam logic [15:0] ERR_ARGUMENT           = 16'h0203;
     localparam logic [15:0] ERR_PERMISSION         = 16'h0204;
+    localparam logic [15:0] ERR_STP_LENGTH         = 16'h0206;
     localparam logic [15:0] ERR_BUSY               = 16'h0301;
     localparam logic [15:0] ERR_INVALID_STATE      = 16'h0302;
     localparam logic [15:0] ERR_NO_KEY             = 16'h0303;
@@ -79,6 +83,7 @@ package fpst_btp_pkg;
     localparam logic [15:0] ERR_SEQUENCE_GAP       = 16'h0606;
     localparam logic [15:0] ERR_PAYLOAD_RANGE      = 16'h0607;
     localparam logic [15:0] ERR_AUTH_THRESHOLD     = 16'h0608;
+    localparam logic [15:0] ERR_SEQUENCE_DESYNC    = 16'h0610;
     localparam logic [15:0] ERR_HB_MCU_TIMEOUT     = 16'h0701;
     localparam logic [15:0] ERR_HB_PQC_TIMEOUT     = 16'h0702;
     localparam logic [15:0] ERR_HB_CRYPTO_TIMEOUT  = 16'h0703;
