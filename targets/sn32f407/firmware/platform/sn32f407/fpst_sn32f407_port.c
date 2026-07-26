@@ -413,7 +413,11 @@ bool fpst_sn32f407_uart0_read_byte(uint8_t *out) {
 }
 
 fpst_result_t fpst_sn32f407_csprng_init(fpst_csprng_t *out) {
-    if (out == NULL || !g_adc_ready) return FPST_ERR_ARGUMENT;
+    if (out == NULL) return FPST_ERR_ARGUMENT;
+    if (!g_adc_ready) {
+        memset(out, 0, sizeof(*out));
+        return FPST_ERR_STATE;
+    }
 
     const fpst_entropy_source_t source = {
         .ctx = NULL,
@@ -473,8 +477,14 @@ fpst_result_t fpst_sn32f407_platform_init(fpst_platform_t *out) {
     init_heartbeat_gpio();
     init_uart0();
     init_spi0();
-    fpst_result_t rc = init_adc0();
-    if (rc != FPST_OK) return rc;
+
+    /*
+     * Entropy is a security capability, not a prerequisite for diagnostics.
+     * If ADC calibration is unavailable the UART/SPI bring-up shell remains
+     * alive, while fpst_sn32f407_csprng_init() reports FPST_ERR_STATE and all
+     * live ML-KEM operations stay fail-closed.
+     */
+    (void)init_adc0();
 
     memset(out, 0, sizeof(*out));
     out->ctx = NULL;
