@@ -8,6 +8,7 @@ module tb_primer2_btp_endpoint;
 
     logic clk = 1'b0;
     logic rst_n = 1'b0;
+    logic fatal_latched;
 
     logic request_valid;
     logic request_accept;
@@ -73,7 +74,7 @@ module tb_primer2_btp_endpoint;
         .rst_ni(rst_n),
         .transport_zeroize_i(1'b0),
         .secure_enable_i(1'b1),
-        .fatal_latched_i(1'b0),
+        .fatal_latched_i(fatal_latched),
         .request_valid_i(request_valid),
         .request_accept_o(request_accept),
         .request_opcode_i(request_opcode),
@@ -283,9 +284,20 @@ module tb_primer2_btp_endpoint;
         end
     endtask
 
+    task automatic load_sender_packet;
+        integer i;
+        begin
+            clear_request();
+            for (i = 0; i < 64; i = i + 1) begin
+                tx_packet_addr = i[5:0];
+                #1;
+                request_mem[i] = tx_packet_data;
+            end
+        end
+    endtask
+
     task automatic build_sender_packet;
         integer timeout_cycles;
-        integer i;
         begin
             while (!tx_ready)
                 @(posedge clk);
@@ -303,12 +315,20 @@ module tb_primer2_btp_endpoint;
             if (!tx_retained_valid || tx_retained_len != 7'd64 || tx_error_valid)
                 $fatal(1,"Primer1 STP generation failed err=%04h",tx_error_code);
 
+            load_sender_packet();
+        end
+    endtask
+
+    task automatic expect_zero_counters(input logic [63:0] expected_seq);
+        begin
             clear_request();
-            for (i = 0; i < 64; i = i + 1) begin
-                tx_packet_addr = i[5:0];
-                #1;
-                request_mem[i] = tx_packet_data;
-            end
+            issue_request(OP_STP_GET_COUNTERS,0);
+            expect_generic(OP_STP_GET_COUNTERS,ERR_OK,16'h0000,16'd20);
+            if (resp_be32(22) !== 32'd0 ||
+                resp_be32(26) !== 32'd0 ||
+                resp_be32(30) !== 32'd0 ||
+                resp_be64(34) !== expected_seq)
+                $fatal(1,"STP counters not zero after epoch reset exp_seq=%0d",expected_seq);
         end
     endtask
 
@@ -330,6 +350,7 @@ module tb_primer2_btp_endpoint;
         tx_start = 1'b0;
         tx_packet_addr = '0;
         telemetry_record = '0;
+        fatal_latched = 1'b0;
         clear_request();
         for (i = 0; i < MAX_FRAME_BYTES; i = i + 1)
             response_mem[i] = 8'h00;
@@ -378,7 +399,45 @@ module tb_primer2_btp_endpoint;
         if (auth_threshold_fault || last_error != ERR_REPLAY)
             $fatal(1,"unexpected endpoint fault state");
 
-        $display("PASS: Primer2 BTP key/session, STP commit/replay and counter contract");
+        /* Explicit ZEROIZE resets both raw counters and visible counter epoch. */
+        clear_request();
+        request_mem[0] = 8'h00;
+        request_mem[1] = 8'h00;
+        issue_request(OP_ZEROIZE,2);
+        expect_generic(OP_ZEROIZE,ERR_OK,16'h0000,16'd0);
+        repeat (2) @(posedge clk);
+        if (key_valid || session_active || expected_sequence !== 64'd0)
+            $fatal(1,"explicit ZEROIZE did not clear receiver session");
+        expect_zero_counters(64'd0);
+
+        /* Recreate a nonzero counter epoch, clear the visible counter, then
+         * assert external fatal. Raw RX counters zeroize on fatal, so the
+         * visible baseline must also return to zero instead of wrapping. */
+        provision_receiver();
+        load_sender_packet();
+        issue_request(OP_STP_RX_PACKET,64);
+        expect_generic(OP_STP_RX_PACKET,ERR_OK,16'h0001,16'd34);
+        if (expected_sequence !== 64'd1)
+            $fatal(1,"second receiver session did not commit sequence 0");
+
+        clear_request();
+        request_mem[0] = 8'h07;
+        issue_request(OP_STP_CLEAR_COUNTERS,1);
+        expect_generic(OP_STP_CLEAR_COUNTERS,ERR_OK,16'h0000,16'd0);
+        expect_zero_counters(64'd1);
+
+        @(negedge clk);
+        fatal_latched = 1'b1;
+        repeat (2) @(posedge clk);
+        @(negedge clk);
+        fatal_latched = 1'b0;
+        repeat (2) @(posedge clk);
+
+        if (key_valid || session_active || expected_sequence !== 64'd0)
+            $fatal(1,"fatal_latched did not zeroize receiver session");
+        expect_zero_counters(64'd0);
+
+        $display("PASS: Primer2 BTP session/STP/replay plus counter zeroize/fatal epochs");
         $finish;
     end
 endmodule
