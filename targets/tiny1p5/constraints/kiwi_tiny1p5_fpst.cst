@@ -1,0 +1,35 @@
+// FPST v1.1 deployment profile - Kiwi Tiny 1P5 black PCB Rev2.2
+// Exact FPGA: GW1N-UV1P5QN48XC7/I6, all user I/O at 3.3 V.
+// On-board: SYS_CLK pin4; S1 pin35 tamper; S2 pin36 clear; D3 pin27 fault; D4 pin28 secure.
+// External J1: 1/2/3 heartbeats, 4 tamper_n, 5 manual fault, 6 clear, 7 SEC_EN,
+// 8 ZEROIZE, 9 SYSTEM_RESET_N, 10 FAULT_LATCH. Avoid JTAG/JTAGSEL_N/RECONFIG_N/MSPI special pins.
+IO_LOC  "clk_27m" 4;
+IO_PORT "clk_27m" IO_TYPE=LVCMOS33;
+IO_LOC  "hb_mcu_i" 2;
+IO_PORT "hb_mcu_i" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
+IO_LOC  "hb_pqc_i" 3;
+IO_PORT "hb_pqc_i" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
+IO_LOC  "hb_crypto_i" 5;
+IO_PORT "hb_crypto_i" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
+IO_LOC  "tamper_ext_ni" 7;
+IO_PORT "tamper_ext_ni" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_LOC  "manual_fault_i" 8;
+IO_PORT "manual_fault_i" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
+IO_LOC  "clear_fault_i" 9;
+IO_PORT "clear_fault_i" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
+IO_LOC  "secure_enable_o" 10;
+IO_PORT "secure_enable_o" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC  "key_zeroize_o" 11;
+IO_PORT "key_zeroize_o" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC  "system_reset_no" 12;
+IO_PORT "system_reset_no" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC  "fault_latched_o" 14;
+IO_PORT "fault_latched_o" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC  "btn_tamper_n" 35;
+IO_PORT "btn_tamper_n" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_LOC  "btn_clear_n" 36;
+IO_PORT "btn_clear_n" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_LOC  "led_fault_o" 27;
+IO_PORT "led_fault_o" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC  "led_secure_o" 28;
+IO_PORT "led_secure_o" IO_TYPE=LVCMOS33 DRIVE=8;
