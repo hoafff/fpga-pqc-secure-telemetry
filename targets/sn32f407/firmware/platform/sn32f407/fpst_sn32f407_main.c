@@ -20,11 +20,8 @@ static void console(const char *s) {
 }
 
 static void print_result(fpst_result_t rc) {
-    if (rc == FPST_OK) {
-        console("OK\r\n");
-    } else {
-        console("ERR\r\n");
-    }
+    if (rc == FPST_OK) console("OK\r\n");
+    else console("ERR\r\n");
 }
 
 static fpst_result_t link_simple_command(fpst_opcode_t opcode) {
@@ -63,11 +60,10 @@ static void handle_command(const char *line) {
         if (!g_link_initialized) {
             g_platform.fpga_zeroize(g_platform.ctx,
                                     FPST_LINK_ZEROIZE_PULSE_MS);
-            console("OK\r\n");
         } else {
             fpst_session_zeroize(&g_session);
-            console("OK\r\n");
         }
+        console("OK\r\n");
         return;
     }
     if (strcmp(line, "reset") == 0) {
@@ -85,18 +81,16 @@ int main(void) {
 
     fpst_result_t rc = fpst_sn32f407_platform_init(&g_platform);
     if (rc != FPST_OK) {
-        while (1) {
-            __WFI();
-        }
+        while (1) __WFI();
     }
 
     console("\r\nFPST SN32F407F control firmware\r\n");
     console("baseline=FPST-SYS-SPEC-001-v1.1\r\n");
-    console("host=UART0-115200 link=SPI0-3MHz-mode0\r\n");
+    console("host=UART0-115200 link=BTP-SPI0-1MHz-mode0\r\n");
 
     if (!fpst_sn32f407_link_wiring_verified()) {
         console("WARNING: MCU-to-Primer harness is not yet verified.\r\n");
-        console("SPI mailbox commands are intentionally blocked.\r\n");
+        console("BTP transactions are intentionally blocked until the final Primer pin map is checked.\r\n");
         g_link_initialized = false;
     } else {
         rc = fpst_fpga_link_init(&g_link, &g_platform);
@@ -125,8 +119,7 @@ int main(void) {
                 line[used++] = (char)ch;
             }
         }
-        if (g_platform.watchdog_feed != NULL) {
+        if (g_platform.watchdog_feed != NULL)
             g_platform.watchdog_feed(g_platform.ctx);
-        }
     }
 }
