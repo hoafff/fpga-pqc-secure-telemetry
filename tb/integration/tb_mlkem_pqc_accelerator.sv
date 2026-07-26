@@ -198,17 +198,20 @@ module tb_mlkem_pqc_accelerator;
         check_expected();
         $display("PASS: ML-KEM MultiplyNTTs base-case path");
 
-        // Malformed second operand must be rejected before any writeback.
+        // Malformed second operand must be rejected before any writeback. The
+        // error flag and completion pulse are produced by the same registered
+        // transition, so sample them together before the next clock clears the
+        // one-cycle error indication.
         load_a();
         fill_operand(1);
         operand_mem[1 + 2*200] = 8'h0d;
         operand_mem[1 + 2*200 + 1] = 8'h01; // 3329, outside canonical range.
         read_coeff(0, before0);
         pulse_binary(1'b0, 1'b0, 1);
-        while (!done) @(posedge clk);
-        #1;
+        wait (done);
         if (!operand_error || operand_error_index !== 8'd200)
-            $fatal(1, "malformed operand did not report coefficient 200");
+            $fatal(1, "malformed operand did not report coefficient 200: error=%0d index=%0d",
+                   operand_error, operand_error_index);
         read_coeff(0, before0);
         if (before0 !== a_vec[0])
             $fatal(1, "validation failure caused partial writeback");
