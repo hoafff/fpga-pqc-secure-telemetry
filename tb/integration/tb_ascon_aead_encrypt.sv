@@ -94,10 +94,12 @@ module tb_ascon_aead_encrypt;
         begin
             while (!ready)
                 @(posedge clk);
+            @(negedge clk);
             ad_len   = requested_ad_len;
             data_len = requested_data_len;
             start    = 1'b1;
             @(posedge clk);
+            @(negedge clk);
             start    = 1'b0;
         end
     endtask
@@ -107,10 +109,12 @@ module tb_ascon_aead_encrypt;
         input logic       last
     );
         begin
+            @(negedge clk);
             in_data  = value;
             in_last  = last;
             in_valid = 1'b1;
             do @(posedge clk); while (!in_ready);
+            @(negedge clk);
             in_valid = 1'b0;
             in_last  = 1'b0;
         end
@@ -122,6 +126,7 @@ module tb_ascon_aead_encrypt;
         logic [127:0] held_tag;
         integer i;
         begin
+            @(negedge clk);
             tag_ready = 1'b0;
             while (!tag_valid)
                 @(posedge clk);
@@ -141,22 +146,24 @@ module tb_ascon_aead_encrypt;
                 end
             end
 
+            @(negedge clk);
             tag_ready = 1'b1;
             @(posedge clk);
+            @(negedge clk);
             tag_ready = 1'b0;
         end
     endtask
 
     task automatic wait_done;
-        integer timeout;
+        integer timeout_cycles;
         begin
-            timeout = 0;
-            while (!done && timeout < 5000) begin
+            timeout_cycles = 0;
+            while (!done && timeout_cycles < 5000) begin
                 @(posedge clk);
-                timeout = timeout + 1;
+                timeout_cycles = timeout_cycles + 1;
             end
             if (!done) begin
-                $display("FAIL: timeout waiting for done");
+                $display("FAIL: timeout waiting for done state=%0d", dut.state_q);
                 $fatal(1);
             end
             @(posedge clk);
@@ -196,6 +203,13 @@ module tb_ascon_aead_encrypt;
         end
     endtask
 
+    initial begin : watchdog
+        #2_000_000;
+        $display("FAIL: global testbench timeout state=%0d ready=%b in_ready=%b tag_valid=%b",
+                 dut.state_q, ready, in_ready, tag_valid);
+        $fatal(1);
+    end
+
     initial begin
         clk = 1'b0;
         rst_n = 1'b0;
@@ -212,6 +226,7 @@ module tb_ascon_aead_encrypt;
         enable_output_stalls = 1'b0;
 
         repeat (4) @(posedge clk);
+        @(negedge clk);
         rst_n = 1'b1;
         repeat (2) @(posedge clk);
 
@@ -224,6 +239,7 @@ module tb_ascon_aead_encrypt;
             $fatal(1);
         end
 
+        @(negedge clk);
         output_count = 0;
         enable_output_stalls = 1'b1;
         pulse_start(16'd24, 16'd24);
