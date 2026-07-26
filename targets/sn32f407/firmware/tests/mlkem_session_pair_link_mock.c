@@ -1,5 +1,7 @@
 #include "fpst_session.h"
 
+#include <string.h>
+
 /*
  * Narrow linker seam for ML-KEM composition tests that intentionally do not
  * link the production BTP/session implementation. Pair behavior is verified by
@@ -43,8 +45,19 @@ fpst_result_t fpst_session_establish_pair_routed(
     if (tx_session == NULL || tx_session->link == NULL || primer1_platform == NULL)
         return FPST_ERR_ARGUMENT;
     tx_session->link->platform = primer1_platform;
-    return fpst_session_establish(tx_session, shared_secret,
-                                  session_id, 0u, 0u);
+
+    fpst_result_t rc = fpst_session_establish(tx_session, shared_secret,
+                                               session_id, 0u, 0u);
+    if (rc != FPST_OK) return rc;
+
+    /*
+     * Model the largest response generated during production pair verification:
+     * KEY_STATUS = header 10 + generic 12 + data 16 + CRC 4 = 42 bytes.
+     * The ML-KEM ciphertext scratch must start strictly above this footprint.
+     */
+    memset(tx_session->link->response_buf, 0xE2,
+           FPST_LINK_MCU_SESSION_CONTROL_MAX_FRAME_BYTES);
+    return FPST_OK;
 }
 
 fpst_result_t fpst_session_zeroize_pair_routed(
