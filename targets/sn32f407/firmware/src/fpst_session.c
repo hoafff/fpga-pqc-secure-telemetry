@@ -91,6 +91,60 @@ fail:
     return r;
 }
 
+fpst_result_t fpst_session_commit_tx(fpst_session_manager_t *m,
+                                     uint64_t committed_sequence) {
+    if (m == NULL || m->link == NULL) return FPST_ERR_ARGUMENT;
+    if (m->state != FPST_SESSION_ACTIVE) return FPST_ERR_STATE;
+    if (committed_sequence != m->next_sequence) return FPST_ERR_TRANSACTION;
+
+    uint8_t payload[8];
+    uint16_t rsp_len = 0u;
+    fpst_store_be64(payload, committed_sequence);
+    const fpst_result_t r = fpst_fpga_link_command(
+        m->link, FPST_OP_STP_TX_COMMIT,
+        payload, sizeof payload, NULL, 0u, &rsp_len,
+        FPST_LINK_COMMAND_TIMEOUT_MS);
+    fpst_secure_zero(payload, sizeof payload);
+
+    if (r != FPST_OK) return r;
+    ++m->next_sequence;
+    return FPST_OK;
+}
+
+fpst_result_t fpst_session_reconcile_tx(fpst_session_manager_t *m,
+                                        uint64_t receiver_expected_sequence,
+                                        bool *resend_required) {
+    if (m == NULL || m->link == NULL || resend_required == NULL)
+        return FPST_ERR_ARGUMENT;
+    if (m->state != FPST_SESSION_ACTIVE) return FPST_ERR_STATE;
+
+    const uint64_t current = m->next_sequence;
+    if (receiver_expected_sequence != current &&
+        receiver_expected_sequence != current + 1u) {
+        m->state = FPST_SESSION_ERROR;
+        return FPST_ERR_TRANSACTION;
+    }
+
+    uint8_t payload[8];
+    uint16_t rsp_len = 0u;
+    fpst_store_be64(payload, receiver_expected_sequence);
+    const fpst_result_t r = fpst_fpga_link_command(
+        m->link, FPST_OP_STP_TX_RECONCILE,
+        payload, sizeof payload, NULL, 0u, &rsp_len,
+        FPST_LINK_COMMAND_TIMEOUT_MS);
+    fpst_secure_zero(payload, sizeof payload);
+
+    if (r != FPST_OK) return r;
+
+    if (receiver_expected_sequence == current) {
+        *resend_required = true;
+    } else {
+        m->next_sequence = current + 1u;
+        *resend_required = false;
+    }
+    return FPST_OK;
+}
+
 void fpst_session_zeroize(fpst_session_manager_t *m) {
     if (m == NULL) return;
     if (m->link != NULL && m->link->platform != NULL) {
