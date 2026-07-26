@@ -12,7 +12,7 @@ cd "${ROOT_DIR}"
 # Yosys' built-in Verilog frontend used in CI does not parse SystemVerilog
 # package imports. The production RTL remains package-based; for this generic
 # synthesis smoke check we inject the package body at each import site. The
-# package contains only localparams/functions, which are legal module items.
+# v2 endpoint router is intentionally package-free and is read directly.
 python3 - <<'PY'
 from pathlib import Path
 
@@ -31,7 +31,6 @@ sources = [
     "rtl/boards/kiwi_primer_20k/primer1_request_semantic_guard.sv",
     "rtl/boards/kiwi_primer_20k/primer1_btp_endpoint_deploy.sv",
     "rtl/boards/kiwi_primer_20k/primer1_pqc_btp_endpoint_v2.sv",
-    "rtl/boards/kiwi_primer_20k/primer1_endpoint_router.sv",
 ]
 
 needle = "import fpst_btp_pkg::*;"
@@ -70,7 +69,7 @@ yosys -ql "${LOG_FILE}" -p "
         ${FLAT_DIR}/primer1_request_semantic_guard.sv \
         ${FLAT_DIR}/primer1_btp_endpoint_deploy.sv \
         ${FLAT_DIR}/primer1_pqc_btp_endpoint_v2.sv \
-        ${FLAT_DIR}/primer1_endpoint_router.sv \
+        rtl/boards/kiwi_primer_20k/primer1_endpoint_router_v2.sv \
         rtl/boards/kiwi_primer_20k/kiwi_primer20k_fpst_tx_top.sv;
     hierarchy -check -top kiwi_primer20k_fpst_tx_top;
     synth -top kiwi_primer20k_fpst_tx_top;
