@@ -28,34 +28,34 @@ module primer1_endpoint #(
     output logic        key_valid_o,
     output logic        retained_packet_o
 );
-    localparam logic [7:0] FRAME_SOF0    = 8'hA5;
-    localparam logic [7:0] FRAME_SOF1    = 8'h5A;
-    localparam logic [7:0] FRAME_VERSION = 8'h10;
+    localparam logic [7:0] FRAME_SOF0     = 8'hA5;
+    localparam logic [7:0] FRAME_SOF1     = 8'h5A;
+    localparam logic [7:0] FRAME_VERSION  = 8'h10;
     localparam logic [7:0] FRAME_RESPONSE = 8'h01;
 
-    localparam logic [7:0] OP_PING          = 8'h01;
-    localparam logic [7:0] OP_GET_CAPS      = 8'h02;
-    localparam logic [7:0] OP_GET_STATUS    = 8'h03;
-    localparam logic [7:0] OP_STAGE_CONTEXT = 8'h10;
+    localparam logic [7:0] OP_PING           = 8'h01;
+    localparam logic [7:0] OP_GET_CAPS       = 8'h02;
+    localparam logic [7:0] OP_GET_STATUS     = 8'h03;
+    localparam logic [7:0] OP_STAGE_CONTEXT  = 8'h10;
     localparam logic [7:0] OP_COMMIT_CONTEXT = 8'h11;
-    localparam logic [7:0] OP_ZEROIZE       = 8'h12;
-    localparam logic [7:0] OP_ASCON_ENCRYPT = 8'h20;
-    localparam logic [7:0] OP_STP_RETRY     = 8'h21;
-    localparam logic [7:0] OP_STP_COMMIT    = 8'h22;
-    localparam logic [7:0] OP_NTT_LOAD      = 8'h30;
-    localparam logic [7:0] OP_NTT_START     = 8'h31;
-    localparam logic [7:0] OP_NTT_READ      = 8'h32;
-    localparam logic [7:0] OP_LINK_RESET    = 8'h7F;
+    localparam logic [7:0] OP_ZEROIZE        = 8'h12;
+    localparam logic [7:0] OP_ASCON_ENCRYPT  = 8'h20;
+    localparam logic [7:0] OP_STP_RETRY      = 8'h21;
+    localparam logic [7:0] OP_STP_COMMIT     = 8'h22;
+    localparam logic [7:0] OP_NTT_LOAD       = 8'h30;
+    localparam logic [7:0] OP_NTT_START      = 8'h31;
+    localparam logic [7:0] OP_NTT_READ       = 8'h32;
+    localparam logic [7:0] OP_LINK_RESET     = 8'h7F;
 
-    localparam logic [15:0] STATUS_OK               = 16'h0000;
-    localparam logic [15:0] ERR_LINK_FORMAT         = 16'h0201;
-    localparam logic [15:0] ERR_LINK_CRC            = 16'h0202;
-    localparam logic [15:0] ERR_TRANSACTION_COLLISION = 16'h0207;
-    localparam logic [15:0] ERR_BUSY                 = 16'h0301;
-    localparam logic [15:0] ERR_INVALID_STATE        = 16'h0302;
-    localparam logic [15:0] ERR_NO_KEY               = 16'h0303;
-    localparam logic [15:0] ERR_ASCON_LENGTH         = 16'h0501;
-    localparam logic [15:0] ERR_SEQUENCE_DESYNC      = 16'h0610;
+    localparam logic [15:0] STATUS_OK                  = 16'h0000;
+    localparam logic [15:0] ERR_LINK_FORMAT            = 16'h0201;
+    localparam logic [15:0] ERR_LINK_CRC               = 16'h0202;
+    localparam logic [15:0] ERR_TRANSACTION_COLLISION  = 16'h0207;
+    localparam logic [15:0] ERR_BUSY                    = 16'h0301;
+    localparam logic [15:0] ERR_INVALID_STATE           = 16'h0302;
+    localparam logic [15:0] ERR_NO_KEY                  = 16'h0303;
+    localparam logic [15:0] ERR_ASCON_LENGTH            = 16'h0501;
+    localparam logic [15:0] ERR_SEQUENCE_DESYNC         = 16'h0610;
 
     localparam logic [15:0] MLKEM_N = 16'd256;
     localparam logic [15:0] MLKEM_Q = 16'd3329;
@@ -91,11 +91,11 @@ module primer1_endpoint #(
 
     endpoint_state_t state_q;
 
-    logic [7:0] request_frame_q  [0:MAX_FRAME_BYTES-1];
-    logic [7:0] response_frame_q [0:MAX_FRAME_BYTES-1];
-    logic [7:0] cached_response_q[0:MAX_FRAME_BYTES-1];
-    logic [7:0] app_data_q       [0:MAX_APP_BYTES-1];
-    logic [7:0] stp_packet_q     [0:63];
+    logic [7:0] request_frame_q   [0:MAX_FRAME_BYTES-1];
+    logic [7:0] response_frame_q  [0:MAX_FRAME_BYTES-1];
+    logic [7:0] cached_response_q [0:MAX_FRAME_BYTES-1];
+    logic [7:0] app_data_q        [0:MAX_APP_BYTES-1];
+    logic [7:0] stp_packet_q      [0:63];
 
     logic [8:0]  copy_index_q;
     logic [31:0] request_hash_work_q;
@@ -122,8 +122,8 @@ module primer1_endpoint #(
     logic [8:0]  response_app_index_q;
     logic [8:0]  response_commit_index_q;
 
-    logic        staged_valid_q;
-    logic [31:0] staged_session_id_q;
+    logic         staged_valid_q;
+    logic [31:0]  staged_session_id_q;
     logic [127:0] staged_key_q;
     logic [63:0]  staged_nonce_prefix_q;
     logic [63:0]  staged_sequence_q;
@@ -147,19 +147,19 @@ module primer1_endpoint #(
     logic [7:0] ntt_load_count_q;
     logic [7:0] ntt_index_q;
 
-    logic       ntt_start;
-    logic       ntt_busy;
-    logic       ntt_done;
-    logic       ntt_host_re;
-    logic       ntt_host_we;
-    logic [7:0] ntt_host_addr;
+    logic        ntt_start;
+    logic        ntt_busy;
+    logic        ntt_done;
+    logic        ntt_host_re;
+    logic        ntt_host_we;
+    logic [7:0]  ntt_host_addr;
     logic [15:0] ntt_host_wdata;
-    logic       ntt_host_ready;
-    logic       ntt_host_rvalid;
+    logic        ntt_host_ready;
+    logic        ntt_host_rvalid;
     logic [15:0] ntt_host_rdata;
-    logic [2:0] ntt_stage;
-    logic       ntt_stage_barrier;
-    logic       ntt_active_bank;
+    logic [2:0]  ntt_stage;
+    logic        ntt_stage_barrier;
+    logic        ntt_active_bank;
 
     logic         ascon_start;
     logic         ascon_ready;
@@ -255,12 +255,6 @@ module primer1_endpoint #(
         end
     endfunction
 
-    function automatic logic [15:0] load_be16_request(input integer base);
-        begin
-            load_be16_request = {request_frame_q[base], request_frame_q[base+1]};
-        end
-    endfunction
-
     assign busy_o            = (state_q != EP_IDLE);
     assign fatal_o           = fatal_q;
     assign key_valid_o       = key_valid_q;
@@ -268,10 +262,9 @@ module primer1_endpoint #(
 
     always_comb begin
         request_rd_addr_o = copy_index_q;
-
-        response_we_o    = 1'b0;
-        response_waddr_o = response_commit_index_q;
-        response_wdata_o = 8'h00;
+        response_we_o     = 1'b0;
+        response_waddr_o  = response_commit_index_q;
+        response_wdata_o  = 8'h00;
 
         if (state_q == EP_RESPONSE_COMMIT) begin
             response_we_o    = 1'b1;
@@ -306,7 +299,6 @@ module primer1_endpoint #(
         ascon_start    = (state_q == EP_ASCON_START);
         ascon_in_valid = (state_q == EP_ASCON_FEED);
         ascon_in_last  = (ascon_feed_index_q == 6'd47);
-
         if (ascon_feed_index_q < 6'd24)
             ascon_in_data = stp_packet_q[ascon_feed_index_q];
         else
@@ -314,49 +306,49 @@ module primer1_endpoint #(
     end
 
     forward_ntt_core u_forward_ntt (
-        .clk_i             (clk_i),
-        .rst_ni            (rst_ni),
-        .start_i           (ntt_start),
-        .busy_o            (ntt_busy),
-        .done_o            (ntt_done),
-        .host_re_i         (ntt_host_re),
-        .host_we_i         (ntt_host_we),
-        .host_addr_i       (ntt_host_addr),
-        .host_wdata_i      (ntt_host_wdata),
-        .host_ready_o      (ntt_host_ready),
-        .host_rvalid_o     (ntt_host_rvalid),
-        .host_rdata_o      (ntt_host_rdata),
-        .stage_o           (ntt_stage),
-        .stage_barrier_o   (ntt_stage_barrier),
-        .active_bank_o     (ntt_active_bank)
+        .clk_i(clk_i),
+        .rst_ni(rst_ni),
+        .start_i(ntt_start),
+        .busy_o(ntt_busy),
+        .done_o(ntt_done),
+        .host_re_i(ntt_host_re),
+        .host_we_i(ntt_host_we),
+        .host_addr_i(ntt_host_addr),
+        .host_wdata_i(ntt_host_wdata),
+        .host_ready_o(ntt_host_ready),
+        .host_rvalid_o(ntt_host_rvalid),
+        .host_rdata_o(ntt_host_rdata),
+        .stage_o(ntt_stage),
+        .stage_barrier_o(ntt_stage_barrier),
+        .active_bank_o(ntt_active_bank)
     );
 
     ascon_aead_encrypt #(
         .MAX_DATA_BYTES(128)
     ) u_ascon_encrypt (
-        .clk_i          (clk_i),
-        .rst_ni         (rst_ni),
-        .zeroize_i      (zeroize_i || core_zeroize_pulse_q),
-        .start_i        (ascon_start),
-        .ready_o        (ascon_ready),
-        .key_i          (active_key_q),
-        .nonce_i        (ascon_nonce_q),
-        .ad_len_i       (16'd24),
-        .data_len_i     (16'd24),
-        .in_valid_i     (ascon_in_valid),
-        .in_ready_o     (ascon_in_ready),
-        .in_data_i      (ascon_in_data),
-        .in_last_i      (ascon_in_last),
-        .out_valid_o    (ascon_out_valid),
-        .out_ready_i    (1'b1),
-        .out_data_o     (ascon_out_data),
-        .out_last_o     (ascon_out_last),
-        .tag_valid_o    (ascon_tag_valid),
-        .tag_ready_i    (1'b1),
-        .tag_o          (ascon_tag),
-        .done_o         (ascon_done),
-        .error_valid_o  (ascon_error_valid),
-        .error_code_o   (ascon_error_code)
+        .clk_i(clk_i),
+        .rst_ni(rst_ni),
+        .zeroize_i(zeroize_i || core_zeroize_pulse_q),
+        .start_i(ascon_start),
+        .ready_o(ascon_ready),
+        .key_i(active_key_q),
+        .nonce_i(ascon_nonce_q),
+        .ad_len_i(16'd24),
+        .data_len_i(16'd24),
+        .in_valid_i(ascon_in_valid),
+        .in_ready_o(ascon_in_ready),
+        .in_data_i(ascon_in_data),
+        .in_last_i(ascon_in_last),
+        .out_valid_o(ascon_out_valid),
+        .out_ready_i(1'b1),
+        .out_data_o(ascon_out_data),
+        .out_last_o(ascon_out_last),
+        .tag_valid_o(ascon_tag_valid),
+        .tag_ready_i(1'b1),
+        .tag_o(ascon_tag),
+        .done_o(ascon_done),
+        .error_valid_o(ascon_error_valid),
+        .error_code_o(ascon_error_code)
     );
 
     always_ff @(posedge clk_i) begin
@@ -369,6 +361,7 @@ module primer1_endpoint #(
         logic [15:0] coeff_value;
         logic [15:0] flags_value;
         logic [63:0] commit_sequence;
+        logic [63:0] next_sequence;
 
         if (!rst_ni) begin
             state_q                 <= EP_IDLE;
@@ -602,15 +595,15 @@ module primer1_endpoint #(
                                     response_status_work_q <= ERR_LINK_FORMAT;
                                     app_len_q <= 16'd0;
                                 end else begin
-                                    app_data_q[0]  <= 8'h01; // Primer #1 endpoint ID
+                                    app_data_q[0]  <= 8'h01;
                                     app_data_q[1]  <= FRAME_VERSION;
                                     app_data_q[2]  <= MLKEM_N[15:8];
                                     app_data_q[3]  <= MLKEM_N[7:0];
                                     app_data_q[4]  <= MLKEM_Q[15:8];
                                     app_data_q[5]  <= MLKEM_Q[7:0];
-                                    app_data_q[6]  <= 8'd128; // STP plaintext maximum
-                                    app_data_q[7]  <= 8'b0000_1111; // NTT/session/Ascon/STP retention
-                                    app_data_q[8]  <= 8'h01; // link burst profile version
+                                    app_data_q[6]  <= 8'd128;
+                                    app_data_q[7]  <= 8'b0000_1111;
+                                    app_data_q[8]  <= 8'h01;
                                     app_data_q[9]  <= 8'h00;
                                     app_data_q[10] <= 8'h00;
                                     app_data_q[11] <= 8'h00;
@@ -657,13 +650,8 @@ module primer1_endpoint #(
                                 end
                             end
 
-                            OP_COMMIT_CONTEXT: begin
-                                state_q <= EP_COMMIT_CONTEXT;
-                            end
-
-                            OP_ZEROIZE: begin
-                                state_q <= EP_ZEROIZE_COMMAND;
-                            end
+                            OP_COMMIT_CONTEXT: state_q <= EP_COMMIT_CONTEXT;
+                            OP_ZEROIZE: state_q <= EP_ZEROIZE_COMMAND;
 
                             OP_ASCON_ENCRYPT: begin
                                 flags_value = {request_frame_q[11], request_frame_q[12]};
@@ -699,9 +687,7 @@ module primer1_endpoint #(
                                 end
                             end
 
-                            OP_STP_COMMIT: begin
-                                state_q <= EP_STP_COMMIT;
-                            end
+                            OP_STP_COMMIT: state_q <= EP_STP_COMMIT;
 
                             OP_NTT_LOAD: begin
                                 if (payload_len_q < 16'd4 ||
@@ -876,9 +862,7 @@ module primer1_endpoint #(
                     end
                 end
 
-                EP_NTT_START_PULSE: begin
-                    state_q <= EP_NTT_START_WAIT;
-                end
+                EP_NTT_START_PULSE: state_q <= EP_NTT_START_WAIT;
 
                 EP_NTT_START_WAIT: begin
                     if (ntt_done) begin
@@ -945,9 +929,7 @@ module primer1_endpoint #(
                     state_q <= EP_ASCON_START;
                 end
 
-                EP_ASCON_START: begin
-                    state_q <= EP_ASCON_FEED;
-                end
+                EP_ASCON_START: state_q <= EP_ASCON_FEED;
 
                 EP_ASCON_FEED: begin
                     if (ascon_error_valid) begin
@@ -1023,11 +1005,12 @@ module primer1_endpoint #(
                         response_status_work_q <= ERR_SEQUENCE_DESYNC;
                         app_len_q <= 16'd0;
                     end else begin
+                        next_sequence = active_sequence_q + 64'd1;
                         retained_valid_q  <= 1'b0;
                         retained_len_q    <= 16'd0;
-                        active_sequence_q <= active_sequence_q + 64'd1;
+                        active_sequence_q <= next_sequence;
                         for (i = 0; i < 8; i = i + 1)
-                            app_data_q[i] <= (active_sequence_q + 64'd1)[8*(7-i) +: 8];
+                            app_data_q[i] <= next_sequence[8*(7-i) +: 8];
                         response_status_work_q <= STATUS_OK;
                         app_len_q <= 16'd8;
                     end
@@ -1040,7 +1023,6 @@ module primer1_endpoint #(
                     header_crc_response = response_header_crc(
                         opcode_q, transaction_id_q, response_payload_len
                     );
-
                     response_frame_q[0]  <= FRAME_SOF0;
                     response_frame_q[1]  <= FRAME_SOF1;
                     response_frame_q[2]  <= FRAME_VERSION;
@@ -1054,7 +1036,6 @@ module primer1_endpoint #(
                     response_frame_q[10] <= header_crc_response[7:0];
                     response_frame_q[11] <= response_status_work_q[15:8];
                     response_frame_q[12] <= response_status_work_q[7:0];
-
                     response_payload_crc_q <= crc16_byte(
                         crc16_byte(16'hFFFF, response_status_work_q[15:8]),
                         response_status_work_q[7:0]
@@ -1068,17 +1049,14 @@ module primer1_endpoint #(
                 end
 
                 EP_RESPONSE_APP: begin
-                    response_frame_q[13 + response_app_index_q] <=
-                        app_data_q[response_app_index_q];
+                    response_frame_q[13 + response_app_index_q] <= app_data_q[response_app_index_q];
                     response_payload_crc_q <= crc16_byte(
-                        response_payload_crc_q,
-                        app_data_q[response_app_index_q]
+                        response_payload_crc_q, app_data_q[response_app_index_q]
                     );
-                    if (response_app_index_q + 9'd1 == app_len_q) begin
+                    if (response_app_index_q + 9'd1 == app_len_q)
                         state_q <= EP_RESPONSE_TRAILER;
-                    end else begin
+                    else
                         response_app_index_q <= response_app_index_q + 9'd1;
-                    end
                 end
 
                 EP_RESPONSE_TRAILER: begin
