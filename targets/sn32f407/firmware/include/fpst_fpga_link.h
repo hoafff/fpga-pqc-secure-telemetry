@@ -91,12 +91,19 @@ typedef enum {
  * Largest response: generic envelope 12 + PQC_READ_POLY 512 = 524 bytes.
  * Oversized legal-BTP responses are drained and rejected locally; this is a
  * target memory-capacity limit, not a change to the BTP wire format.
+ *
+ * response_buf has 768 bytes of backing storage rather than only the 538-byte
+ * BTP frame requirement. After the two Primer #1 forward-NTT transactions of
+ * ML-KEM-512 encapsulation have completed, that same storage is reused as the
+ * temporary 768-byte ciphertext. The ciphertext is streamed to UART and wiped
+ * before BTP key-load traffic resumes, avoiding a second 768-byte MCU buffer.
  */
 #define FPST_LINK_MCU_MAX_REQUEST_PAYLOAD   514u
 #define FPST_LINK_MCU_MAX_RESPONSE_PAYLOAD  524u
 #define FPST_LINK_MCU_BUFFER_PAYLOAD        524u
 #define FPST_LINK_MCU_BUFFER_FRAME \
     (FPST_FRAME_FIXED_BYTES + FPST_LINK_MCU_BUFFER_PAYLOAD)
+#define FPST_LINK_MCU_RESPONSE_STORAGE_BYTES 768u
 
 _Static_assert(FPST_LINK_MCU_BUFFER_PAYLOAD >= FPST_LINK_MCU_MAX_REQUEST_PAYLOAD,
                "MCU BTP buffer too small for Primer #1 request set");
@@ -104,6 +111,9 @@ _Static_assert(FPST_LINK_MCU_BUFFER_PAYLOAD >= FPST_LINK_MCU_MAX_RESPONSE_PAYLOA
                "MCU BTP buffer too small for Primer #1 response set");
 _Static_assert(FPST_LINK_MCU_BUFFER_FRAME <= FPST_LINK_MAX_FRAME,
                "MCU local frame capacity cannot exceed BTP wire maximum");
+_Static_assert(FPST_LINK_MCU_RESPONSE_STORAGE_BYTES >= FPST_LINK_MCU_BUFFER_FRAME,
+               "response backing storage must hold the largest local BTP frame");
+
 
 typedef struct {
     const fpst_platform_t *platform;
@@ -113,7 +123,7 @@ typedef struct {
     uint32_t last_device_state;
     uint32_t last_data_len;
     uint8_t request_buf[FPST_LINK_MCU_BUFFER_FRAME];
-    uint8_t response_buf[FPST_LINK_MCU_BUFFER_FRAME];
+    uint8_t response_buf[FPST_LINK_MCU_RESPONSE_STORAGE_BYTES];
 } fpst_fpga_link_t;
 
 fpst_result_t fpst_fpga_link_init(fpst_fpga_link_t *link,
