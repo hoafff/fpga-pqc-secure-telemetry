@@ -97,7 +97,7 @@ module tb_primer2_stp_rx;
         begin
             n = 0;
             while (!tx_retained_valid && n < 5000) begin
-                @(posedge clk); n = n + 1;
+                @(posedge clk); #1; n = n + 1;
             end
             if (!tx_retained_valid || tx_retained_len != 7'd64 || tx_error_valid)
                 $fatal(1,"TX packet generation failed err=%04h",tx_error_code);
@@ -137,15 +137,24 @@ module tb_primer2_stp_rx;
         end
     endtask
 
+    /*
+     * done/error/sequence_commit are one-cycle pulses. Sample after NBA on every
+     * candidate edge instead of observing the stale pre-NBA value and slipping
+     * to the following edge where the DUT has already cleared the pulse.
+     */
     task automatic wait_rx_done;
         integer n;
+        logic seen;
         begin
             n = 0;
-            while (!rx_done && n < 5000) begin
-                @(posedge clk); n = n + 1;
+            seen = 1'b0;
+            while (!seen && n < 5000) begin
+                @(posedge clk);
+                #1;
+                seen = rx_done;
+                n = n + 1;
             end
-            if (!rx_done) $fatal(1,"RX timeout");
-            #1;
+            if (!seen) $fatal(1,"RX timeout");
         end
     endtask
 
