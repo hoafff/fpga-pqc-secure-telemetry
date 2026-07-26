@@ -35,11 +35,17 @@ jobs:
         run: python3 software/reference/check_barrett_3329.py
 
       - name: Run SN32F407 portable firmware tests
+        id: sn32_portable
+        continue-on-error: true
         run: |
+          mkdir -p build/sn32-portable
           cmake -S targets/sn32f407/firmware \
-                -B build/sn32f407-firmware-host
-          cmake --build build/sn32f407-firmware-host
-          ctest --test-dir build/sn32f407-firmware-host --output-on-failure
+                -B build/sn32f407-firmware-host \
+                > build/sn32-portable/configure.log 2>&1
+          cmake --build build/sn32f407-firmware-host \
+                > build/sn32-portable/build.log 2>&1
+          ctest --test-dir build/sn32f407-firmware-host --output-on-failure \
+                > build/sn32-portable/test.log 2>&1
 
       - name: Fetch pinned mlkem-native v1.0.0
         run: |
@@ -125,6 +131,9 @@ jobs:
         with:
           name: verification-logs
           path: |
+            build/sn32-portable/configure.log
+            build/sn32-portable/build.log
+            build/sn32-portable/test.log
             build/mlkem/configure.log
             build/mlkem/build.log
             build/mlkem/test.log
@@ -140,8 +149,17 @@ jobs:
           if-no-files-found: warn
 
       - name: Report verification failure
-        if: steps.sn32_mlkem.outcome == 'failure' || steps.rtl_tests.outcome == 'failure' || steps.primer1_pqc_wire.outcome == 'failure' || steps.primer2_rx_tests.outcome == 'failure' || steps.core_synth_check.outcome == 'failure' || steps.ntt_board_synth_check.outcome == 'failure' || steps.ascon_board_synth_check.outcome == 'failure' || steps.primer1_deploy_synth_check.outcome == 'failure' || steps.primer2_deploy_synth_check.outcome == 'failure'
+        if: steps.sn32_portable.outcome == 'failure' || steps.sn32_mlkem.outcome == 'failure' || steps.rtl_tests.outcome == 'failure' || steps.primer1_pqc_wire.outcome == 'failure' || steps.primer2_rx_tests.outcome == 'failure' || steps.core_synth_check.outcome == 'failure' || steps.ntt_board_synth_check.outcome == 'failure' || steps.ascon_board_synth_check.outcome == 'failure' || steps.primer1_deploy_synth_check.outcome == 'failure' || steps.primer2_deploy_synth_check.outcome == 'failure'
         run: |
+          if [ -f build/sn32-portable/configure.log ]; then
+            cat build/sn32-portable/configure.log
+          fi
+          if [ -f build/sn32-portable/build.log ]; then
+            cat build/sn32-portable/build.log
+          fi
+          if [ -f build/sn32-portable/test.log ]; then
+            cat build/sn32-portable/test.log
+          fi
           if [ -f build/mlkem/configure.log ]; then
             cat build/mlkem/configure.log
           fi
