@@ -49,7 +49,7 @@ jobs:
           test "$(git -C build/third_party/mlkem-native rev-parse HEAD)" = \
             "048fc2a7a7b4ba0ad4c989c1ac82491aa94d5bfa"
 
-      - name: Run SN32F407 ML-KEM Primer1 differential test
+      - name: Run SN32F407 ML-KEM differential and SRAM preflight tests
         id: sn32_mlkem
         continue-on-error: true
         run: |
@@ -62,7 +62,7 @@ jobs:
           cmake --build build/sn32f407-firmware-mlkem \
                 > build/mlkem/build.log 2>&1
           ctest --test-dir build/sn32f407-firmware-mlkem \
-                -R mlkem_native_wrapper --output-on-failure \
+                -R 'mlkem_(native_wrapper|memory_preflight)' --output-on-failure \
                 > build/mlkem/test.log 2>&1
 
       - name: Install open-source HDL tools
