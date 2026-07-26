@@ -1,4 +1,5 @@
 #include "fpst_mlkem512_wrapper.h"
+#include "fpst_mlkem512_lowram.h"
 #include "fpst_primer1.h"
 #include "fpst_profile.h"
 
@@ -196,7 +197,13 @@ fpst_result_t fpst_mlkem512_encaps_derand(
 #if FPST_MLKEM_NATIVE_ENABLED
     fpst_result_t rc = begin_kem();
     if (rc != FPST_OK) return rc;
-    const int upstream_rc = fpst_mlkem512_native_enc_derand(
+
+    /*
+     * Sender firmware uses the serialized low-RAM schedule. It calls the same
+     * pinned mlkem-native primitives and the same Primer #1 NTT hook, but never
+     * materializes the complete A^T/b/ep objects simultaneously.
+     */
+    const int upstream_rc = fpst_mlkem512_lowram_enc_derand(
         ciphertext, shared_secret, public_key, coins);
     rc = finish_kem(upstream_rc);
     if (rc != FPST_OK) {
