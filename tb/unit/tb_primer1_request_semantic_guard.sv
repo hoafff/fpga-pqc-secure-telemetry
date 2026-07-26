@@ -63,11 +63,17 @@ module tb_primer1_request_semantic_guard;
 
     task automatic accept_and_idle;
         begin
+            /* Keep accept asserted for a complete clock interval, as the real
+               endpoint does with its registered request_accept_o pulse. */
             guarded_accept = 1'b1;
             @(posedge clk);
+            #1;
             guarded_accept = 1'b0;
             raw_valid = 1'b0;
             repeat (2) @(posedge clk);
+            #1;
+            if (guarded_valid)
+                $fatal(1, "Guard did not return to IDLE after accept");
         end
     endtask
 
@@ -86,7 +92,7 @@ module tb_primer1_request_semantic_guard;
         payload[1] = 8'h00;
 
         repeat (3) @(posedge clk);
-        rst_n = 1'b1;
+        #1 rst_n = 1'b1;
         repeat (2) @(posedge clk);
 
         /* Valid maximum: count=256, payload=2 + 2*256 = 514. */
