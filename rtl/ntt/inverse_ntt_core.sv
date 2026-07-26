@@ -62,6 +62,7 @@ module inverse_ntt_core (
     logic [15:0] left_q, right_q;
     logic [15:0] sum_q;
     logic [15:0] product_q;
+    logic        host_read_pending_q;
 
     logic ram_a_en, ram_a_we;
     logic [7:0] ram_a_addr;
@@ -120,8 +121,6 @@ module inverse_ntt_core (
         .a_i(left_q), .b_i(right_q), .y_o(add_y)
     );
 
-    /* Kyber inverse butterfly uses (right - left) before multiplying by the
-     * reverse-schedule twiddle. */
     mod_sub #(.WIDTH(16), .MODULUS(3329)) u_sub (
         .a_i(right_q), .b_i(left_q), .y_o(sub_y)
     );
@@ -179,8 +178,9 @@ module inverse_ntt_core (
             ram_a_en   = 1'b1;
             ram_a_addr = scale_addr_q;
         end else if (state_q == S_SCALE_LAUNCH) begin
+            /* ram_a_rdata is the synchronous result of S_SCALE_READ. */
             mul_valid_i = 1'b1;
-            mul_a       = left_q;
+            mul_a       = ram_a_rdata;
             mul_b       = INV_128;
         end else if (state_q == S_SCALE_WRITE) begin
             ram_a_en    = 1'b1;
@@ -192,34 +192,37 @@ module inverse_ntt_core (
 
     always_ff @(posedge clk_i) begin
         if (!rst_ni) begin
-            state_q       <= S_IDLE;
-            length_q      <= 8'd2;
-            group_start_q <= 8'd0;
-            left_addr_q   <= 8'd0;
-            zeta_addr_q   <= 7'd127;
-            stage_q       <= 3'd0;
-            scale_addr_q  <= 8'd0;
-            left_q        <= 16'd0;
-            right_q       <= 16'd0;
-            sum_q         <= 16'd0;
-            product_q     <= 16'd0;
-            host_rvalid_o <= 1'b0;
-            host_rdata_o  <= 16'd0;
-            done_o        <= 1'b0;
+            state_q             <= S_IDLE;
+            length_q            <= 8'd2;
+            group_start_q       <= 8'd0;
+            left_addr_q         <= 8'd0;
+            zeta_addr_q         <= 7'd127;
+            stage_q             <= 3'd0;
+            scale_addr_q        <= 8'd0;
+            left_q              <= 16'd0;
+            right_q             <= 16'd0;
+            sum_q               <= 16'd0;
+            product_q           <= 16'd0;
+            host_read_pending_q <= 1'b0;
+            host_rvalid_o       <= 1'b0;
+            host_rdata_o        <= 16'd0;
+            done_o              <= 1'b0;
         end else begin
             host_rvalid_o <= 1'b0;
             done_o        <= 1'b0;
 
-            if ((state_q == S_IDLE) && host_re_i) begin
-                /* RAM data becomes available after this edge; pulse valid on
-                 * the following cycle by entering no extra host state. */
-                host_rvalid_o <= 1'b1;
-                host_rdata_o  <= ram_a_rdata;
+            if (host_read_pending_q) begin
+                host_rdata_o        <= ram_a_rdata;
+                host_rvalid_o       <= 1'b1;
+                host_read_pending_q <= 1'b0;
             end
+            if ((state_q == S_IDLE) && host_re_i)
+                host_read_pending_q <= 1'b1;
 
             case (state_q)
                 S_IDLE: begin
-                    if (start_i && !host_re_i && !host_we_i) begin
+                    if (start_i && !host_re_i && !host_we_i &&
+                        !host_read_pending_q) begin
                         length_q      <= 8'd2;
                         group_start_q <= 8'd0;
                         left_addr_q   <= 8'd0;
@@ -277,12 +280,10 @@ module inverse_ntt_core (
                 end
 
                 S_SCALE_LAUNCH: begin
-                    left_q  <= ram_a_rdata;
                     state_q <= S_SCALE_WAIT;
                 end
 
                 S_SCALE_WAIT: begin
-                    /* Launch occurs one cycle after left_q is captured. */
                     if (mul_valid_o) begin
                         product_q <= mul_y;
                         state_q   <= S_SCALE_WRITE;
