@@ -76,8 +76,13 @@ add_executable(test_firmware_core tests/test_firmware_core.c)
 target_link_libraries(test_firmware_core PRIVATE fpst_firmware_core)
 target_compile_options(test_firmware_core PRIVATE -Wall -Wextra -Werror -Wpedantic)
 
+add_executable(test_entropy_rng tests/test_entropy_rng.c)
+target_link_libraries(test_entropy_rng PRIVATE fpst_firmware_core)
+target_compile_options(test_entropy_rng PRIVATE -Wall -Wextra -Werror -Wpedantic)
+
 enable_testing()
 add_test(NAME firmware_core COMMAND test_firmware_core)
+add_test(NAME entropy_rng COMMAND test_entropy_rng)
 if(FPST_ENABLE_MLKEM_NATIVE)
     add_test(NAME mlkem_native_wrapper COMMAND test_mlkem_native_wrapper)
 endif()
