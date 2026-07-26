@@ -82,13 +82,19 @@ module btp_spi_slave #(
      * Mode 0 requires MISO bit 7 to be valid before the first rising SCK edge.
      * tx_byte_q/tx_bit_q are reset to byte 0/bit 7 by CS rising, while the
      * committed response memory remains immutable until a complete read.
+     *
+     * The physical FPST harness is a multi-slave SPI0 bus: Primer #1, Primer #2
+     * and the disabled onboard flash share MISO.  An endpoint therefore MUST
+     * release MISO whenever its CS is high.  The top-level Z below is intended
+     * to infer the FPGA output-enable/tri-state buffer; driving a logic 0 while
+     * deselected would cause bus contention when the other Primer returns a 1.
      */
     always_comb begin
         if (!spi_cs_ni && tx_ready_q && !tx_done_sck_q &&
             (tx_byte_q < tx_len_hold_q))
             spi_miso_o = tx_mem[tx_byte_q][tx_bit_q];
         else
-            spi_miso_o = 1'b0;
+            spi_miso_o = 1'bz;
     end
 
     /*
