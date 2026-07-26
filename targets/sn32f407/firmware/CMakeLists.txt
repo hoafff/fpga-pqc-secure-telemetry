@@ -57,7 +57,8 @@ if(FPST_ENABLE_MLKEM_NATIVE)
         tests/test_mlkem_native_wrapper.c
         tests/mlkem_reference_randombytes_forbidden.c
         src/fpst_csprng.c
-        src/fpst_mlkem512_wrapper.c)
+        src/fpst_mlkem512_wrapper.c
+        src/fpst_mlkem_session.c)
     target_include_directories(test_mlkem_native_wrapper PRIVATE
         include
         "${FPST_MLKEM_NATIVE_API_DIR}")
