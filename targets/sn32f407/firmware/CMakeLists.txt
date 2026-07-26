@@ -61,6 +61,7 @@ if(FPST_ENABLE_MLKEM_NATIVE)
     add_executable(test_mlkem_native_wrapper
         tests/test_mlkem_native_wrapper.c
         tests/mlkem_reference_randombytes_forbidden.c
+        tests/mlkem_session_zeroize_mock.c
         src/fpst_csprng.c
         src/fpst_mlkem512_lowram.c
         src/fpst_mlkem512_wrapper.c
@@ -90,10 +91,18 @@ add_executable(test_telemetry tests/test_telemetry.c)
 target_link_libraries(test_telemetry PRIVATE fpst_firmware_core)
 target_compile_options(test_telemetry PRIVATE -Wall -Wextra -Werror -Wpedantic)
 
+add_executable(test_mlkem_session_sink
+    tests/test_mlkem_session_sink.c
+    src/fpst_csprng.c
+    src/fpst_mlkem_session.c)
+target_include_directories(test_mlkem_session_sink PRIVATE include)
+target_compile_options(test_mlkem_session_sink PRIVATE -Wall -Wextra -Werror -Wpedantic)
+
 enable_testing()
 add_test(NAME firmware_core COMMAND test_firmware_core)
 add_test(NAME entropy_rng COMMAND test_entropy_rng)
 add_test(NAME telemetry COMMAND test_telemetry)
+add_test(NAME mlkem_session_sink COMMAND test_mlkem_session_sink)
 if(FPST_ENABLE_MLKEM_NATIVE)
     add_test(NAME mlkem_native_wrapper COMMAND test_mlkem_native_wrapper)
 endif()
