@@ -23,6 +23,12 @@ module primer1_endpoint_core (
     output logic [15:0]  rsp_transaction_id_o,
     output logic [15:0]  rsp_payload_len_o,
 
+    /* Receiver commit evidence is a logical integration input. FPST v1.1
+     * Appendix B already assigns 0x61 to STP_RX_PACKET, therefore Primer #1
+     * SHALL NOT invent a private BTP opcode for this signal. */
+    input  logic         tx_commit_valid_i,
+    input  logic [63:0]  tx_commit_sequence_i,
+
     output logic         key_valid_o,
     output logic         session_active_o,
     output logic [63:0]  tx_sequence_o,
@@ -31,24 +37,24 @@ module primer1_endpoint_core (
     output logic         error_valid_o,
     output logic [15:0]  error_code_o
 );
-    localparam logic [7:0] OP_PING                 = 8'h01;
-    localparam logic [7:0] OP_GET_CAPS             = 8'h02;
-    localparam logic [7:0] OP_GET_STATUS           = 8'h03;
-
-    /* Repository BTP data-window profile around the frozen forward_ntt_core.
-     * These four commands are kept isolated from the normative PQC operation
-     * opcodes 0x24..0x28 and are recorded in the implementation delta file. */
-    localparam logic [7:0] OP_PROFILE_NTT_WRITE_COEFF = 8'h20;
-    localparam logic [7:0] OP_PROFILE_NTT_READ_COEFF  = 8'h21;
-    localparam logic [7:0] OP_PROFILE_NTT_LOAD_POLY   = 8'h22;
-    localparam logic [7:0] OP_PROFILE_NTT_READ_POLY   = 8'h23;
-
+    /* Frozen FPST-SYS-SPEC-001 v1.1 Appendix-B opcodes. */
+    localparam logic [7:0] OP_GET_DEVICE_ID        = 8'h01;
+    localparam logic [7:0] OP_GET_STATUS           = 8'h02;
+    localparam logic [7:0] OP_GET_ERROR            = 8'h03;
+    localparam logic [7:0] OP_CLEAR_ERROR          = 8'h04;
+    localparam logic [7:0] OP_SOFT_RESET           = 8'h05;
+    localparam logic [7:0] OP_SELF_TEST            = 8'h06;
+    localparam logic [7:0] OP_READ_REG             = 8'h10;
+    localparam logic [7:0] OP_WRITE_REG            = 8'h11;
+    localparam logic [7:0] OP_PQC_WRITE_COEFF      = 8'h20;
+    localparam logic [7:0] OP_PQC_READ_COEFF       = 8'h21;
+    localparam logic [7:0] OP_PQC_LOAD_POLY        = 8'h22;
+    localparam logic [7:0] OP_PQC_READ_POLY        = 8'h23;
     localparam logic [7:0] OP_PQC_START_NTT        = 8'h24;
     localparam logic [7:0] OP_PQC_START_INTT       = 8'h25;
     localparam logic [7:0] OP_PQC_POINTWISE_MUL    = 8'h26;
     localparam logic [7:0] OP_PQC_POLY_ADD_SUB     = 8'h27;
     localparam logic [7:0] OP_PQC_GET_RESULT       = 8'h28;
-
     localparam logic [7:0] OP_KEY_LOAD_BEGIN       = 8'h40;
     localparam logic [7:0] OP_KEY_LOAD_CHUNK       = 8'h41;
     localparam logic [7:0] OP_KEY_LOAD_COMMIT      = 8'h42;
@@ -56,9 +62,15 @@ module primer1_endpoint_core (
     localparam logic [7:0] OP_KEY_STATUS           = 8'h44;
     localparam logic [7:0] OP_ZEROIZE              = 8'h45;
     localparam logic [7:0] OP_SESSION_ACTIVATE     = 8'h46;
-
+    localparam logic [7:0] OP_ASCON_KAT            = 8'h50;
     localparam logic [7:0] OP_TELEMETRY_TX_SAMPLE  = 8'h60;
-    localparam logic [7:0] OP_TX_COMMIT_ACCEPTED   = 8'h61;
+    localparam logic [7:0] OP_STP_RX_PACKET        = 8'h61;
+    localparam logic [7:0] OP_STP_GET_COUNTERS     = 8'h62;
+    localparam logic [7:0] OP_STP_CLEAR_COUNTERS   = 8'h63;
+    localparam logic [7:0] OP_TEST_INJECT_CONFIG   = 8'h70;
+    localparam logic [7:0] OP_TEST_TRIGGER_TIMEOUT = 8'h71;
+    localparam logic [7:0] OP_TEST_GET_HOOKS       = 8'h72;
+    localparam logic [7:0] OP_PING                 = 8'h7F;
 
     localparam logic [15:0] ERR_UNSUPPORTED_OPCODE  = 16'h0201;
     localparam logic [15:0] ERR_STP_LENGTH          = 16'h0206;
@@ -70,6 +82,9 @@ module primer1_endpoint_core (
     localparam logic [15:0] ERR_KEY_COMMIT          = 16'h0505;
     localparam logic [15:0] ERR_SEQUENCE_DESYNC     = 16'h0610;
 
+    /* Stable repository device identifier for Primer #1 TX endpoint. */
+    localparam logic [31:0] DEVICE_ID_PRIMER1_TX = 32'h0000_0001;
+
     localparam logic [31:0] CAP_FORWARD_NTT = 32'h0000_0001;
     localparam logic [31:0] CAP_ASCON_TX    = 32'h0000_0002;
     localparam logic [31:0] CAP_STP_TX      = 32'h0000_0004;
@@ -77,22 +92,31 @@ module primer1_endpoint_core (
     localparam logic [31:0] CAPABILITIES =
         CAP_FORWARD_NTT | CAP_ASCON_TX | CAP_STP_TX | CAP_BTP_CRC32;
 
+    localparam logic [2:0] RSP_NONE      = 3'd0;
+    localparam logic [2:0] RSP_DEVICE_ID = 3'd1;
+    localparam logic [2:0] RSP_STATUS    = 3'd2;
+    localparam logic [2:0] RSP_ERROR     = 3'd3;
+    localparam logic [2:0] RSP_NTT_READ  = 3'd4;
+    localparam logic [2:0] RSP_TX_PACKET = 3'd5;
+
     typedef enum logic [5:0] {
         S_IDLE,
         S_COPY_CMD,
         S_EXEC,
+        S_KEY_CHUNK_CHECK,
+        S_KEY_CHUNK_APPLY,
         S_KEY_STAGE_PULSE,
         S_KEY_STAGE_WAIT,
         S_KEY_COMMIT_WAIT,
         S_ACTIVATE_WAIT,
         S_ZEROIZE_WAIT,
-        S_NTT_LOAD,
+        S_NTT_LOAD_CHECK,
+        S_NTT_LOAD_WRITE,
         S_NTT_READ_REQ,
         S_NTT_READ_WAIT,
         S_NTT_READ_WRITE_LO,
         S_NTT_WAIT,
         S_TX_WAIT,
-        S_TX_COMMIT_WAIT,
         S_BUILD_STATUS_HI,
         S_BUILD_STATUS_LO,
         S_BUILD_EXTRA,
@@ -113,17 +137,16 @@ module primer1_endpoint_core (
     logic [15:0] response_len_q;
     logic [9:0] response_index_q;
     logic [2:0] response_kind_q;
-
-    localparam logic [2:0] RSP_NONE       = 3'd0;
-    localparam logic [2:0] RSP_CAPS       = 3'd1;
-    localparam logic [2:0] RSP_STATUS     = 3'd2;
-    localparam logic [2:0] RSP_NTT_READ   = 3'd3;
-    localparam logic [2:0] RSP_TX_PACKET  = 3'd4;
+    logic [15:0] last_error_q;
 
     logic key_loading_q;
     logic [31:0] key_load_session_id_q;
     logic [23:0] key_coverage_q;
     logic [7:0] key_material_q [0:23];
+    logic [5:0] key_chunk_offset_q;
+    logic [5:0] key_chunk_len_q;
+    logic [5:0] key_chunk_index_q;
+    logic key_chunk_conflict_q;
 
     logic session_stage_valid_q;
     logic session_stage_ready;
@@ -137,14 +160,14 @@ module primer1_endpoint_core (
     logic session_activate_valid_q;
     logic session_activate_ready;
     logic crypto_zeroize_q;
-    logic session_tx_commit_valid_q;
-    logic [63:0] session_tx_commit_sequence_q;
     logic session_error_valid;
     logic [15:0] session_error_code;
     logic [31:0] active_session_id;
     logic [127:0] active_key;
     logic [63:0] active_np;
     logic [31:0] active_policy;
+
+    logic tx_commit_accept;
 
     logic ntt_start_q;
     logic ntt_busy;
@@ -158,6 +181,7 @@ module primer1_endpoint_core (
     logic [15:0] ntt_host_rdata;
     logic [8:0] ntt_count_q;
     logic [8:0] ntt_index_q;
+    logic [7:0] ntt_read_base_q;
     logic [15:0] ntt_read_data_q;
 
     logic tx_start_q;
@@ -170,33 +194,21 @@ module primer1_endpoint_core (
     logic [63:0] tx_packet_sequence;
     logic [6:0] tx_packet_addr_q;
     logic [7:0] tx_packet_data;
-    logic tx_packet_release;
     logic tx_error_valid;
     logic [15:0] tx_error_code;
 
+    logic [15:0] cmd_u16_0;
+    logic [15:0] cmd_u16_2;
+    logic [31:0] cmd_u32_0;
+    logic [63:0] cmd_u64_0;
+
     integer i;
 
-    function automatic logic [15:0] be16_buf(input integer base);
-        begin
-            be16_buf = {cmd_buf[base], cmd_buf[base+1]};
-        end
-    endfunction
-
-    function automatic logic [31:0] be32_buf(input integer base);
-        begin
-            be32_buf = {cmd_buf[base], cmd_buf[base+1],
-                        cmd_buf[base+2], cmd_buf[base+3]};
-        end
-    endfunction
-
-    function automatic logic [63:0] be64_buf(input integer base);
-        begin
-            be64_buf = {cmd_buf[base], cmd_buf[base+1],
-                        cmd_buf[base+2], cmd_buf[base+3],
-                        cmd_buf[base+4], cmd_buf[base+5],
-                        cmd_buf[base+6], cmd_buf[base+7]};
-        end
-    endfunction
+    assign cmd_u16_0 = {cmd_buf[0], cmd_buf[1]};
+    assign cmd_u16_2 = {cmd_buf[2], cmd_buf[3]};
+    assign cmd_u32_0 = {cmd_buf[0], cmd_buf[1], cmd_buf[2], cmd_buf[3]};
+    assign cmd_u64_0 = {cmd_buf[0], cmd_buf[1], cmd_buf[2], cmd_buf[3],
+                        cmd_buf[4], cmd_buf[5], cmd_buf[6], cmd_buf[7]};
 
     always_comb begin
         session_stage_key = '0;
@@ -214,8 +226,13 @@ module primer1_endpoint_core (
     assign cmd_payload_addr_o = copy_index_q;
     assign endpoint_busy_o = (state_q != S_IDLE) || ntt_busy || tx_busy;
     assign tx_packet_retained_o = tx_packet_valid;
-    assign tx_packet_release = session_tx_commit_valid_q && tx_packet_valid &&
-                               (session_tx_commit_sequence_q == tx_packet_sequence);
+
+    /* Commit is accepted exactly once and only for the currently retained
+     * packet/current TX sequence. A mismatched logical commit never reaches the
+     * session counter nor the retained-packet release input. */
+    assign tx_commit_accept = tx_commit_valid_i && tx_packet_valid &&
+                              (tx_commit_sequence_i == tx_packet_sequence) &&
+                              (tx_commit_sequence_i == tx_sequence_o);
 
     fpst_tx_session u_session (
         .clk_i                    (clk_i),
@@ -234,9 +251,9 @@ module primer1_endpoint_core (
         .commit_session_id_i      (session_stage_id_q),
         .activate_valid_i         (session_activate_valid_q),
         .activate_ready_o         (session_activate_ready),
-        .activate_session_id_i    (be32_buf(0)),
-        .tx_commit_valid_i        (session_tx_commit_valid_q),
-        .tx_commit_sequence_i     (session_tx_commit_sequence_q),
+        .activate_session_id_i    (cmd_u32_0),
+        .tx_commit_valid_i        (tx_commit_accept),
+        .tx_commit_sequence_i     (tx_commit_sequence_i),
         .key_valid_o              (key_valid_o),
         .session_active_o         (session_active_o),
         .session_id_o             (active_session_id),
@@ -286,7 +303,7 @@ module primer1_endpoint_core (
         .packet_sequence_o  (tx_packet_sequence),
         .packet_addr_i      (tx_packet_addr_q),
         .packet_data_o      (tx_packet_data),
-        .packet_release_i   (tx_packet_release),
+        .packet_release_i   (tx_commit_accept),
         .error_valid_o      (tx_error_valid),
         .error_code_o       (tx_error_code)
     );
@@ -302,10 +319,15 @@ module primer1_endpoint_core (
             response_len_q <= 16'd2;
             response_index_q <= '0;
             response_kind_q <= RSP_NONE;
+            last_error_q <= 16'h0000;
 
             key_loading_q <= 1'b0;
             key_load_session_id_q <= '0;
             key_coverage_q <= '0;
+            key_chunk_offset_q <= '0;
+            key_chunk_len_q <= '0;
+            key_chunk_index_q <= '0;
+            key_chunk_conflict_q <= 1'b0;
             session_stage_valid_q <= 1'b0;
             session_stage_id_q <= '0;
             session_stage_sequence_q <= '0;
@@ -313,8 +335,6 @@ module primer1_endpoint_core (
             session_commit_valid_q <= 1'b0;
             session_activate_valid_q <= 1'b0;
             crypto_zeroize_q <= 1'b0;
-            session_tx_commit_valid_q <= 1'b0;
-            session_tx_commit_sequence_q <= '0;
 
             ntt_start_q <= 1'b0;
             ntt_host_re_q <= 1'b0;
@@ -323,6 +343,7 @@ module primer1_endpoint_core (
             ntt_host_wdata_q <= '0;
             ntt_count_q <= '0;
             ntt_index_q <= '0;
+            ntt_read_base_q <= '0;
             ntt_read_data_q <= '0;
 
             tx_start_q <= 1'b0;
@@ -338,7 +359,7 @@ module primer1_endpoint_core (
             rsp_transaction_id_o <= '0;
             rsp_payload_len_o <= '0;
             error_valid_o <= 1'b0;
-            error_code_o <= '0;
+            error_code_o <= 16'h0000;
 
             for (i = 0; i < 24; i = i + 1)
                 key_material_q[i] <= 8'h00;
@@ -350,7 +371,6 @@ module primer1_endpoint_core (
             session_commit_valid_q <= 1'b0;
             session_activate_valid_q <= 1'b0;
             crypto_zeroize_q <= 1'b0;
-            session_tx_commit_valid_q <= 1'b0;
             ntt_start_q <= 1'b0;
             ntt_host_re_q <= 1'b0;
             ntt_host_we_q <= 1'b0;
@@ -360,18 +380,27 @@ module primer1_endpoint_core (
 
             if (zeroize_i) begin
                 state_q <= S_IDLE;
+                last_error_q <= 16'h0000;
                 key_loading_q <= 1'b0;
                 key_load_session_id_q <= '0;
                 key_coverage_q <= '0;
                 for (i = 0; i < 24; i = i + 1)
                     key_material_q[i] <= 8'h00;
             end else begin
-                if (session_error_valid) begin
+                /* Logical receiver-commit mismatch is a local integration
+                 * error; it never increments sequence or releases the packet. */
+                if (tx_commit_valid_i && !tx_commit_accept) begin
+                    error_valid_o <= 1'b1;
+                    error_code_o <= ERR_SEQUENCE_DESYNC;
+                    last_error_q <= ERR_SEQUENCE_DESYNC;
+                end else if (session_error_valid) begin
                     error_valid_o <= 1'b1;
                     error_code_o <= session_error_code;
+                    last_error_q <= session_error_code;
                 end else if (tx_error_valid) begin
                     error_valid_o <= 1'b1;
                     error_code_o <= tx_error_code;
+                    last_error_q <= tx_error_code;
                 end
 
                 case (state_q)
@@ -409,11 +438,11 @@ module primer1_endpoint_core (
                                 state_q <= S_BUILD_STATUS_HI;
                             end
 
-                            OP_GET_CAPS: begin
+                            OP_GET_DEVICE_ID: begin
                                 if (payload_len_q != 0) begin
                                     response_status_q <= ERR_INVALID_STATE;
                                 end else begin
-                                    response_kind_q <= RSP_CAPS;
+                                    response_kind_q <= RSP_DEVICE_ID;
                                     response_len_q <= 16'd6;
                                 end
                                 state_q <= S_BUILD_STATUS_HI;
@@ -424,18 +453,61 @@ module primer1_endpoint_core (
                                     response_status_q <= ERR_INVALID_STATE;
                                 end else begin
                                     response_kind_q <= RSP_STATUS;
-                                    response_len_q <= 16'd17;
+                                    /* status + capability + session + seq + retained */
+                                    response_len_q <= 16'd20;
                                 end
+                                state_q <= S_BUILD_STATUS_HI;
+                            end
+
+                            OP_GET_ERROR: begin
+                                if (payload_len_q != 0) begin
+                                    response_status_q <= ERR_INVALID_STATE;
+                                end else begin
+                                    response_kind_q <= RSP_ERROR;
+                                    response_len_q <= 16'd4;
+                                end
+                                state_q <= S_BUILD_STATUS_HI;
+                            end
+
+                            OP_CLEAR_ERROR: begin
+                                if (payload_len_q != 0)
+                                    response_status_q <= ERR_INVALID_STATE;
+                                else
+                                    last_error_q <= 16'h0000;
+                                state_q <= S_BUILD_STATUS_HI;
+                            end
+
+                            OP_SOFT_RESET: begin
+                                if (payload_len_q != 0) begin
+                                    response_status_q <= ERR_INVALID_STATE;
+                                    state_q <= S_BUILD_STATUS_HI;
+                                end else begin
+                                    crypto_zeroize_q <= 1'b1;
+                                    key_loading_q <= 1'b0;
+                                    key_coverage_q <= '0;
+                                    for (i = 0; i < 24; i = i + 1)
+                                        key_material_q[i] <= 8'h00;
+                                    state_q <= S_ZEROIZE_WAIT;
+                                end
+                            end
+
+                            OP_SELF_TEST, OP_READ_REG, OP_WRITE_REG,
+                            OP_ASCON_KAT, OP_STP_RX_PACKET,
+                            OP_STP_GET_COUNTERS, OP_STP_CLEAR_COUNTERS,
+                            OP_TEST_INJECT_CONFIG, OP_TEST_TRIGGER_TIMEOUT,
+                            OP_TEST_GET_HOOKS: begin
+                                response_status_q <= ERR_UNSUPPORTED_OPCODE;
                                 state_q <= S_BUILD_STATUS_HI;
                             end
 
                             OP_KEY_LOAD_BEGIN: begin
                                 if (payload_len_q != 7 || cmd_buf[4] != 8'h01 ||
-                                    be16_buf(5) != 16'd24 || be32_buf(0) == 0) begin
+                                    cmd_u16_0 == 16'h0000 ||
+                                    {cmd_buf[5],cmd_buf[6]} != 16'd24) begin
                                     response_status_q <= ERR_INVALID_STATE;
                                 end else begin
                                     key_loading_q <= 1'b1;
-                                    key_load_session_id_q <= be32_buf(0);
+                                    key_load_session_id_q <= cmd_u32_0;
                                     key_coverage_q <= '0;
                                     for (i = 0; i < 24; i = i + 1)
                                         key_material_q[i] <= 8'h00;
@@ -443,43 +515,40 @@ module primer1_endpoint_core (
                                 state_q <= S_BUILD_STATUS_HI;
                             end
 
-                            OP_KEY_LOAD_CHUNK: begin : key_chunk
-                                integer n;
-                                logic conflict;
-                                n = payload_len_q - 2;
-                                conflict = 1'b0;
+                            OP_KEY_LOAD_CHUNK: begin
                                 if (!key_loading_q || payload_len_q < 3 ||
-                                    be16_buf(0) + n > 24) begin
+                                    cmd_u16_0 > 23 ||
+                                    (cmd_u16_0 + payload_len_q - 2) > 24) begin
                                     response_status_q <= ERR_KEY_LOAD_INCOMPLETE;
+                                    state_q <= S_BUILD_STATUS_HI;
                                 end else begin
-                                    for (i = 0; i < 24; i = i + 1) begin
-                                        if (i >= be16_buf(0) &&
-                                            i < be16_buf(0) + n) begin
-                                            if (key_coverage_q[i] &&
-                                                key_material_q[i] !=
-                                                cmd_buf[2+i-be16_buf(0)])
-                                                conflict = 1'b1;
-                                            key_material_q[i] <=
-                                                cmd_buf[2+i-be16_buf(0)];
-                                            key_coverage_q[i] <= 1'b1;
-                                        end
-                                    end
-                                    if (conflict)
-                                        response_status_q <= ERR_KEY_COMMIT;
+                                    key_chunk_offset_q <= cmd_u16_0[5:0];
+                                    key_chunk_len_q <= payload_len_q - 2;
+                                    key_chunk_index_q <= '0;
+                                    key_chunk_conflict_q <= 1'b0;
+                                    state_q <= S_KEY_CHUNK_CHECK;
                                 end
-                                state_q <= S_BUILD_STATUS_HI;
                             end
 
                             OP_KEY_LOAD_COMMIT: begin
                                 if (!key_loading_q || payload_len_q != 16 ||
-                                    be32_buf(0) != key_load_session_id_q ||
+                                    cmd_u32_0 != key_load_session_id_q ||
                                     key_coverage_q != 24'hFFFFFF) begin
                                     response_status_q <= ERR_KEY_LOAD_INCOMPLETE;
                                     state_q <= S_BUILD_STATUS_HI;
+                                end else if (cmd_u64_0 != {cmd_buf[0],cmd_buf[1],cmd_buf[2],cmd_buf[3],
+                                                          cmd_buf[4],cmd_buf[5],cmd_buf[6],cmd_buf[7]}) begin
+                                    response_status_q <= ERR_KEY_COMMIT;
+                                    state_q <= S_BUILD_STATUS_HI;
+                                end else if ({cmd_buf[4],cmd_buf[5],cmd_buf[6],cmd_buf[7],
+                                             cmd_buf[8],cmd_buf[9],cmd_buf[10],cmd_buf[11]} != 64'd0) begin
+                                    /* FPST v1.1: first sequence of a new session is zero. */
+                                    response_status_q <= ERR_KEY_COMMIT;
+                                    state_q <= S_BUILD_STATUS_HI;
                                 end else begin
-                                    session_stage_id_q <= be32_buf(0);
-                                    session_stage_sequence_q <= be64_buf(4);
-                                    session_stage_policy_q <= be32_buf(12);
+                                    session_stage_id_q <= cmd_u32_0;
+                                    session_stage_sequence_q <= 64'd0;
+                                    session_stage_policy_q <= {cmd_buf[12],cmd_buf[13],cmd_buf[14],cmd_buf[15]};
                                     state_q <= S_KEY_STAGE_PULSE;
                                 end
                             end
@@ -499,7 +568,7 @@ module primer1_endpoint_core (
                                 if (payload_len_q != 4 || !key_valid_o) begin
                                     response_status_q <= ERR_NO_KEY;
                                     state_q <= S_BUILD_STATUS_HI;
-                                end else if (be32_buf(0) != active_session_id) begin
+                                end else if (cmd_u32_0 != active_session_id) begin
                                     response_status_q <= ERR_INVALID_STATE;
                                     state_q <= S_BUILD_STATUS_HI;
                                 end else if (!secure_enable_i) begin
@@ -528,59 +597,61 @@ module primer1_endpoint_core (
                                 end
                             end
 
-                            OP_PROFILE_NTT_WRITE_COEFF: begin
-                                if (payload_len_q != 4 || be16_buf(0) > 255 ||
-                                    be16_buf(2) >= 3329 || !ntt_host_ready) begin
+                            OP_PQC_WRITE_COEFF: begin
+                                if (payload_len_q != 4 || cmd_u16_0 > 255 ||
+                                    cmd_u16_2 >= 3329 || !ntt_host_ready) begin
                                     response_status_q <= !ntt_host_ready ?
                                                          ERR_BUSY : ERR_INVALID_STATE;
                                 end else begin
-                                    ntt_host_addr_q <= be16_buf(0)[7:0];
-                                    ntt_host_wdata_q <= be16_buf(2);
+                                    ntt_host_addr_q <= cmd_buf[1];
+                                    ntt_host_wdata_q <= cmd_u16_2;
                                     ntt_host_we_q <= 1'b1;
                                 end
                                 state_q <= S_BUILD_STATUS_HI;
                             end
 
-                            OP_PROFILE_NTT_READ_COEFF: begin
-                                if (payload_len_q != 2 || be16_buf(0) > 255 ||
+                            OP_PQC_READ_COEFF: begin
+                                if (payload_len_q != 2 || cmd_u16_0 > 255 ||
                                     !ntt_host_ready) begin
                                     response_status_q <= !ntt_host_ready ?
                                                          ERR_BUSY : ERR_INVALID_STATE;
                                     state_q <= S_BUILD_STATUS_HI;
                                 end else begin
-                                    ntt_index_q <= {1'b0,be16_buf(0)[7:0]};
+                                    ntt_read_base_q <= cmd_buf[1];
                                     ntt_count_q <= 9'd1;
+                                    ntt_index_q <= '0;
                                     response_kind_q <= RSP_NTT_READ;
                                     response_len_q <= 16'd4;
                                     state_q <= S_BUILD_STATUS_HI;
                                 end
                             end
 
-                            OP_PROFILE_NTT_LOAD_POLY: begin
-                                if (payload_len_q < 2 || be16_buf(0) > 256 ||
-                                    payload_len_q != 2 + 2*be16_buf(0) ||
+                            OP_PQC_LOAD_POLY: begin
+                                if (payload_len_q < 2 || cmd_u16_0 > 256 ||
+                                    payload_len_q != 2 + 2*cmd_u16_0 ||
                                     !ntt_host_ready) begin
                                     response_status_q <= !ntt_host_ready ?
                                                          ERR_BUSY : ERR_INVALID_STATE;
                                     state_q <= S_BUILD_STATUS_HI;
                                 end else begin
-                                    ntt_count_q <= {1'b0,be16_buf(0)};
+                                    ntt_count_q <= cmd_u16_0[8:0];
                                     ntt_index_q <= '0;
-                                    state_q <= S_NTT_LOAD;
+                                    state_q <= S_NTT_LOAD_CHECK;
                                 end
                             end
 
-                            OP_PROFILE_NTT_READ_POLY: begin
-                                if (payload_len_q != 2 || be16_buf(0) > 256 ||
+                            OP_PQC_READ_POLY: begin
+                                if (payload_len_q != 2 || cmd_u16_0 > 256 ||
                                     !ntt_host_ready) begin
                                     response_status_q <= !ntt_host_ready ?
                                                          ERR_BUSY : ERR_INVALID_STATE;
                                     state_q <= S_BUILD_STATUS_HI;
                                 end else begin
-                                    ntt_count_q <= {1'b0,be16_buf(0)};
+                                    ntt_read_base_q <= 8'd0;
+                                    ntt_count_q <= cmd_u16_0[8:0];
                                     ntt_index_q <= '0;
                                     response_kind_q <= RSP_NTT_READ;
-                                    response_len_q <= 16'd2 + 2*be16_buf(0);
+                                    response_len_q <= 16'd2 + 2*cmd_u16_0;
                                     state_q <= S_BUILD_STATUS_HI;
                                 end
                             end
@@ -596,10 +667,8 @@ module primer1_endpoint_core (
                                 end
                             end
 
-                            OP_PQC_START_INTT,
-                            OP_PQC_POINTWISE_MUL,
-                            OP_PQC_POLY_ADD_SUB,
-                            OP_PQC_GET_RESULT: begin
+                            OP_PQC_START_INTT, OP_PQC_POINTWISE_MUL,
+                            OP_PQC_POLY_ADD_SUB, OP_PQC_GET_RESULT: begin
                                 response_status_q <= ERR_UNSUPPORTED_OPCODE;
                                 state_q <= S_BUILD_STATUS_HI;
                             end
@@ -623,26 +692,40 @@ module primer1_endpoint_core (
                                 end
                             end
 
-                            OP_TX_COMMIT_ACCEPTED: begin
-                                if (payload_len_q != 8 || !tx_packet_valid) begin
-                                    response_status_q <= ERR_INVALID_STATE;
-                                    state_q <= S_BUILD_STATUS_HI;
-                                end else if (be64_buf(0) != tx_packet_sequence ||
-                                             be64_buf(0) != tx_sequence_o) begin
-                                    response_status_q <= ERR_SEQUENCE_DESYNC;
-                                    state_q <= S_BUILD_STATUS_HI;
-                                end else begin
-                                    session_tx_commit_sequence_q <= be64_buf(0);
-                                    session_tx_commit_valid_q <= 1'b1;
-                                    state_q <= S_TX_COMMIT_WAIT;
-                                end
-                            end
-
                             default: begin
                                 response_status_q <= ERR_UNSUPPORTED_OPCODE;
                                 state_q <= S_BUILD_STATUS_HI;
                             end
                         endcase
+                    end
+
+                    S_KEY_CHUNK_CHECK: begin
+                        if (key_chunk_index_q == key_chunk_len_q) begin
+                            if (key_chunk_conflict_q) begin
+                                response_status_q <= ERR_KEY_COMMIT;
+                                state_q <= S_BUILD_STATUS_HI;
+                            end else begin
+                                key_chunk_index_q <= '0;
+                                state_q <= S_KEY_CHUNK_APPLY;
+                            end
+                        end else begin
+                            if (key_coverage_q[key_chunk_offset_q + key_chunk_index_q] &&
+                                key_material_q[key_chunk_offset_q + key_chunk_index_q] !=
+                                cmd_buf[2 + key_chunk_index_q])
+                                key_chunk_conflict_q <= 1'b1;
+                            key_chunk_index_q <= key_chunk_index_q + 1'b1;
+                        end
+                    end
+
+                    S_KEY_CHUNK_APPLY: begin
+                        if (key_chunk_index_q == key_chunk_len_q) begin
+                            state_q <= S_BUILD_STATUS_HI;
+                        end else begin
+                            key_material_q[key_chunk_offset_q + key_chunk_index_q] <=
+                                cmd_buf[2 + key_chunk_index_q];
+                            key_coverage_q[key_chunk_offset_q + key_chunk_index_q] <= 1'b1;
+                            key_chunk_index_q <= key_chunk_index_q + 1'b1;
+                        end
                     end
 
                     S_KEY_STAGE_PULSE: begin
@@ -693,21 +776,28 @@ module primer1_endpoint_core (
                             state_q <= S_BUILD_STATUS_HI;
                     end
 
-                    S_NTT_LOAD: begin
+                    S_NTT_LOAD_CHECK: begin
+                        if (ntt_index_q == ntt_count_q) begin
+                            ntt_index_q <= '0;
+                            state_q <= S_NTT_LOAD_WRITE;
+                        end else if ({cmd_buf[2+2*ntt_index_q],
+                                     cmd_buf[3+2*ntt_index_q]} >= 16'd3329) begin
+                            response_status_q <= ERR_INVALID_STATE;
+                            state_q <= S_BUILD_STATUS_HI;
+                        end else begin
+                            ntt_index_q <= ntt_index_q + 1'b1;
+                        end
+                    end
+
+                    S_NTT_LOAD_WRITE: begin
                         if (ntt_index_q == ntt_count_q) begin
                             state_q <= S_BUILD_STATUS_HI;
                         end else if (ntt_host_ready) begin
-                            if ({cmd_buf[2+2*ntt_index_q],
-                                 cmd_buf[3+2*ntt_index_q]} >= 16'd3329) begin
-                                response_status_q <= ERR_INVALID_STATE;
-                                state_q <= S_BUILD_STATUS_HI;
-                            end else begin
-                                ntt_host_addr_q <= ntt_index_q[7:0];
-                                ntt_host_wdata_q <= {cmd_buf[2+2*ntt_index_q],
-                                                     cmd_buf[3+2*ntt_index_q]};
-                                ntt_host_we_q <= 1'b1;
-                                ntt_index_q <= ntt_index_q + 1'b1;
-                            end
+                            ntt_host_addr_q <= ntt_index_q[7:0];
+                            ntt_host_wdata_q <= {cmd_buf[2+2*ntt_index_q],
+                                                 cmd_buf[3+2*ntt_index_q]};
+                            ntt_host_we_q <= 1'b1;
+                            ntt_index_q <= ntt_index_q + 1'b1;
                         end
                     end
 
@@ -715,7 +805,7 @@ module primer1_endpoint_core (
                         if (ntt_index_q == ntt_count_q) begin
                             state_q <= S_FINISH_CMD;
                         end else if (ntt_host_ready) begin
-                            ntt_host_addr_q <= ntt_index_q[7:0];
+                            ntt_host_addr_q <= ntt_read_base_q + ntt_index_q[7:0];
                             ntt_host_re_q <= 1'b1;
                             state_q <= S_NTT_READ_WAIT;
                         end
@@ -757,17 +847,9 @@ module primer1_endpoint_core (
                         end
                     end
 
-                    S_TX_COMMIT_WAIT: begin
-                        if (session_error_valid) begin
-                            response_status_q <= session_error_code;
-                            state_q <= S_BUILD_STATUS_HI;
-                        end else if (!tx_packet_valid &&
-                                     tx_sequence_o == session_tx_commit_sequence_q + 1'b1) begin
-                            state_q <= S_BUILD_STATUS_HI;
-                        end
-                    end
-
                     S_BUILD_STATUS_HI: begin
+                        if (response_status_q != 0)
+                            last_error_q <= response_status_q;
                         rsp_payload_we_o <= 1'b1;
                         rsp_payload_addr_o <= 0;
                         rsp_payload_data_o <= response_status_q[15:8];
@@ -796,34 +878,48 @@ module primer1_endpoint_core (
                         rsp_payload_we_o <= 1'b1;
                         rsp_payload_addr_o <= response_index_q;
 
-                        if (response_kind_q == RSP_CAPS) begin
-                            case (response_index_q)
-                                2: rsp_payload_data_o <= CAPABILITIES[31:24];
-                                3: rsp_payload_data_o <= CAPABILITIES[23:16];
-                                4: rsp_payload_data_o <= CAPABILITIES[15:8];
-                                default: rsp_payload_data_o <= CAPABILITIES[7:0];
-                            endcase
-                        end else if (response_kind_q == RSP_STATUS) begin
-                            if (response_index_q == 2)
-                                rsp_payload_data_o <= {7'b0,key_valid_o};
-                            else if (response_index_q == 3)
-                                rsp_payload_data_o <= {7'b0,session_active_o};
-                            else if (response_index_q >= 4 && response_index_q <= 11)
-                                rsp_payload_data_o <= tx_sequence_o[
-                                    8*(11-response_index_q) +: 8];
-                            else if (response_index_q == 12)
-                                rsp_payload_data_o <= {7'b0,tx_packet_valid};
-                            else if (response_index_q == 13)
-                                rsp_payload_data_o <= active_session_id[31:24];
-                            else if (response_index_q == 14)
-                                rsp_payload_data_o <= active_session_id[23:16];
-                            else if (response_index_q == 15)
-                                rsp_payload_data_o <= active_session_id[15:8];
-                            else
-                                rsp_payload_data_o <= active_session_id[7:0];
-                        end else begin
-                            rsp_payload_data_o <= 8'h00;
-                        end
+                        case (response_kind_q)
+                            RSP_DEVICE_ID: begin
+                                case (response_index_q)
+                                    2: rsp_payload_data_o <= DEVICE_ID_PRIMER1_TX[31:24];
+                                    3: rsp_payload_data_o <= DEVICE_ID_PRIMER1_TX[23:16];
+                                    4: rsp_payload_data_o <= DEVICE_ID_PRIMER1_TX[15:8];
+                                    default: rsp_payload_data_o <= DEVICE_ID_PRIMER1_TX[7:0];
+                                endcase
+                            end
+
+                            RSP_STATUS: begin
+                                case (response_index_q)
+                                    2: rsp_payload_data_o <= {6'b0,session_active_o,key_valid_o};
+                                    3: rsp_payload_data_o <= {7'b0,tx_packet_valid};
+                                    4: rsp_payload_data_o <= CAPABILITIES[31:24];
+                                    5: rsp_payload_data_o <= CAPABILITIES[23:16];
+                                    6: rsp_payload_data_o <= CAPABILITIES[15:8];
+                                    7: rsp_payload_data_o <= CAPABILITIES[7:0];
+                                    8: rsp_payload_data_o <= active_session_id[31:24];
+                                    9: rsp_payload_data_o <= active_session_id[23:16];
+                                    10: rsp_payload_data_o <= active_session_id[15:8];
+                                    11: rsp_payload_data_o <= active_session_id[7:0];
+                                    12: rsp_payload_data_o <= tx_sequence_o[63:56];
+                                    13: rsp_payload_data_o <= tx_sequence_o[55:48];
+                                    14: rsp_payload_data_o <= tx_sequence_o[47:40];
+                                    15: rsp_payload_data_o <= tx_sequence_o[39:32];
+                                    16: rsp_payload_data_o <= tx_sequence_o[31:24];
+                                    17: rsp_payload_data_o <= tx_sequence_o[23:16];
+                                    18: rsp_payload_data_o <= tx_sequence_o[15:8];
+                                    default: rsp_payload_data_o <= tx_sequence_o[7:0];
+                                endcase
+                            end
+
+                            RSP_ERROR: begin
+                                if (response_index_q == 2)
+                                    rsp_payload_data_o <= last_error_q[15:8];
+                                else
+                                    rsp_payload_data_o <= last_error_q[7:0];
+                            end
+
+                            default: rsp_payload_data_o <= 8'h00;
+                        endcase
 
                         if (response_index_q + 1'b1 == response_len_q)
                             state_q <= S_FINISH_CMD;
@@ -835,9 +931,22 @@ module primer1_endpoint_core (
                         rsp_payload_we_o <= 1'b1;
                         rsp_payload_addr_o <= response_index_q;
 
-                        if (response_index_q >= 2 && response_index_q <= 9)
-                            rsp_payload_data_o <= tx_packet_sequence[
-                                8*(9-response_index_q) +: 8];
+                        if (response_index_q == 2)
+                            rsp_payload_data_o <= tx_packet_sequence[63:56];
+                        else if (response_index_q == 3)
+                            rsp_payload_data_o <= tx_packet_sequence[55:48];
+                        else if (response_index_q == 4)
+                            rsp_payload_data_o <= tx_packet_sequence[47:40];
+                        else if (response_index_q == 5)
+                            rsp_payload_data_o <= tx_packet_sequence[39:32];
+                        else if (response_index_q == 6)
+                            rsp_payload_data_o <= tx_packet_sequence[31:24];
+                        else if (response_index_q == 7)
+                            rsp_payload_data_o <= tx_packet_sequence[23:16];
+                        else if (response_index_q == 8)
+                            rsp_payload_data_o <= tx_packet_sequence[15:8];
+                        else if (response_index_q == 9)
+                            rsp_payload_data_o <= tx_packet_sequence[7:0];
                         else if (response_index_q == 10)
                             rsp_payload_data_o <= tx_packet_len[15:8];
                         else if (response_index_q == 11)
