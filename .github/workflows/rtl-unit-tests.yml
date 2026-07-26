@@ -69,6 +69,11 @@ jobs:
         continue-on-error: true
         run: bash scripts/synth/check_kiwi_primer20k_ascon_selftest_yosys.sh
 
+      - name: Run Primer 1 deployment-top synthesis check
+        id: primer1_deploy_synth_check
+        continue-on-error: true
+        run: bash scripts/synth/check_kiwi_primer20k_fpst_deployment_yosys.sh
+
       - name: Upload verification logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -80,10 +85,11 @@ jobs:
             build/synth/yosys-forward-ntt-core.log
             build/synth/yosys-kiwi-primer20k-selftest.log
             build/synth/yosys-kiwi-primer20k-ascon-selftest.log
+            build/synth/yosys-kiwi-primer20k-fpst-deployment.log
           if-no-files-found: warn
 
       - name: Report verification failure
-        if: steps.rtl_tests.outcome == 'failure' || steps.core_synth_check.outcome == 'failure' || steps.ntt_board_synth_check.outcome == 'failure' || steps.ascon_board_synth_check.outcome == 'failure'
+        if: steps.rtl_tests.outcome == 'failure' || steps.core_synth_check.outcome == 'failure' || steps.ntt_board_synth_check.outcome == 'failure' || steps.ascon_board_synth_check.outcome == 'failure' || steps.primer1_deploy_synth_check.outcome == 'failure'
         run: |
           if [ -f build/sim/rtl-unit-tests.log ]; then
             cat build/sim/rtl-unit-tests.log
@@ -99,5 +105,8 @@ jobs:
           fi
           if [ -f build/synth/yosys-kiwi-primer20k-ascon-selftest.log ]; then
             cat build/synth/yosys-kiwi-primer20k-ascon-selftest.log
+          fi
+          if [ -f build/synth/yosys-kiwi-primer20k-fpst-deployment.log ]; then
+            cat build/synth/yosys-kiwi-primer20k-fpst-deployment.log
           fi
           exit 1
