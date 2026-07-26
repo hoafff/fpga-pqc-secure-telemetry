@@ -1,0 +1,97 @@
+#include "fpst_sha3.h"
+#include "fpst_common.h"
+
+#define KECCAKF_ROUNDS 24
+#define SHAKE256_RATE 136u
+
+static uint64_t rol64(uint64_t x, unsigned s) {
+    return s == 0U ? x : (x << s) | (x >> (64U - s));
+}
+
+static uint64_t load_le64(const uint8_t *p) {
+    uint64_t v = 0;
+    for (unsigned i = 0; i < 8; ++i) v |= (uint64_t)p[i] << (8U * i);
+    return v;
+}
+
+static void store_le64(uint8_t *p, uint64_t v) {
+    for (unsigned i = 0; i < 8; ++i) p[i] = (uint8_t)(v >> (8U * i));
+}
+
+static void keccakf1600(uint64_t st[25]) {
+    static const uint64_t rc[24] = {
+        0x0000000000000001ULL,0x0000000000008082ULL,
+        0x800000000000808AULL,0x8000000080008000ULL,
+        0x000000000000808BULL,0x0000000080000001ULL,
+        0x8000000080008081ULL,0x8000000000008009ULL,
+        0x000000000000008AULL,0x0000000000000088ULL,
+        0x0000000080008009ULL,0x000000008000000AULL,
+        0x000000008000808BULL,0x800000000000008BULL,
+        0x8000000000008089ULL,0x8000000000008003ULL,
+        0x8000000000008002ULL,0x8000000000000080ULL,
+        0x000000000000800AULL,0x800000008000000AULL,
+        0x8000000080008081ULL,0x8000000000008080ULL,
+        0x0000000080000001ULL,0x8000000080008008ULL
+    };
+    static const unsigned r[25] = {
+         0, 1,62,28,27, 36,44, 6,55,20, 3,10,43,25,39,
+        41,45,15,21, 8, 18, 2,61,56,14
+    };
+    uint64_t b[25], c[5], d[5];
+    for (unsigned round = 0; round < KECCAKF_ROUNDS; ++round) {
+        for (unsigned x = 0; x < 5; ++x)
+            c[x] = st[x] ^ st[x+5] ^ st[x+10] ^ st[x+15] ^ st[x+20];
+        for (unsigned x = 0; x < 5; ++x)
+            d[x] = c[(x+4)%5] ^ rol64(c[(x+1)%5], 1);
+        for (unsigned y = 0; y < 5; ++y)
+            for (unsigned x = 0; x < 5; ++x)
+                st[x + 5*y] ^= d[x];
+        for (unsigned y = 0; y < 5; ++y) {
+            for (unsigned x = 0; x < 5; ++x) {
+                const unsigned nx = y;
+                const unsigned ny = (2*x + 3*y) % 5;
+                b[nx + 5*ny] = rol64(st[x + 5*y], r[x + 5*y]);
+            }
+        }
+        for (unsigned y = 0; y < 5; ++y)
+            for (unsigned x = 0; x < 5; ++x)
+                st[x + 5*y] = b[x + 5*y] ^
+                    ((~b[((x+1)%5) + 5*y]) & b[((x+2)%5) + 5*y]);
+        st[0] ^= rc[round];
+    }
+    fpst_secure_zero(b, sizeof b);
+    fpst_secure_zero(c, sizeof c);
+    fpst_secure_zero(d, sizeof d);
+}
+
+void fpst_shake256(const uint8_t *input, size_t input_len,
+                   uint8_t *output, size_t output_len) {
+    uint64_t st[25] = {0};
+    uint8_t block[SHAKE256_RATE];
+    while (input_len >= SHAKE256_RATE) {
+        for (size_t i = 0; i < SHAKE256_RATE / 8; ++i)
+            st[i] ^= load_le64(input + 8*i);
+        keccakf1600(st);
+        input += SHAKE256_RATE;
+        input_len -= SHAKE256_RATE;
+    }
+    for (size_t i = 0; i < SHAKE256_RATE; ++i) block[i] = 0;
+    for (size_t i = 0; i < input_len; ++i) block[i] = input[i];
+    block[input_len] ^= 0x1Fu;
+    block[SHAKE256_RATE - 1] ^= 0x80u;
+    for (size_t i = 0; i < SHAKE256_RATE / 8; ++i)
+        st[i] ^= load_le64(block + 8*i);
+    keccakf1600(st);
+
+    while (output_len != 0U) {
+        const size_t take = output_len < SHAKE256_RATE ? output_len : SHAKE256_RATE;
+        for (size_t i = 0; i < SHAKE256_RATE / 8; ++i)
+            store_le64(block + 8*i, st[i]);
+        for (size_t i = 0; i < take; ++i) output[i] = block[i];
+        output += take;
+        output_len -= take;
+        if (output_len != 0U) keccakf1600(st);
+    }
+    fpst_secure_zero(st, sizeof st);
+    fpst_secure_zero(block, sizeof block);
+}

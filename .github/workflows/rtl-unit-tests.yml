@@ -34,6 +34,13 @@ jobs:
       - name: Run exhaustive Python arithmetic check
         run: python3 software/reference/check_barrett_3329.py
 
+      - name: Run SN32F407 portable firmware tests
+        run: |
+          cmake -S targets/sn32f407/firmware \
+                -B build/sn32f407-firmware-host
+          cmake --build build/sn32f407-firmware-host
+          ctest --test-dir build/sn32f407-firmware-host --output-on-failure
+
       - name: Install open-source HDL tools
         run: |
           sudo apt-get update -qq
