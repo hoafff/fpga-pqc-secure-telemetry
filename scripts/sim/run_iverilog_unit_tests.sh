@@ -101,4 +101,12 @@ run_test tb_ascon_encrypt_kat_selftest \
     "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/ascon_encrypt_kat_selftest.sv" \
     "${ROOT_DIR}/tb/integration/tb_ascon_encrypt_kat_selftest.sv"
 
+echo "==> Compiling kiwi_primer20k_primer1_top"
+iverilog -g2012 -Wall -s kiwi_primer20k_primer1_top -tnull \
+    "${COMMON_NTT_SOURCES[@]}" \
+    "${COMMON_ASCON_SOURCES[@]}" \
+    "${ROOT_DIR}/rtl/link/fpst_spi_mem_slave.sv" \
+    "${ROOT_DIR}/rtl/endpoint/primer1_endpoint.sv" \
+    "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/kiwi_primer20k_primer1_top.sv"
+
 echo "PASS: all RTL unit and integration tests completed"
