@@ -6,33 +6,40 @@
  *   - organizer SN32F400 CMSIS/Firmware Library V1.5R
  *   - SONiX DFP / Keil SN32F407F target
  *   - organizer 32F407 EVK V1.0 schematic
- *   - frozen Primer #1 deployment profile/CST
+ *   - FPST-SYS-SPEC-001 v1.1
+ *   - frozen Primer #1/#2 deployment CST profiles
  *
  * EVK J12 DB_SPI exposes P1.0/P1.1/P1.2 for SCK/MISO/MOSI. P1.8 is the
- * onboard W25Q16 CE# sharing those SPI wires; it MUST stay high while the
- * external Primer link is active. Primer #1 CS/IRQ therefore use ordinary J7
- * GPIO rather than the hardware SPI0 SEL pin.
+ * onboard W25Q16 CE# sharing those SPI wires; it MUST stay high while either
+ * external Primer link is active. Hardware SPI0 SEL is disabled; each Primer
+ * therefore has an independent GPIO CS and IRQ on J7.
  *
- * Signal-level harness contract to Primer #1:
- *   SN32 P1.0 SCK   -> Primer J2-3  / P16 spi_sck_i
- *   SN32 P1.2 MOSI  -> Primer J2-5  / P15 spi_mosi_i
- *   SN32 P1.1 MISO  <- Primer J2-7  / T15 spi_miso_o
- *   SN32 P2.1 CS_N  -> Primer J2-8  / R14 spi_cs_ni
- *   SN32 P2.3 IRQ_N <- Primer J2-10 / T14 irq_no
+ * Shared data/clock contract:
+ *   SN32 P1.0 SCK   -> P1 J2-3 / P16 and P2 J2-3 / P16
+ *   SN32 P1.2 MOSI  -> P1 J2-5 / P15 and P2 J2-5 / P15
+ *   SN32 P1.1 MISO  <- P1 J2-7 / T15 and P2 J2-7 / T15
+ *
+ * Endpoint selects/IRQs:
+ *   SN32 P2.1 CS1_N  -> Primer #1 J2-8  / R14
+ *   SN32 P2.3 IRQ1_N <- Primer #1 J2-10 / T14
+ *   SN32 P2.2 CS2_N  -> Primer #2 J2-8  / R14
+ *   SN32 P2.8 IRQ2_N <- Primer #2 J2-10 / T14
  *   common 3.3 V logic ground is mandatory.
+ *
+ * The FPGA transport tri-states MISO while deselected, and the SN32 multiport
+ * adapter deasserts all CS lines before selecting exactly one endpoint.
  *
  * The EVK schematic also provides an onboard potentiometer on ADC_P20,
  * connected directly to P2.0/AIN0. The research/competition entropy profile
  * samples this existing node; no external RNG component is required.
  *
- * P2.9 is left free by the Primer #1 link and is assigned to the MCU heartbeat
- * output. Its final wire to Tiny 1P5 is still evidence-dependent and does not
- * change the frozen Primer #1 contract.
+ * P2.9 is assigned to the MCU heartbeat output. Its final wire to Tiny 1P5 is
+ * still evidence-dependent and does not alter the BTP SPI contract.
  *
- * This is the intended wiring contract, not continuity evidence. The harness
- * guard defaults to zero. After physical continuity and common-ground checks,
- * release builds may pass FPST_SN32F407_HARNESS_VERIFIED=1 from Keil/compiler
- * settings without editing this source file.
+ * This file describes intended wiring, not continuity evidence. The harness
+ * guard defaults to zero. Only after continuity/common-ground/MISO-release
+ * checks on BOTH Primer links may release builds define
+ * FPST_SN32F407_HARNESS_VERIFIED=1 in Keil/compiler settings.
  */
 #define FPST_SN32F407_DEVICE_VERIFIED       1
 #define FPST_SN32F407_MCU_PINMUX_VERIFIED  1
