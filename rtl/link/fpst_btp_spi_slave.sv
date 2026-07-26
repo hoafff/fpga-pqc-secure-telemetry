@@ -45,7 +45,6 @@ module fpst_btp_spi_slave #(
     localparam logic [15:0] ERR_BTP_VERSION     = 16'h0102;
     localparam logic [15:0] ERR_BTP_LENGTH      = 16'h0103;
     localparam logic [15:0] ERR_BTP_CRC         = 16'h0104;
-    localparam logic [15:0] ERR_BTP_TRANSACTION = 16'h0105;
 
     localparam logic [7:0] BTP_VERSION = 8'h01;
     localparam logic [7:0] FLAG_RESPONSE = 8'h01;
@@ -55,113 +54,61 @@ module fpst_btp_spi_slave #(
     logic [7:0] tx_mem [0:MAX_FRAME_BYTES-1];
     logic [7:0] rsp_payload_mem [0:MAX_PAYLOAD_BYTES-1];
 
+    /*
+     * Bring-up profile: SYS_CLK=27 MHz, SPI=3 MHz. The external SPI pins are
+     * treated as asynchronous inputs and synchronized before edge detection.
+     * Nine system clocks per SPI period leave margin for a two-flop
+     * synchronizer while keeping all BTP/key-bearing buffers in one clock
+     * domain so zeroize can scrub them deterministically.
+     */
+    logic sclk_meta_q, sclk_sync_q, sclk_prev_q;
+    logic cs_meta_q, cs_sync_q, cs_prev_q;
+    logic mosi_meta_q, mosi_sync_q;
+    logic sclk_rise, sclk_fall, cs_fall, cs_rise;
+
+    logic transaction_response_q;
     logic [7:0] rx_shift_q;
-    logic [2:0] spi_bit_q;
-    logic [FRAME_COUNT_W-1:0] spi_rx_count_q;
-    logic [FRAME_COUNT_W-1:0] spi_tx_count_q;
-    logic req_toggle_spi_q;
-    logic rsp_consumed_toggle_spi_q;
-    logic req_ack_meta_q, req_ack_sync_q;
-    logic req_outstanding_spi;
+    logic [2:0] rx_bit_q;
+    logic [2:0] tx_bit_q;
+    logic [FRAME_COUNT_W-1:0] rx_count_q;
+    logic [FRAME_COUNT_W-1:0] tx_count_q;
+    logic [FRAME_COUNT_W-1:0] request_len_q;
+    logic request_pending_q;
+    logic miso_q;
 
     logic rsp_pending_q;
     logic [FRAME_COUNT_W-1:0] rsp_frame_len_q;
 
-    /* The response buffer and rsp_pending_q are held stable before irq_no is
-     * asserted. MCU observes IRQ before starting transaction #2, so this is a
-     * bundled-data crossing from the 27 MHz domain into the SPI clock domain. */
-    assign spi_miso_o = (!spi_cs_ni && rsp_pending_q &&
-                         spi_tx_count_q < rsp_frame_len_q) ?
-                        tx_mem[spi_tx_count_q][7-spi_bit_q] : 1'b0;
-
-    assign req_outstanding_spi = (req_toggle_spi_q != req_ack_sync_q);
-
-    /* SPI Mode 0: sample MOSI at rising SCLK. CS deassertion terminates one
-     * complete BTP transaction and resets the bit counter. */
-    always @(posedge spi_sclk_i or posedge spi_cs_ni or negedge rst_ni) begin
-        if (!rst_ni) begin
-            rx_shift_q <= 8'h00;
-            spi_bit_q <= 3'd0;
-            spi_rx_count_q <= '0;
-            spi_tx_count_q <= '0;
-            req_toggle_spi_q <= 1'b0;
-            rsp_consumed_toggle_spi_q <= 1'b0;
-            req_ack_meta_q <= 1'b0;
-            req_ack_sync_q <= 1'b0;
-        end else if (spi_cs_ni) begin
-            if (rsp_pending_q) begin
-                if (spi_tx_count_q >= rsp_frame_len_q)
-                    rsp_consumed_toggle_spi_q <= ~rsp_consumed_toggle_spi_q;
-            end else if (!req_outstanding_spi &&
-                         spi_rx_count_q >= HEADER_BYTES + TRAILER_BYTES) begin
-                req_toggle_spi_q <= ~req_toggle_spi_q;
-            end
-            rx_shift_q <= 8'h00;
-            spi_bit_q <= 3'd0;
-            spi_rx_count_q <= '0;
-            spi_tx_count_q <= '0;
-        end else begin
-            req_ack_meta_q <= req_ack_toggle_q;
-            req_ack_sync_q <= req_ack_meta_q;
-
-            if (rsp_pending_q) begin
-                if (spi_bit_q == 3'd7) begin
-                    spi_bit_q <= 3'd0;
-                    if (spi_tx_count_q < MAX_FRAME_BYTES)
-                        spi_tx_count_q <= spi_tx_count_q + 1'b1;
-                end else begin
-                    spi_bit_q <= spi_bit_q + 1'b1;
-                end
-            end else begin
-                rx_shift_q <= {rx_shift_q[6:0], spi_mosi_i};
-                if (spi_bit_q == 3'd7) begin
-                    spi_bit_q <= 3'd0;
-                    if (spi_rx_count_q < MAX_FRAME_BYTES) begin
-                        rx_mem[spi_rx_count_q] <= {rx_shift_q[6:0], spi_mosi_i};
-                        spi_rx_count_q <= spi_rx_count_q + 1'b1;
-                    end
-                end else begin
-                    spi_bit_q <= spi_bit_q + 1'b1;
-                end
-            end
-        end
-    end
-
-    logic req_meta_q, req_sync_q, req_seen_q;
-    logic rsp_cons_meta_q, rsp_cons_sync_q, rsp_cons_seen_q;
-    logic req_ack_toggle_q;
-    logic [FRAME_COUNT_W-1:0] request_len_q;
-
-    typedef enum logic [3:0] {
-        P_IDLE,
-        P_CHECK,
-        P_CRC,
-        P_PUBLISH,
-        P_ERROR,
-        R_IDLE,
-        R_HEADER_CRC,
-        R_PAYLOAD_CRC,
-        R_FINALIZE
+    typedef enum logic [2:0] {
+        C_IDLE,
+        C_CHECK,
+        C_REQ_CRC,
+        C_PUBLISH,
+        C_RSP_HEADER_CRC,
+        C_RSP_PAYLOAD_CRC,
+        C_RSP_FINALIZE
     } control_state_t;
 
     control_state_t control_state_q;
     logic [FRAME_COUNT_W-1:0] crc_index_q;
     logic [31:0] crc_q;
+    logic [31:0] crc_next;
     logic [15:0] parsed_payload_len_q;
     logic [15:0] parsed_transaction_id_q;
     logic [7:0] parsed_opcode_q;
     logic [7:0] parsed_flags_q;
-    logic [15:0] pending_error_q;
 
     logic [15:0] build_payload_len_q;
     logic [15:0] build_payload_index_q;
     logic [7:0] build_opcode_q;
-    logic [7:0] build_flags_q;
     logic [15:0] build_transaction_id_q;
 
     logic cache_valid_q;
     logic [15:0] cache_transaction_id_q;
     logic [7:0] cache_opcode_q;
+
+    logic auto_error_start_q;
+    logic [15:0] auto_error_code_q;
 
     integer i;
 
@@ -179,111 +126,194 @@ module fpst_btp_spi_slave #(
         end
     endfunction
 
-    function automatic logic [31:0] load_be32_mem(input integer base);
+    function automatic logic [31:0] rx_load_be32(input integer base);
         begin
-            load_be32_mem = {rx_mem[base], rx_mem[base+1],
-                             rx_mem[base+2], rx_mem[base+3]};
+            rx_load_be32 = {rx_mem[base], rx_mem[base+1],
+                            rx_mem[base+2], rx_mem[base+3]};
         end
     endfunction
+
+    assign sclk_rise = sclk_sync_q && !sclk_prev_q;
+    assign sclk_fall = !sclk_sync_q && sclk_prev_q;
+    assign cs_fall = !cs_sync_q && cs_prev_q;
+    assign cs_rise = cs_sync_q && !cs_prev_q;
+    assign spi_miso_o = miso_q;
 
     assign cmd_payload_data_o =
         (cmd_payload_addr_i < cmd_payload_len_o) ?
         rx_mem[HEADER_BYTES + cmd_payload_addr_i] : 8'h00;
 
     assign irq_no = ~rsp_pending_q;
-    assign busy_o = (control_state_q != P_IDLE) &&
-                    (control_state_q != P_PUBLISH) &&
-                    (control_state_q != R_IDLE);
+    assign busy_o = request_pending_q || cmd_valid_o ||
+                    (control_state_q != C_IDLE);
     assign fault_o = 1'b0;
-    assign rsp_ready_o = (control_state_q == P_IDLE ||
-                          control_state_q == P_PUBLISH) && !rsp_pending_q;
+    assign rsp_ready_o = (control_state_q == C_IDLE) && !request_pending_q &&
+                         !cmd_valid_o && !rsp_pending_q;
+
+    always_comb begin
+        crc_next = crc32_byte(crc_q,
+                    (control_state_q == C_REQ_CRC) ? rx_mem[crc_index_q] :
+                    (control_state_q == C_RSP_HEADER_CRC) ? tx_mem[crc_index_q] :
+                    rsp_payload_mem[build_payload_index_q]);
+    end
 
     always_ff @(posedge sys_clk_i) begin
         if (!rst_ni) begin
-            req_meta_q <= 1'b0;
-            req_sync_q <= 1'b0;
-            req_seen_q <= 1'b0;
-            rsp_cons_meta_q <= 1'b0;
-            rsp_cons_sync_q <= 1'b0;
-            rsp_cons_seen_q <= 1'b0;
-            req_ack_toggle_q <= 1'b0;
+            sclk_meta_q <= 1'b0;
+            sclk_sync_q <= 1'b0;
+            sclk_prev_q <= 1'b0;
+            cs_meta_q <= 1'b1;
+            cs_sync_q <= 1'b1;
+            cs_prev_q <= 1'b1;
+            mosi_meta_q <= 1'b0;
+            mosi_sync_q <= 1'b0;
+            transaction_response_q <= 1'b0;
+            rx_shift_q <= 8'h00;
+            rx_bit_q <= 3'd0;
+            tx_bit_q <= 3'd0;
+            rx_count_q <= '0;
+            tx_count_q <= '0;
             request_len_q <= '0;
-            control_state_q <= P_IDLE;
+            request_pending_q <= 1'b0;
+            miso_q <= 1'b0;
+            rsp_pending_q <= 1'b0;
+            rsp_frame_len_q <= '0;
+            control_state_q <= C_IDLE;
             crc_index_q <= '0;
             crc_q <= 32'hFFFFFFFF;
             parsed_payload_len_q <= '0;
             parsed_transaction_id_q <= '0;
             parsed_opcode_q <= '0;
             parsed_flags_q <= '0;
-            pending_error_q <= '0;
+            build_payload_len_q <= '0;
+            build_payload_index_q <= '0;
+            build_opcode_q <= '0;
+            build_transaction_id_q <= '0;
+            cache_valid_q <= 1'b0;
+            cache_transaction_id_q <= '0;
+            cache_opcode_q <= '0;
+            auto_error_start_q <= 1'b0;
+            auto_error_code_q <= '0;
             cmd_valid_o <= 1'b0;
             cmd_opcode_o <= '0;
             cmd_flags_o <= '0;
             cmd_transaction_id_o <= '0;
             cmd_payload_len_o <= '0;
-            rsp_pending_q <= 1'b0;
-            rsp_frame_len_q <= '0;
-            build_payload_len_q <= '0;
-            build_payload_index_q <= '0;
-            build_opcode_q <= '0;
-            build_flags_q <= '0;
-            build_transaction_id_q <= '0;
-            cache_valid_q <= 1'b0;
-            cache_transaction_id_q <= '0;
-            cache_opcode_q <= '0;
             link_error_valid_o <= 1'b0;
             link_error_code_o <= 16'h0000;
+            for (i = 0; i < MAX_FRAME_BYTES; i = i + 1) begin
+                rx_mem[i] <= 8'h00;
+                tx_mem[i] <= 8'h00;
+            end
             for (i = 0; i < MAX_PAYLOAD_BYTES; i = i + 1)
                 rsp_payload_mem[i] <= 8'h00;
-            for (i = 0; i < MAX_FRAME_BYTES; i = i + 1)
-                tx_mem[i] <= 8'h00;
         end else begin
-            req_meta_q <= req_toggle_spi_q;
-            req_sync_q <= req_meta_q;
-            rsp_cons_meta_q <= rsp_consumed_toggle_spi_q;
-            rsp_cons_sync_q <= rsp_cons_meta_q;
+            sclk_meta_q <= spi_sclk_i;
+            sclk_sync_q <= sclk_meta_q;
+            sclk_prev_q <= sclk_sync_q;
+            cs_meta_q <= spi_cs_ni;
+            cs_sync_q <= cs_meta_q;
+            cs_prev_q <= cs_sync_q;
+            mosi_meta_q <= spi_mosi_i;
+            mosi_sync_q <= mosi_meta_q;
+
             link_error_valid_o <= 1'b0;
             link_error_code_o <= 16'h0000;
+            auto_error_start_q <= 1'b0;
 
             if (zeroize_i) begin
+                request_pending_q <= 1'b0;
                 cmd_valid_o <= 1'b0;
                 rsp_pending_q <= 1'b0;
                 cache_valid_q <= 1'b0;
-                control_state_q <= P_IDLE;
+                control_state_q <= C_IDLE;
+                rx_shift_q <= 8'h00;
+                rx_bit_q <= 3'd0;
+                tx_bit_q <= 3'd0;
+                rx_count_q <= '0;
+                tx_count_q <= '0;
+                miso_q <= 1'b0;
+                for (i = 0; i < MAX_FRAME_BYTES; i = i + 1) begin
+                    rx_mem[i] <= 8'h00;
+                    tx_mem[i] <= 8'h00;
+                end
                 for (i = 0; i < MAX_PAYLOAD_BYTES; i = i + 1)
                     rsp_payload_mem[i] <= 8'h00;
-                for (i = 0; i < MAX_FRAME_BYTES; i = i + 1)
-                    tx_mem[i] <= 8'h00;
             end else begin
-                if (rsp_cons_sync_q != rsp_cons_seen_q) begin
-                    rsp_cons_seen_q <= rsp_cons_sync_q;
-                    rsp_pending_q <= 1'b0;
-                end
-
                 if (rsp_payload_we_i && rsp_payload_addr_i < MAX_PAYLOAD_BYTES)
                     rsp_payload_mem[rsp_payload_addr_i] <= rsp_payload_data_i;
 
-                if (cmd_valid_o && cmd_ready_i) begin
-                    cmd_valid_o <= 1'b0;
-                    req_ack_toggle_q <= req_sync_q;
-                    if (control_state_q == P_PUBLISH)
-                        control_state_q <= P_IDLE;
+                if (cs_fall) begin
+                    transaction_response_q <= rsp_pending_q;
+                    rx_shift_q <= 8'h00;
+                    rx_bit_q <= 3'd0;
+                    tx_bit_q <= 3'd0;
+                    rx_count_q <= '0;
+                    tx_count_q <= '0;
+                    if (rsp_pending_q)
+                        miso_q <= tx_mem[0][7];
+                    else
+                        miso_q <= 1'b0;
                 end
 
+                if (!cs_sync_q && !transaction_response_q && sclk_rise) begin
+                    rx_shift_q <= {rx_shift_q[6:0], mosi_sync_q};
+                    if (rx_bit_q == 3'd7) begin
+                        rx_bit_q <= 3'd0;
+                        if (rx_count_q < MAX_FRAME_BYTES) begin
+                            rx_mem[rx_count_q] <= {rx_shift_q[6:0], mosi_sync_q};
+                            rx_count_q <= rx_count_q + 1'b1;
+                        end
+                    end else begin
+                        rx_bit_q <= rx_bit_q + 1'b1;
+                    end
+                end
+
+                if (!cs_sync_q && transaction_response_q && sclk_fall) begin
+                    if (tx_bit_q == 3'd7) begin
+                        tx_bit_q <= 3'd0;
+                        if (tx_count_q + 1'b1 < rsp_frame_len_q) begin
+                            tx_count_q <= tx_count_q + 1'b1;
+                            miso_q <= tx_mem[tx_count_q + 1'b1][7];
+                        end else begin
+                            tx_count_q <= tx_count_q + 1'b1;
+                            miso_q <= 1'b0;
+                        end
+                    end else begin
+                        tx_bit_q <= tx_bit_q + 1'b1;
+                        miso_q <= tx_mem[tx_count_q][6-tx_bit_q];
+                    end
+                end
+
+                if (cs_rise) begin
+                    miso_q <= 1'b0;
+                    if (transaction_response_q) begin
+                        if (tx_count_q >= rsp_frame_len_q - 1'b1)
+                            rsp_pending_q <= 1'b0;
+                    end else if (!request_pending_q && !cmd_valid_o &&
+                                 rx_count_q >= HEADER_BYTES + TRAILER_BYTES) begin
+                        request_len_q <= rx_count_q;
+                        request_pending_q <= 1'b1;
+                    end
+                end
+
+                if (cmd_valid_o && cmd_ready_i)
+                    cmd_valid_o <= 1'b0;
+
                 case (control_state_q)
-                    P_IDLE: begin
-                        if (req_sync_q != req_seen_q && !rsp_pending_q) begin
-                            req_seen_q <= req_sync_q;
-                            /* rx count is stable after CS rose and before ack. */
-                            request_len_q <= spi_rx_count_q;
-                            control_state_q <= P_CHECK;
+                    C_IDLE: begin
+                        if (request_pending_q && !cmd_valid_o && !rsp_pending_q) begin
+                            parsed_opcode_q <= rx_mem[3];
+                            parsed_flags_q <= rx_mem[4];
+                            parsed_transaction_id_q <= {rx_mem[6], rx_mem[7]};
+                            parsed_payload_len_q <= {rx_mem[8], rx_mem[9]};
+                            control_state_q <= C_CHECK;
                         end else if (rsp_valid_i && rsp_ready_o) begin
                             if (rsp_payload_len_i > MAX_PAYLOAD_BYTES) begin
                                 link_error_valid_o <= 1'b1;
                                 link_error_code_o <= ERR_BTP_LENGTH;
                             end else begin
                                 build_opcode_q <= rsp_opcode_i;
-                                build_flags_q <= rsp_flags_i | FLAG_RESPONSE;
                                 build_transaction_id_q <= rsp_transaction_id_i;
                                 build_payload_len_q <= rsp_payload_len_i;
                                 tx_mem[0] <= 8'hA5;
@@ -298,143 +328,136 @@ module fpst_btp_spi_slave #(
                                 tx_mem[9] <= rsp_payload_len_i[7:0];
                                 crc_q <= 32'hFFFFFFFF;
                                 crc_index_q <= 2;
-                                control_state_q <= R_HEADER_CRC;
+                                control_state_q <= C_RSP_HEADER_CRC;
                             end
                         end
                     end
 
-                    P_CHECK: begin
-                        parsed_opcode_q <= rx_mem[3];
-                        parsed_flags_q <= rx_mem[4];
-                        parsed_transaction_id_q <= {rx_mem[6], rx_mem[7]};
-                        parsed_payload_len_q <= {rx_mem[8], rx_mem[9]};
-
+                    C_CHECK: begin
                         if (request_len_q < HEADER_BYTES + TRAILER_BYTES ||
                             rx_mem[0] != 8'hA5 || rx_mem[1] != 8'h5A) begin
-                            pending_error_q <= ERR_BTP_SOF;
-                            control_state_q <= P_ERROR;
+                            auto_error_code_q <= ERR_BTP_SOF;
+                            auto_error_start_q <= 1'b1;
+                            request_pending_q <= 1'b0;
+                            control_state_q <= C_IDLE;
                         end else if (rx_mem[2] != BTP_VERSION) begin
-                            pending_error_q <= ERR_BTP_VERSION;
-                            control_state_q <= P_ERROR;
+                            auto_error_code_q <= ERR_BTP_VERSION;
+                            auto_error_start_q <= 1'b1;
+                            request_pending_q <= 1'b0;
+                            control_state_q <= C_IDLE;
                         end else if (rx_mem[5] != 8'h00 ||
                                      {rx_mem[8], rx_mem[9]} > MAX_PAYLOAD_BYTES ||
                                      request_len_q != HEADER_BYTES +
                                          {rx_mem[8], rx_mem[9]} + TRAILER_BYTES) begin
-                            pending_error_q <= ERR_BTP_LENGTH;
-                            control_state_q <= P_ERROR;
+                            auto_error_code_q <= ERR_BTP_LENGTH;
+                            auto_error_start_q <= 1'b1;
+                            request_pending_q <= 1'b0;
+                            control_state_q <= C_IDLE;
                         end else begin
                             crc_q <= 32'hFFFFFFFF;
                             crc_index_q <= 2;
-                            control_state_q <= P_CRC;
+                            control_state_q <= C_REQ_CRC;
                         end
                     end
 
-                    P_CRC: begin
-                        logic [31:0] crc_next;
-                        crc_next = crc32_byte(crc_q, rx_mem[crc_index_q]);
+                    C_REQ_CRC: begin
                         crc_q <= crc_next;
                         if (crc_index_q == HEADER_BYTES + parsed_payload_len_q - 1) begin
                             if ((~crc_next) !=
-                                load_be32_mem(HEADER_BYTES + parsed_payload_len_q)) begin
-                                pending_error_q <= ERR_BTP_CRC;
-                                control_state_q <= P_ERROR;
+                                rx_load_be32(HEADER_BYTES + parsed_payload_len_q)) begin
+                                auto_error_code_q <= ERR_BTP_CRC;
+                                auto_error_start_q <= 1'b1;
+                                request_pending_q <= 1'b0;
+                                control_state_q <= C_IDLE;
                             end else if (cache_valid_q &&
                                          parsed_transaction_id_q == cache_transaction_id_q &&
                                          parsed_opcode_q == cache_opcode_q) begin
-                                /* Duplicate request after response loss: replay the byte-identical
-                                 * cached response without repeating the operation. */
                                 rsp_pending_q <= 1'b1;
-                                req_ack_toggle_q <= req_sync_q;
-                                control_state_q <= P_IDLE;
+                                request_pending_q <= 1'b0;
+                                control_state_q <= C_IDLE;
                             end else begin
                                 cmd_opcode_o <= parsed_opcode_q;
                                 cmd_flags_o <= parsed_flags_q;
                                 cmd_transaction_id_o <= parsed_transaction_id_q;
                                 cmd_payload_len_o <= parsed_payload_len_q;
                                 cmd_valid_o <= 1'b1;
-                                control_state_q <= P_PUBLISH;
+                                request_pending_q <= 1'b0;
+                                control_state_q <= C_PUBLISH;
                             end
                         end else begin
                             crc_index_q <= crc_index_q + 1'b1;
                         end
                     end
 
-                    P_PUBLISH: begin
-                        /* Dispatcher owns cmd_ready_i after it has copied/consumed
-                         * all payload bytes and scheduled a response. */
+                    C_PUBLISH: begin
+                        if (!cmd_valid_o)
+                            control_state_q <= C_IDLE;
                     end
 
-                    P_ERROR: begin
-                        link_error_valid_o <= 1'b1;
-                        link_error_code_o <= pending_error_q;
-                        rsp_payload_mem[0] <= pending_error_q[15:8];
-                        rsp_payload_mem[1] <= pending_error_q[7:0];
-                        build_opcode_q <= parsed_opcode_q;
-                        build_flags_q <= FLAG_RESPONSE | FLAG_ERROR;
-                        build_transaction_id_q <= parsed_transaction_id_q;
-                        build_payload_len_q <= 16'd2;
-                        tx_mem[0] <= 8'hA5;
-                        tx_mem[1] <= 8'h5A;
-                        tx_mem[2] <= BTP_VERSION;
-                        tx_mem[3] <= parsed_opcode_q;
-                        tx_mem[4] <= FLAG_RESPONSE | FLAG_ERROR;
-                        tx_mem[5] <= 8'h00;
-                        tx_mem[6] <= parsed_transaction_id_q[15:8];
-                        tx_mem[7] <= parsed_transaction_id_q[7:0];
-                        tx_mem[8] <= 8'h00;
-                        tx_mem[9] <= 8'h02;
-                        crc_q <= 32'hFFFFFFFF;
-                        crc_index_q <= 2;
-                        req_ack_toggle_q <= req_sync_q;
-                        control_state_q <= R_HEADER_CRC;
-                    end
-
-                    R_HEADER_CRC: begin
-                        logic [31:0] crc_next;
-                        crc_next = crc32_byte(crc_q, tx_mem[crc_index_q]);
+                    C_RSP_HEADER_CRC: begin
                         crc_q <= crc_next;
                         if (crc_index_q == 9) begin
                             build_payload_index_q <= 0;
                             if (build_payload_len_q == 0)
-                                control_state_q <= R_FINALIZE;
+                                control_state_q <= C_RSP_FINALIZE;
                             else
-                                control_state_q <= R_PAYLOAD_CRC;
+                                control_state_q <= C_RSP_PAYLOAD_CRC;
                         end else begin
                             crc_index_q <= crc_index_q + 1'b1;
                         end
                     end
 
-                    R_PAYLOAD_CRC: begin
-                        logic [31:0] crc_next;
+                    C_RSP_PAYLOAD_CRC: begin
                         tx_mem[HEADER_BYTES + build_payload_index_q] <=
                             rsp_payload_mem[build_payload_index_q];
-                        crc_next = crc32_byte(crc_q,
-                                             rsp_payload_mem[build_payload_index_q]);
                         crc_q <= crc_next;
-                        if (build_payload_index_q + 1'b1 == build_payload_len_q) begin
-                            control_state_q <= R_FINALIZE;
-                        end else begin
+                        if (build_payload_index_q + 1'b1 == build_payload_len_q)
+                            control_state_q <= C_RSP_FINALIZE;
+                        else
                             build_payload_index_q <= build_payload_index_q + 1'b1;
-                        end
                     end
 
-                    R_FINALIZE: begin
-                        logic [31:0] final_crc;
-                        final_crc = ~crc_q;
-                        tx_mem[HEADER_BYTES + build_payload_len_q + 0] <= final_crc[31:24];
-                        tx_mem[HEADER_BYTES + build_payload_len_q + 1] <= final_crc[23:16];
-                        tx_mem[HEADER_BYTES + build_payload_len_q + 2] <= final_crc[15:8];
-                        tx_mem[HEADER_BYTES + build_payload_len_q + 3] <= final_crc[7:0];
+                    C_RSP_FINALIZE: begin
+                        tx_mem[HEADER_BYTES + build_payload_len_q + 0] <= (~crc_q)[31:24];
+                        tx_mem[HEADER_BYTES + build_payload_len_q + 1] <= (~crc_q)[23:16];
+                        tx_mem[HEADER_BYTES + build_payload_len_q + 2] <= (~crc_q)[15:8];
+                        tx_mem[HEADER_BYTES + build_payload_len_q + 3] <= (~crc_q)[7:0];
                         rsp_frame_len_q <= HEADER_BYTES + build_payload_len_q + TRAILER_BYTES;
                         rsp_pending_q <= 1'b1;
                         cache_valid_q <= 1'b1;
                         cache_transaction_id_q <= build_transaction_id_q;
                         cache_opcode_q <= build_opcode_q;
-                        control_state_q <= P_IDLE;
+                        control_state_q <= C_IDLE;
                     end
 
-                    default: control_state_q <= P_IDLE;
+                    default: control_state_q <= C_IDLE;
                 endcase
+
+                /* Link-level malformed request response. It is built only while
+                 * the response builder is idle, and uses the canonical 16-bit
+                 * Appendix-C error code as the generic response payload. */
+                if (auto_error_start_q && control_state_q == C_IDLE && !rsp_pending_q) begin
+                    link_error_valid_o <= 1'b1;
+                    link_error_code_o <= auto_error_code_q;
+                    rsp_payload_mem[0] <= auto_error_code_q[15:8];
+                    rsp_payload_mem[1] <= auto_error_code_q[7:0];
+                    build_opcode_q <= parsed_opcode_q;
+                    build_transaction_id_q <= parsed_transaction_id_q;
+                    build_payload_len_q <= 16'd2;
+                    tx_mem[0] <= 8'hA5;
+                    tx_mem[1] <= 8'h5A;
+                    tx_mem[2] <= BTP_VERSION;
+                    tx_mem[3] <= parsed_opcode_q;
+                    tx_mem[4] <= FLAG_RESPONSE | FLAG_ERROR;
+                    tx_mem[5] <= 8'h00;
+                    tx_mem[6] <= parsed_transaction_id_q[15:8];
+                    tx_mem[7] <= parsed_transaction_id_q[7:0];
+                    tx_mem[8] <= 8'h00;
+                    tx_mem[9] <= 8'h02;
+                    crc_q <= 32'hFFFFFFFF;
+                    crc_index_q <= 2;
+                    control_state_q <= C_RSP_HEADER_CRC;
+                end
             end
         end
     end
