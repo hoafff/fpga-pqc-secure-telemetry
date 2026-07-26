@@ -27,4 +27,24 @@ fpst_result_t fpst_mlkem_session_establish_tx_derand(
     const uint8_t coins[FPST_MLKEM512_ENCAP_COINS_BYTES],
     uint8_t ciphertext[FPST_MLKEM512_CIPHERTEXT_BYTES]);
 
+/*
+ * Board-RAM-optimized path. The implementation uses the reserved tail of the
+ * link response storage as ciphertext scratch, commits/activates the Primer #1
+ * TX key first, and only then calls the sink with the public 768-byte ML-KEM
+ * ciphertext. This preserves atomic session semantics without allocating a
+ * second ciphertext buffer on the 8 KiB SN32F407F.
+ */
+typedef fpst_result_t (*fpst_mlkem_ciphertext_sink_fn)(
+    void *ctx,
+    const uint8_t ciphertext[FPST_MLKEM512_CIPHERTEXT_BYTES],
+    size_t len);
+
+fpst_result_t fpst_mlkem_session_establish_tx_to_sink(
+    fpst_session_manager_t *session,
+    const uint8_t receiver_public_key[FPST_MLKEM512_PUBLIC_KEY_BYTES],
+    uint32_t session_id,
+    const fpst_csprng_t *rng,
+    fpst_mlkem_ciphertext_sink_fn sink,
+    void *sink_ctx);
+
 #endif
