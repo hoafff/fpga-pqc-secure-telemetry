@@ -1,13 +1,13 @@
 # FPST Primer #1 Deployment Profile v1.1
 
 **Target:** OneKiwi Kiwi Primer 20K #1 (`GW2A-LV18PG256C8/I7`)  
-**System baseline:** `FPST-SYS-SPEC-001 v1.1`  
+**Reference baseline:** `FPST-SYS-SPEC-001 v1.1`  
 **Top:** `kiwi_primer20k_fpst_tx_top`  
 **Sources:** `targets/primer20k_1/sources-fpst-deployment.f`  
 **CST:** `constraints/kiwi_primer_20k/kiwi_primer20k_fpst_tx.cst`  
 **SDC:** `constraints/kiwi_primer_20k/kiwi_primer20k_fpst_tx.sdc`
 
-This profile binds project-owned implementation details without overriding normative FPST v1.1 semantics. A later organizer-issued conflicting frozen value requires coordinated update of this profile and both communicating endpoints before hardware qualification.
+This is a maintained **project deployment profile**. When sources disagree, real hardware/schematic/pinout/electrical constraints and official organizer/manufacturer board material take priority, followed by current executable RTL/firmware/CST/SDC evidence and explicit project decisions. `FPST-SYS-SPEC-001 v1.1` is a reference baseline, not an absolute authority.
 
 ## 1. BTP transport binding
 
@@ -55,7 +55,7 @@ This profile binds project-owned implementation details without overriding norma
 | `0x60` | `TELEMETRY_TX_SAMPLE` | build STP, Ascon-encrypt one 24-byte sample, retain packet |
 | `0x7F` | `PING` | echo token in generic response |
 
-Runtime `SELF_TEST (0x06)` and `ASCON_KAT (0x50)` are intentionally not duplicated inside the deployment image; they return `ERR_UNSUPPORTED_OPCODE`. Dedicated NTT and Ascon KAT board bitstreams remain the hardware diagnostic path. `SOFT_RESET (0x05)` is likewise not given project-invented semantics where the baseline does not freeze a Primer #1 scope binding; reset/zeroize behavior is exercised by physical sidebands and `ZEROIZE`.
+Runtime `SELF_TEST (0x06)` and `ASCON_KAT (0x50)` are intentionally not duplicated inside the deployment image; they return `ERR_UNSUPPORTED_OPCODE`. Dedicated NTT and Ascon KAT board bitstreams remain the hardware diagnostic path. `SOFT_RESET (0x05)` also remains unsupported rather than inventing deployment semantics not required by the current project contract.
 
 ## 3. PQC payload / domain binding
 
@@ -185,7 +185,7 @@ Writing the exact retained sequence to `TX_COMMIT_SEQUENCE` releases the retaine
 
 ## 6. Single-datapath deployment
 
-All `0x20..0x28` commands route to `primer1_pqc_btp_endpoint_v2.sv` / `mlkem_pqc_accelerator`. The legacy `forward_ntt_core` instance still present in the control endpoint source is bound in deployment to `forward_ntt_core_disabled.sv`, so the bitstream contains one real transform datapath rather than two coefficient images.
+All `0x20..0x28` commands route to `primer1_pqc_btp_endpoint_v2.sv` / `mlkem_pqc_accelerator`. The compatibility `forward_ntt_core` instance remaining in the control endpoint is bound in deployment to `forward_ntt_core_disabled.sv`, so the bitstream contains one real transform datapath rather than two coefficient images.
 
 ## 7. Supervisor / heartbeat binding
 
@@ -194,13 +194,15 @@ Tiny-side `secure_enable_i`, `zeroize_ni` and `fatal_latched_i` are asynchronous
 - `secure_enable_i`: two-clock fail-safe synchronizer;
 - `zeroize_ni`: asynchronous assertion, synchronized release;
 - `fatal_latched_i`: fail-safe asynchronous local assertion, synchronized release;
-- `heartbeat_o`: transition every exactly `2,700,000` system clocks = 100 ms at 27 MHz.
+- `heartbeat_o`: project liveness transition every exactly `2,700,000` system clocks = 100 ms at 27 MHz.
 
-The heartbeat implementation uses a terminal-count divider rather than a counter bit because no power-of-two divider meets the 100 ms ±20% target at 27 MHz.
+Heartbeat is a **liveness signal**, not a secure-state indication. It therefore continues while the endpoint is secure-disabled, zeroized or fatal-latched as long as the board clock/logic remains alive. This is required by the current Tiny recovery architecture.
 
-## 8. Frozen FPGA-side harness
+The nominal 100 ms value is a **project-profile value adopted from the FPST reference baseline**, not a board/manufacturer electrical requirement. Regression overrides the terminal count with a short value while preserving the same semantics.
 
-The current deployment `.cst` freezes:
+## 8. FPGA-side harness profile
+
+The current deployment `.cst` freezes the FPGA package-pin assignment:
 
 ```text
 J2-3   P16   spi_sck_i
@@ -218,7 +220,7 @@ J2-18  T11   heartbeat_o
 
 Board clock/reset/LED constraints are H11, A5 and J1/J2/H1/H2/G1/G2/F1 respectively.
 
-This is the **wiring contract**, not proof that an assembled harness is correct. Before power-on of the connected system, continuity-check each signal and ground against this table. Any intentional pin change is a profile change and must update both `.cst` and harness documentation.
+This table is the **project FPGA-side wiring profile**, not proof that an assembled inter-board harness is correct. Before connected-system power-on, continuity-check each signal and ground. Any intentional package-pin change requires verified board evidence and coordinated CST/harness-document update.
 
 ## 9. Timing profile
 
@@ -227,18 +229,19 @@ sys_clk_i : 27 MHz, 37.037 ns
 spi_sck_i : implementation envelope 5 MHz, 200.000 ns
 ```
 
-`sys_clk` and `spi_sck` are declared asynchronous clock groups. Board bring-up begins at 1 MHz SPI; the release rate is raised only after measured qualification.
+`sys_clk` and `spi_sck` are declared asynchronous clock groups. Board bring-up starts at 1 MHz SPI. The project uses a measured 1→2→3→4→5 MHz qualification ladder; 5 MHz is not treated as board-qualified merely because generic STA/synthesis accepts the envelope.
 
 ## 10. Verification gate
 
-Required host gates:
+Required repository gates:
 
 ```bash
 bash scripts/sim/run_iverilog_unit_tests.sh
 bash scripts/sim/run_primer1_pqc_wire_test.sh
+bash scripts/sim/run_supervisor_system_integration.sh
 bash scripts/synth/check_kiwi_primer20k_fpst_deployment_yosys.sh
 ```
 
-Coverage includes BTP PING/CRC/two-CS framing, IRQ, truncated response recovery, byte-identical duplicate retry, transaction collision rejection, non-idempotent duplicate protection, semantic validation, key/session/zeroize behavior, Ascon KAT, heartbeat terminal count, NTT/INTT round trip, add/sub, MultiplyNTTs and a full polynomial flow over the actual SPI/BTP top.
+Coverage includes BTP framing/CRC/two-CS behavior, IRQ, truncated response recovery, duplicate cache, transaction collision protection, semantic validation, key/session/zeroize behavior, Ascon KAT, heartbeat liveness/terminal count, NTT/INTT round trip, add/sub, MultiplyNTTs and integrated supervisor behavior.
 
-Generic Yosys synthesis is a synthesizability gate only. Hardware-ready status additionally requires exact-device Gowin synthesis/P&R/timing, continuity evidence and real-board logic-analyzer/fault/reset/zeroize testing.
+Generic Yosys synthesis is a synthesizability gate only. Hardware-ready status additionally requires exact-device Gowin synthesis/P&R/timing, generated/programmed `.fs`, physical continuity/electrical evidence and real-board SPI/fault/zeroize/recovery measurements recorded in `docs/hardware/FPST-PRE-HARDWARE-SIGNOFF-v1.0.md`.
