@@ -8,7 +8,7 @@ Thư mục này là điểm vào duy nhất để xác định **code nào dùng
 |---|---|---|---|
 | [`primer20k_1`](primer20k_1/README.md) | Kiwi Primer 20K #1 | NTT/INTT, Ascon encrypt, STP TX | NTT self-test đã có; phần còn lại đang phát triển |
 | [`primer20k_2`](primer20k_2/README.md) | Kiwi Primer 20K #2 | Ascon decrypt/verify, STP RX, replay | Chưa triển khai RTL target |
-| [`tiny1p5`](tiny1p5/README.md) | Kiwi FPGA Tiny 1P5 | Supervisor/watchdog/tamper | Chưa triển khai RTL target |
+| [`tiny1p5`](tiny1p5/README.md) | Kiwi FPGA Tiny 1P5 | Supervisor/watchdog/tamper | Deployment candidate: RTL/CST/SDC/tests đã có; chờ Gowin + hardware evidence |
 | [`sn32f407`](sn32f407/README.md) | SONiX SN32F407 EVK | Firmware control và PC–FPGA bridge | Chưa khóa pin/protocol |
 | [`pc`](pc/README.md) | Máy tính | Host, golden model, simulation, benchmark | Golden NTT đã có; host app chưa hoàn tất |
 
