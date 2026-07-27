@@ -22,34 +22,42 @@ PC không giao tiếp trực tiếp với Primer #1, Primer #2 hoặc Tiny 1P5.
 
 ## 2. Deployment status
 
-Implemented on `main`:
+Implemented on the repair branch:
 
 ```text
 Python 3.10+ host package
 pyserial UART transport
 serial-port enumeration
-SN32 CLI protocol adapter
-wiring/ping/caps/status
+final dual-Primer SN32 command registry
 non-destructive probe/demo
-explicit confirmation for zeroize/reset
+interactive ML-KEM-512 public-key/ciphertext session exchange
+explicit confirmation for state-changing commands
 JSON output
 secret-redacted JSONL logging
-command RTT benchmark
+read-only command RTT benchmark
 hardware-independent unit tests
 ```
 
-The final SN32 firmware now has richer ML-KEM/session/telemetry/dual-Primer commands. The Python adapter currently exposes the bring-up subset above; extending the adapter does not require changing its serial transport architecture.
+The final MCU commands are:
+
+```text
+read-only:
+  help wiring ping ping2 discover selftest id id2 status status2
+  key-status key-status2 pqc-status rx-counters adc rng-status fault
+
+state-changing:
+  rng-reseed zeroize telemetry kem-session
+```
+
+`caps` and `reset` are not present in the final dual-Primer dispatcher and have been removed from the PC adapter.
 
 ## 3. Code locations
-
-Deployment host:
 
 ```text
 software/host/
 ├── pyproject.toml
 ├── README.md
 ├── fpst_host/
-│   ├── __init__.py
 │   ├── models.py
 │   ├── transport.py
 │   ├── protocol.py
@@ -59,13 +67,7 @@ software/host/
 └── tests/
 ```
 
-Golden/reference models remain under:
-
-```text
-software/reference/
-```
-
-Do not merge reference/golden implementations into production transport logic; independent models are required to catch byte-order and algorithm mistakes.
+Golden/reference models remain under `software/reference/`. Do not merge reference implementations into production transport logic; independent models are required to catch byte-order and algorithm mistakes.
 
 ## 4. Install and test
 
@@ -95,21 +97,44 @@ python -m unittest discover -s tests -v
 fpst-host ports
 fpst-host probe --port COM5
 fpst-host demo  --port COM5
-
-fpst-host wiring --port COM5
-fpst-host ping   --port COM5
-fpst-host caps   --port COM5
-fpst-host status --port COM5
 ```
 
-State-changing operations require explicit confirmation:
+FIX-008 freezes the demo order to:
+
+```text
+wiring -> discover -> selftest -> status -> status2 -> rng-status
+```
+
+Representative diagnostics:
 
 ```bash
-fpst-host zeroize --port COM5 --yes
-fpst-host reset   --port COM5 --yes
+fpst-host ping        --port COM5
+fpst-host ping2       --port COM5
+fpst-host key-status  --port COM5
+fpst-host key-status2 --port COM5
+fpst-host rx-counters --port COM5
 ```
 
-Use the actual `/dev/ttyUSB*` or `/dev/ttyACM*` port on Linux.
+State-changing operations require confirmation:
+
+```bash
+fpst-host rng-reseed --port COM5 --yes
+fpst-host telemetry  --port COM5 --yes
+fpst-host zeroize    --port COM5 --yes
+```
+
+ML-KEM pair session uses the dedicated streaming path:
+
+```bash
+fpst-host kem-session \
+  --port COM5 \
+  --public-key receiver_mlkem512_pk.bin \
+  --session-id 0x10203040 \
+  --ciphertext-out session.ct \
+  --yes
+```
+
+The host waits for `KEM_PK_READY`, streams exactly 800 public-key bytes as 1600 hex digits, validates the 768-byte ciphertext CRC and requires `kem-pair-session=ACTIVE` before accepting the result.
 
 ## 6. Benchmark and results
 
@@ -124,13 +149,7 @@ Never log private keys, ML-KEM shared secrets, `K_TX`, `NP_TX`, private seeds, p
 
 ## 7. Verification responsibilities
 
-Golden/reference responsibilities include:
-
-- NTT/INTT oracle;
-- Ascon-AEAD128 encryption/decryption/tag oracle;
-- ML-KEM/KDF differential vectors;
-- STP packet encode/decode behavior;
-- deterministic negative/retry/replay cases.
+Golden/reference responsibilities include NTT/INTT, Ascon-AEAD128, ML-KEM/KDF, STP encode/decode and deterministic negative/retry/replay cases.
 
 Integration verification eventually covers:
 
@@ -145,6 +164,6 @@ Tiny supervisor fault/zeroize/recovery
 
 ## 8. Hardware qualification
 
-The PC target is not hardware-verified until the package runs on the intended deployment PC, the real SN32 serial port is identified, UART bring-up succeeds, controlled state-changing operations are observed on hardware, and the captured logs are checked for accidental secret exposure.
+The PC target is not hardware-verified until the package runs on the intended deployment PC, the real SN32 UART responds at 115200 8N1, Gate-B dual-Primer demo passes, interactive `kem-session` is validated against real hardware, controlled state-changing operations are observed, and captured logs are checked for accidental secret exposure.
 
-See [`../../software/host/README.md`](../../software/host/README.md) for the host application guide and [`../sn32f407/README.md`](../sn32f407/README.md) for the board-side contract.
+See `../../software/host/README.md` for the host application guide and `../sn32f407/README.md` for the board-side contract.
