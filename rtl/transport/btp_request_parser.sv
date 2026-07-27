@@ -52,7 +52,7 @@ module btp_request_parser #(
 
     logic [31:0] observed_crc_with_current;
     logic [31:0] expected_crc;
-    logic [COUNT_W-1:0] expected_frame_len;
+    logic [17:0] expected_frame_len;
     logic crc_data_region;
     logic crc_wire_region;
 
@@ -65,6 +65,7 @@ module btp_request_parser #(
 
     assign expected_crc = crc32_finalize(crc_q);
     assign observed_crc_with_current = {observed_crc_q[23:0], frame_rd_data_i};
+    /* Keep the full 18-bit sum; range checks below reject values above BTP_MAX_PAYLOAD. */
     assign expected_frame_len = BTP_HEADER_BYTES + payload_len_q + BTP_CRC_BYTES;
     assign crc_data_region = (frame_len_q >= BTP_CRC_BYTES) &&
                              (scan_index_q >= 2) &&
