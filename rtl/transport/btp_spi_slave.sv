@@ -28,15 +28,19 @@ module btp_spi_slave #(
     output logic overflow_o
 );
     /*
-     * FPST BTP v1 uses two CS-bounded SPI transactions.  Bit shifting remains
-     * entirely in the SPI clock domain.  The 27 MHz domain observes only
+     * FPST BTP v1 uses two CS-bounded SPI transactions. Bit shifting remains
+     * entirely in the SPI clock domain. The 27 MHz domain observes only
      * stable frame memory plus synchronized event/CS state.
      *
-     * The response image is written and committed while SCK is stopped.  The
-     * master waits for IRQ before the response transaction, so tx_ready_q,
-     * tx_len_hold_q and tx_mem are stable well before the first sampling edge.
+     * The response image is written and committed while SCK is stopped. The
+     * master waits for IRQ before the response transaction. TX storage uses a
+     * synchronous system-clock read so Gowin can map it to BSRAM instead of
+     * expanding the 11-bit address space into a 16384-DFF asynchronous-read
+     * register bank. The locked 1 MHz SPI bring-up clock leaves many 27 MHz
+     * cycles between byte-boundary address changes and the next sampled bit.
      */
     logic [7:0] rx_mem [0:MAX_FRAME_BYTES-1];
+    (* ram_style = "block", syn_ramstyle = "block_ram" *)
     logic [7:0] tx_mem [0:MAX_FRAME_BYTES-1];
 
     /* ------------------------ request / SCK domain ------------------------ */
@@ -64,6 +68,7 @@ module btp_spi_slave #(
     logic rx_pending_q;
 
     logic [COUNT_W-1:0] tx_len_hold_q;
+    logic [7:0] tx_rd_data_q;
     logic tx_ready_q;
 
     logic cs_rise_sys;
@@ -80,27 +85,28 @@ module btp_spi_slave #(
 
     /*
      * Mode 0 requires MISO bit 7 to be valid before the first rising SCK edge.
-     * tx_byte_q/tx_bit_q are reset to byte 0/bit 7 by CS rising, while the
-     * committed response memory remains immutable until a complete read.
+     * tx_byte_q/tx_bit_q are reset to byte 0/bit 7 by CS rising. The system
+     * clock continuously prefetches tx_mem[tx_byte_q] into tx_rd_data_q, so byte
+     * 0 is already resident before IRQ allows the response transfer to start.
      *
      * The physical FPST harness is a multi-slave SPI0 bus: Primer #1, Primer #2
-     * and the disabled onboard flash share MISO.  An endpoint therefore MUST
-     * release MISO whenever its CS is high.  The top-level Z below is intended
+     * and the disabled onboard flash share MISO. An endpoint therefore MUST
+     * release MISO whenever its CS is high. The top-level Z below is intended
      * to infer the FPGA output-enable/tri-state buffer; driving a logic 0 while
      * deselected would cause bus contention when the other Primer returns a 1.
      */
     always_comb begin
         if (!spi_cs_ni && tx_ready_q && !tx_done_sck_q &&
             (tx_byte_q < tx_len_hold_q))
-            spi_miso_o = tx_mem[tx_byte_q][tx_bit_q];
+            spi_miso_o = tx_rd_data_q[tx_bit_q];
         else
             spi_miso_o = 1'bz;
     end
 
     /*
-     * CS is asynchronous to clk_i.  Synchronizing the idle-high level lets the
+     * CS is asynchronous to clk_i. Synchronizing the idle-high level lets the
      * system domain detect the end of a request after rx_mem/count/flags have
-     * become stable.  rx_count_q is deliberately not cleared by CS; it remains
+     * become stable. rx_count_q is deliberately not cleared by CS; it remains
      * stable during CS high and is reset on the first SCK of the next request.
      */
     always_ff @(posedge clk_i) begin
@@ -121,6 +127,7 @@ module btp_spi_slave #(
             rx_pending_q <= 1'b0;
 
             tx_len_hold_q <= '0;
+            tx_rd_data_q <= 8'h00;
             tx_ready_q <= 1'b0;
             tx_frame_consumed_o <= 1'b0;
         end else begin
@@ -135,6 +142,9 @@ module btp_spi_slave #(
 
             tx_frame_consumed_o <= 1'b0;
 
+            /* Synchronous read is the key pattern required for BSRAM inference. */
+            tx_rd_data_q <= tx_mem[tx_byte_q];
+
             /* Response RAM may be changed only while no response is visible. */
             if (tx_wr_en_i && !tx_ready_q && (tx_wr_addr_i < MAX_FRAME_BYTES))
                 tx_mem[tx_wr_addr_i] <= tx_wr_data_i;
@@ -147,7 +157,7 @@ module btp_spi_slave #(
 
             /*
              * A completed request has had many system clocks for the activity
-             * toggle to synchronize before CS rises.  Sampling rx_count/flags
+             * toggle to synchronize before CS rises. Sampling rx_count/flags
              * here is therefore a bundled-data CDC: the multi-bit values are
              * static for the whole CS-high processing interval.
              */
@@ -170,7 +180,7 @@ module btp_spi_slave #(
 
             /*
              * Consume only after both conditions are true: every response bit
-             * was clocked and CS is observed high.  If CS rises before the
+             * was clocked and CS is observed high. If CS rises before the
              * toggle reaches clk_i, the complete-event branch below still sees
              * synchronized CS high on the following cycle.
              */
@@ -190,6 +200,7 @@ module btp_spi_slave #(
                 rx_activity_seen_q <= rx_activity_sync2_q;
 
                 tx_len_hold_q <= '0;
+                tx_rd_data_q <= 8'h00;
                 tx_ready_q <= 1'b0;
                 tx_complete_pending_q <= 1'b0;
                 tx_complete_seen_q <= tx_complete_sync2_q;
@@ -199,7 +210,7 @@ module btp_spi_slave #(
     end
 
     /*
-     * rx_first_q is the only state using CS as an asynchronous SET.  The SET
+     * rx_first_q is the only state using CS as an asynchronous SET. The SET
      * value is constant and synthesizable; the first following SCK clears it.
      * This lets rx_count remain untouched and stable throughout CS high.
      */
@@ -246,7 +257,7 @@ module btp_spi_slave #(
 
     /*
      * Response indices advance on falling SCK so each MISO bit is stable around
-     * the next rising sampling edge.  CS rising performs only constant async
+     * the next rising sampling edge. CS rising performs only constant async
      * resets of these counters, which maps cleanly to FPGA flip-flops.
      */
     always_ff @(negedge spi_sck_i or posedge spi_cs_ni or negedge rst_ni) begin
