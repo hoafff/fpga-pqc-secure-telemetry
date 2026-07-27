@@ -166,20 +166,22 @@ for name in ("tb_primer1_deployment_btp.sv", "tb_primer1_deployment_btp_retry.sv
     if name == "tb_primer1_deployment_btp.sv":
         needle = "        rst_n = 1'b1;\n        repeat (8) @(posedge sys_clk);\n"
         insert = needle + r'''
-        /* Align to a real transition and verify exactly 16 clocks per toggle. */
+        /* Align to a real transition and measure the next edge-to-edge period. */
         begin : check_heartbeat_period
+            integer hb_cycles;
             logic hb_start;
+
             @(heartbeat);
             #1ns;
             hb_start = heartbeat;
-            repeat (15) @(posedge sys_clk);
-            #1ns;
-            if (heartbeat !== hb_start)
-                $fatal(1, "Heartbeat toggled before configured terminal count");
-            @(posedge sys_clk);
-            #1ns;
-            if (heartbeat === hb_start)
-                $fatal(1, "Heartbeat did not toggle at configured terminal count");
+            hb_cycles = 0;
+            while ((heartbeat === hb_start) && (hb_cycles < 20)) begin
+                @(posedge sys_clk);
+                #1ns;
+                hb_cycles = hb_cycles + 1;
+            end
+            if (hb_cycles != 16)
+                $fatal(1, "Heartbeat period mismatch: observed %0d clocks expected 16", hb_cycles);
         end
 
         /* FIX-001 acceptance: security state must not masquerade as liveness. */
