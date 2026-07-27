@@ -20,6 +20,51 @@ SONiX SN32F407F
 
 The PC never talks directly to Primer #1, Primer #2 or Tiny 1P5. SN32F407F remains the control/session owner and bridge.
 
+## Final MCU command contract
+
+The Python registry is intentionally locked to the final dual-Primer `fpst_sn32f407_dual_main.c` dispatcher.
+
+Read-only commands:
+
+```text
+help
+wiring
+ping
+ping2
+discover
+selftest
+id
+id2
+status
+status2
+key-status
+key-status2
+pqc-status
+rx-counters
+adc
+rng-status
+fault
+```
+
+State-changing commands:
+
+```text
+rng-reseed
+zeroize
+telemetry
+kem-session
+```
+
+`caps` and `reset` belonged to the earlier host adapter and are **not** commands in the final dual-Primer MCU CLI.
+
+`kem-session` is special and must never be issued as a plain prompt-only command. The host sends:
+
+```text
+kem-session SSSSSSSS CCCCCCCC
+```
+
+where `S` is the non-zero 32-bit session ID and `C` is CRC-32/ISO-HDLC of the exact 800-byte ML-KEM-512 receiver public key. After `KEM_PK_READY`, the host streams exactly 1600 hex digits. It then validates the 768-byte public ciphertext length, CRC and exact `kem-pair-session=ACTIVE` acknowledgement before writing the ciphertext file.
+
 ## Package
 
 Python 3.10+:
@@ -28,19 +73,7 @@ Python 3.10+:
 fpst-host
 ```
 
-Implemented host functions include:
-
-- serial-port enumeration through `pyserial`;
-- prompt-delimited UART transport;
-- parser for the line-oriented SN32 CLI;
-- `wiring`, `ping`, `caps`, `status` and non-destructive bring-up flows;
-- guarded `zeroize` / `reset` operations requiring explicit confirmation;
-- JSON output for automation;
-- append-only JSONL result logging with secret-field redaction;
-- command round-trip benchmark;
-- hardware-independent unit tests.
-
-The consolidated SN32 firmware on `main` exposes richer ML-KEM/session/telemetry diagnostics than the current Python adapter. Those commands can be added to `fpst_host/protocol.py` without replacing serial transport, logging or benchmark code.
+Implemented host functions include serial-port enumeration, prompt-delimited commands, interactive ML-KEM session streaming, JSON output, secret-safe JSONL result logging, read-only RTT benchmark and hardware-independent unit tests.
 
 ## Install
 
@@ -74,32 +107,57 @@ List serial ports:
 fpst-host ports
 ```
 
-Non-destructive board probe/demo:
+Electrical/status probe and final non-destructive demo:
 
 ```bash
 fpst-host probe --port COM5
 fpst-host demo  --port COM5
 ```
 
-Individual commands:
+The demo sequence is frozen by FIX-008 acceptance as:
 
-```bash
-fpst-host wiring --port COM5
-fpst-host ping   --port COM5
-fpst-host caps   --port COM5
-fpst-host status --port COM5
+```text
+wiring -> discover -> selftest -> status -> status2 -> rng-status
 ```
 
-State-changing operations require confirmation:
+With `FPST_SN32F407_HARNESS_VERIFIED=0`, commands that require Primer traffic are expected to report `BLOCKED`; that is the correct Gate-A behavior, not a reason to bypass the firmware guard.
+
+Representative individual diagnostics:
 
 ```bash
-fpst-host zeroize --port COM5 --yes
-fpst-host reset   --port COM5 --yes
+fpst-host wiring      --port COM5
+fpst-host ping        --port COM5
+fpst-host ping2       --port COM5
+fpst-host status      --port COM5
+fpst-host status2     --port COM5
+fpst-host rx-counters --port COM5
+fpst-host rng-status  --port COM5
+```
+
+State-changing operations require explicit confirmation:
+
+```bash
+fpst-host rng-reseed --port COM5 --yes
+fpst-host telemetry  --port COM5 --yes
+fpst-host zeroize    --port COM5 --yes
+```
+
+Pair-session provisioning:
+
+```bash
+fpst-host kem-session \
+  --port COM5 \
+  --public-key receiver_mlkem512_pk.bin \
+  --session-id 0x10203040 \
+  --ciphertext-out session.ct \
+  --yes
 ```
 
 On Linux replace `COM5` with the appropriate `/dev/ttyUSB*` or `/dev/ttyACM*` device.
 
 ## Benchmark and logging
+
+Only read-only commands are eligible for benchmark mode:
 
 ```bash
 fpst-host bench ping --port COM5 --count 100
@@ -108,7 +166,7 @@ fpst-host demo --port COM5 --log results/pc/bringup.jsonl
 
 The benchmark measures PC-observed command RTT, not FPGA cycle counts.
 
-Never put ML-KEM private material, shared secrets, `K_TX`, `NP_TX`, seeds, passwords or tokens into CLI arguments or result logs. Name-based log redaction is defense-in-depth only.
+Never put ML-KEM private material, shared secrets, `K_TX`, `NP_TX`, seeds, passwords or tokens into CLI arguments or result logs. The public receiver key is read from a file and is not persisted in the normal result record; the public ciphertext is written only to the explicit `--ciphertext-out` path.
 
 ## Automated checks
 
@@ -118,16 +176,18 @@ python -m unittest discover -s tests -v
 fpst-host --help
 ```
 
-GitHub Actions runs the host package on supported Python versions through `.github/workflows/pc-host.yml`.
+`.github/workflows/pc-host.yml` runs the host package on Python 3.10 and 3.12. Tests lock the final command registry, removed legacy commands, the six-command demo order and interactive ML-KEM framing/CRC/session validation.
 
 ## Hardware verification gate
 
 The PC target is hardware-verified only after:
 
 1. package/unit tests pass on the intended deployment PC;
-2. the real SN32 serial port is detected and UART responds at 115200 8N1;
+2. the real SN32 serial port responds at 115200 8N1;
 3. `wiring` reflects the measured harness state;
-4. non-destructive probe/demo pass on programmed hardware;
-5. controlled zeroize/reset behavior is observed where supported by the supervisor topology;
-6. captured logs contain no secret material;
-7. any added ML-KEM/STP host commands pass against the final dual-Primer firmware and boards.
+4. Gate-B demo passes on programmed dual-Primer hardware;
+5. interactive `kem-session` completes against the actual MCU/Primers and returned ciphertext passes receiver-side use;
+6. controlled reseed/telemetry/zeroize behavior is observed;
+7. captured logs contain no secret material.
+
+Host CI proves protocol/parser behavior only; it does not satisfy the vendor-build or physical-harness gates in Phase 5.
