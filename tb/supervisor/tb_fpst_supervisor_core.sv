@@ -14,8 +14,9 @@ always #5 clk=~clk;
 
 task automatic reset_dut; begin
  rst_n=0; hb_mcu=0; hb_pqc=0; hb_crypto=0; crypto_fault=0; tamper=0; clear_pulse=0; manual_fault=0; reset_pulse_seen=0;
- repeat(4) @(posedge clk); rst_n=1; repeat(2) @(posedge clk);
- if(secure!==0||zeroize!==1) $fatal(1,"reset is not fail-safe");
+ repeat(4) @(posedge clk);
+ #1; if(secure!==0||zeroize!==1||reset_n!==1) $fatal(1,"reset is not fail-safe");
+ rst_n=1; repeat(2) @(posedge clk);
 end endtask
 
 task automatic healthy(input integer n); integer i; begin
