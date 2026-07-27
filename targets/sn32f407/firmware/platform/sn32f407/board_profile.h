@@ -6,8 +6,13 @@
  *   - organizer SN32F400 CMSIS/Firmware Library V1.5R
  *   - SONiX DFP / Keil SN32F407F target
  *   - organizer 32F407 EVK V1.0 schematic
+ *   - SONiX SN32F400 PFPA table
  *   - FPST-SYS-SPEC-001 v1.1
  *   - frozen Primer #1/#2 deployment CST profiles
+ *
+ * EVK UART connector J10 is wired to UTX_P31 / URX_P32. UART0 PFPA route 2
+ * therefore maps UTXD0=P3.1 and URXD0=P3.2. Do not use route 0 here:
+ * P0.10/P0.11 are the EVK SCL/SDA nets shared with the onboard 24C05/DB_I2C.
  *
  * EVK J12 DB_SPI exposes P1.0/P1.1/P1.2 for SCK/MISO/MOSI. P1.8 is the
  * onboard W25Q16 CE# sharing those SPI wires; it MUST stay high while either
@@ -63,14 +68,19 @@
  * because hardware select is disabled and P1.8 remains flash CE# GPIO.
  */
 #define FPST_SN32F407_PFPA_SPI0_VALUE        0x0000002Au
-#define FPST_SN32F407_PFPA_UART0_VALUE       0x00000000u
+
+/*
+ * PFPA_UART0 bits 1:0 = UTXD0 route and bits 3:2 = URXD0 route.
+ * Route 2/2 selects P3.1/P3.2, which are the EVK J10 DB_UART nets.
+ */
+#define FPST_SN32F407_PFPA_UART0_VALUE       0x0000000Au
 
 #define FPST_SN32F407_SPI_SCK_PORT            1u
 #define FPST_SN32F407_SPI_SCK_PIN             0u
 #define FPST_SN32F407_SPI_MISO_PORT           1u
-#define FPST_SN32F407_SPI_MISO_PIN            1u
+#define FPST_SN32F407_SPI_MISO_PIN             1u
 #define FPST_SN32F407_SPI_MOSI_PORT           1u
-#define FPST_SN32F407_SPI_MOSI_PIN            2u
+#define FPST_SN32F407_SPI_MOSI_PIN             2u
 
 /* Onboard W25Q16 select on the shared SCK/MISO/MOSI bus. */
 #define FPST_SN32F407_FLASH_CS_N_PORT          1u
@@ -96,10 +106,11 @@
 #define FPST_SN32F407_MCU_HEARTBEAT_PIN         9u
 #define FPST_SN32F407_MCU_HEARTBEAT_PERIOD_MS 100u
 
-#define FPST_SN32F407_UART_TX_PORT              0u
-#define FPST_SN32F407_UART_TX_PIN              10u
-#define FPST_SN32F407_UART_RX_PORT              0u
-#define FPST_SN32F407_UART_RX_PIN              11u
+/* EVK J10 DB_UART: UTX_P31 / URX_P32. */
+#define FPST_SN32F407_UART_TX_PORT              3u
+#define FPST_SN32F407_UART_TX_PIN               1u
+#define FPST_SN32F407_UART_RX_PORT              3u
+#define FPST_SN32F407_UART_RX_PIN               2u
 
 #define FPST_SN32F407_IRQ_ACTIVE_LOW             1
 
