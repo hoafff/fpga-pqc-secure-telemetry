@@ -2,7 +2,7 @@
 
 ## 1. Vai trò
 
-PC không nhận bitstream hoặc MCU firmware. PC chạy chương trình điều khiển demo, verification/golden tools và thu kết quả.
+PC chạy ứng dụng điều khiển/bring-up, logging, benchmark và golden/reference tools. PC không nhận FPGA bitstream hay MCU firmware.
 
 ```text
 PC host
@@ -11,46 +11,38 @@ PC host
    v
 SONiX SN32F407F
    |
-   +--> session/control
-   +--> Primer #1 over SPI mailbox
-   +--> telemetry/status forwarding
+   | direct FPST BTP v1 over shared SPI0
+   +--> Primer #1 TX/PQC
+   +--> Primer #2 RX/verify
+
+Tiny 1P5 supervises the hardware path independently.
 ```
 
-PC không được giả định giao tiếp trực tiếp với Primer #1, Primer #2 hoặc Tiny 1P5.
+PC không giao tiếp trực tiếp với Primer #1, Primer #2 hoặc Tiny 1P5.
 
-## 2. Trạng thái deployment
+## 2. Deployment status
+
+Implemented on `main`:
 
 ```text
-CURRENT / IMPLEMENTED:
-  Python 3.10+ host package
-  pyserial UART transport
-  port enumeration
-  SN32 CLI protocol adapter
-  wiring/ping/caps/status
-  guarded zeroize/reset
-  non-destructive bring-up demo
-  host RTT benchmark
-  JSON output
-  secret-safe JSONL result logger
-  hardware-independent unit tests
-
-CURRENT SN32 HOST CONTRACT:
-  UART0 115200 8N1
-  text CLI commands:
-    help wiring ping caps status zeroize reset
-
-GATED BY LATER MCU/PRIMER WORK:
-  ML-KEM session command flow from PC
-  STP telemetry TX/RX commands
-  structured plaintext/ciphertext/tag reporting
-  authentication/replay result stream
-  endpoint cycle counters / throughput metrics
-  supervisor event stream
+Python 3.10+ host package
+pyserial UART transport
+serial-port enumeration
+SN32 CLI protocol adapter
+wiring/ping/caps/status
+non-destructive probe/demo
+explicit confirmation for zeroize/reset
+JSON output
+secret-redacted JSONL logging
+command RTT benchmark
+hardware-independent unit tests
 ```
 
-The earlier `PC <-> SN32 likely USB/UART, final contract TBD` statement is obsolete. The organizer-backed SN32 implementation profile has now frozen the host link to UART0 115200 8N1.
+The final SN32 firmware now has richer ML-KEM/session/telemetry/dual-Primer commands. The Python adapter currently exposes the bring-up subset above; extending the adapter does not require changing its serial transport architecture.
 
-## 3. Code location
+## 3. Code locations
+
+Deployment host:
 
 ```text
 software/host/
@@ -65,19 +57,17 @@ software/host/
 │   ├── result_log.py
 │   └── cli.py
 └── tests/
-    ├── test_protocol.py
-    └── test_benchmark.py
 ```
 
-Golden/reference code remains under:
+Golden/reference models remain under:
 
 ```text
 software/reference/
 ```
 
-Do not merge the golden implementation into the production host transport/protocol layer.
+Do not merge reference/golden implementations into production transport logic; independent models are required to catch byte-order and algorithm mistakes.
 
-## 4. Install
+## 4. Install and test
 
 Windows:
 
@@ -99,29 +89,13 @@ pip install -e .
 python -m unittest discover -s tests -v
 ```
 
-## 5. Hardware bring-up commands
-
-List ports:
+## 5. Bring-up commands
 
 ```bash
 fpst-host ports
-```
-
-Probe the SN32 path:
-
-```bash
 fpst-host probe --port COM5
-```
+fpst-host demo  --port COM5
 
-Run the non-destructive demo:
-
-```bash
-fpst-host demo --port COM5
-```
-
-Individual commands:
-
-```bash
 fpst-host wiring --port COM5
 fpst-host ping   --port COM5
 fpst-host caps   --port COM5
@@ -135,69 +109,42 @@ fpst-host zeroize --port COM5 --yes
 fpst-host reset   --port COM5 --yes
 ```
 
-Linux example replaces `COM5` with `/dev/ttyUSB0` or `/dev/ttyACM0` as appropriate.
+Use the actual `/dev/ttyUSB*` or `/dev/ttyACM*` port on Linux.
 
-## 6. Benchmark/result collection
+## 6. Benchmark and results
 
 ```bash
 fpst-host bench ping --port COM5 --count 100
 fpst-host demo --port COM5 --log results/pc/bringup.jsonl
 ```
 
-The current benchmark is PC-observed command round-trip latency. FPGA cycle count and datapath throughput remain separate endpoint metrics and must not be inferred from host RTT.
+Host RTT is not an FPGA cycle-count measurement. Endpoint cycle/throughput metrics must be reported independently by firmware/RTL instrumentation.
 
-Result logs must never contain secret key material, ML-KEM shared secrets, private seeds or credentials. The host logger performs name-based redaction as defense-in-depth, but producers remain responsible for never supplying secret values to logging code.
+Never log private keys, ML-KEM shared secrets, `K_TX`, `NP_TX`, private seeds, passwords or tokens.
 
-## 7. Golden/reference responsibilities
+## 7. Verification responsibilities
 
-- NTT/INTT output oracle.
-- Ascon-AEAD128 byte-for-byte oracle.
-- ML-KEM/KDF test vector support.
-- STP packet encode/decode model.
-- Deterministic seeds/vectors for reproducible failures.
+Golden/reference responsibilities include:
 
-Golden models must remain independent enough to expose RTL/firmware byte-order or algorithm bugs instead of reproducing them.
+- NTT/INTT oracle;
+- Ascon-AEAD128 encryption/decryption/tag oracle;
+- ML-KEM/KDF differential vectors;
+- STP packet encode/decode behavior;
+- deterministic negative/retry/replay cases.
 
-## 8. Verification matrix
+Integration verification eventually covers:
 
 ```text
-Unit:
-  host protocol parser
-  benchmark statistics
-  secret-safe logging
-  arithmetic / crypto reference components
-
-Integration:
-  PC -> SN32 UART command path
-  SN32 -> Primer mailbox path
-  session/key loading
-  STP TX -> RX
-  supervisor response
-
-Negative:
-  missing/incorrect serial port
-  UART timeout
-  malformed/unknown response
-  wiring unverified
-  endpoint timeout
-  reset
-  zeroize
-  authentication failure
-  replay
+PC -> SN32 UART
+SN32 -> Primer #1/#2 shared SPI BTP
+ML-KEM pair session provisioning
+Primer #1 STP TX -> Primer #2 STP RX
+retry/replay/commit reconciliation
+Tiny supervisor fault/zeroize/recovery
 ```
 
-## 9. Definition of done
+## 8. Hardware qualification
 
-The PC target is source-complete for the currently exposed SN32 CLI when:
+The PC target is not hardware-verified until the package runs on the intended deployment PC, the real SN32 serial port is identified, UART bring-up succeeds, controlled state-changing operations are observed on hardware, and the captured logs are checked for accidental secret exposure.
 
-- package installs on the deployment PC;
-- unit tests pass;
-- serial port enumeration works;
-- SN32 UART responds at 115200 8N1;
-- `probe`/`demo` execute against the real board;
-- destructive actions require explicit operator confirmation;
-- logs contain no secret material.
-
-The **full FPST host feature set** is only end-to-end complete when the still-open ML-KEM/STP/telemetry commands are implemented by their MCU/FPGA owners and then added to `fpst_host/protocol.py`.
-
-See [`software/host/README.md`](../../software/host/README.md) for deployment instructions.
+See [`../../software/host/README.md`](../../software/host/README.md) for the host application guide and [`../sn32f407/README.md`](../sn32f407/README.md) for the board-side contract.
