@@ -21,7 +21,7 @@ module supervisor_top #(
     input  logic btn_tamper_n,
     input  logic btn_clear_n,
     output logic secure_enable_o,
-    output logic key_zeroize_o,
+    output logic zeroize_no,
     output logic system_reset_no,
     output logic fault_latched_o,
     output logic led_fault_o,
@@ -37,6 +37,7 @@ module supervisor_top #(
     logic clear_button_pulse_w;
     logic clear_external_pulse_w;
     logic clear_pulse_w;
+    logic key_zeroize_core_w;
 
     always_ff @(posedge clk_27m) begin
         if (!rst_ni_q) begin
@@ -75,10 +76,19 @@ module supervisor_top #(
         .clk_i(clk_27m), .rst_ni(rst_ni_q), .tick_ms_i(tick_ms_w),
         .hb_mcu_i(hb_mcu_i), .hb_pqc_i(hb_pqc_i), .hb_crypto_i(hb_crypto_i),
         .tamper_active_i(tamper_active_w), .clear_fault_pulse_i(clear_pulse_w), .manual_fault_i(manual_fault_i),
-        .secure_enable_o(secure_enable_o), .key_zeroize_o(key_zeroize_o), .system_reset_no(system_reset_no),
+        .secure_enable_o(secure_enable_o), .key_zeroize_o(key_zeroize_core_w), .system_reset_no(system_reset_no),
         .fault_latched_o(fault_latched_o), .error_code_o(), .first_fault_time_ms_o(), .state_o(),
         .hb_timeout_o(), .hb_seen_o(), .all_heartbeats_healthy_o()
     );
+
+    /*
+     * The reusable supervisor core follows FPST SUP-007 and exposes an
+     * active-high key-zeroize request.  The physical two-Primer harness uses
+     * active-low zeroize_ni inputs, so the Tiny target wrapper performs the
+     * polarity adaptation here.  Primer-side pull-downs then make supervisor
+     * loss fail-safe: an undriven ZEROIZE_N asserts endpoint zeroization.
+     */
+    assign zeroize_no = ~key_zeroize_core_w;
 
     assign led_fault_o  = fault_latched_o;
     assign led_secure_o = secure_enable_o;
