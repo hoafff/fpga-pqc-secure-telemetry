@@ -154,10 +154,9 @@ COMMON_PRIMER1_DEPLOY_SOURCES=(
     "${ROOT_DIR}/rtl/boards/kiwi_primer_20k/kiwi_primer20k_fpst_tx_top.sv"
 )
 
-# Use a short heartbeat terminal count only for simulation. Drive asynchronous
-# zeroize away from the active clock edge, then wait for the DUT's synchronized
-# release to become visible before measuring active heartbeat cycles. This
-# avoids active-region races and verifies the divider itself, not CDC latency.
+# Use a short heartbeat terminal count only for simulation. Heartbeat is a pure
+# liveness channel: align the period check on a real heartbeat edge, then prove
+# that neither ZEROIZE_N assertion nor fatal_latched assertion stops the divider.
 python3 - <<'PY'
 from pathlib import Path
 build = Path("build/sim")
@@ -166,7 +165,71 @@ for name in ("tb_primer1_deployment_btp.sv", "tb_primer1_deployment_btp_retry.sv
     src = src.replace(".HEARTBEAT_BIT(8)", ".HEARTBEAT_TOGGLE_CYCLES(16)")
     if name == "tb_primer1_deployment_btp.sv":
         needle = "        rst_n = 1'b1;\n        repeat (8) @(posedge sys_clk);\n"
-        insert = needle + "\n        /* Verify exactly 16 active clocks per heartbeat transition. */\n        @(negedge sys_clk);\n        zeroize_n = 1'b0;\n        repeat (2) @(posedge sys_clk);\n        @(negedge sys_clk);\n        zeroize_n = 1'b1;\n        while (dut.transport_zeroize !== 1'b0)\n            @(negedge sys_clk);\n        begin : check_heartbeat\n            logic hb_start;\n            hb_start = heartbeat;\n            repeat (15) @(posedge sys_clk);\n            #1ns;\n            if (heartbeat !== hb_start)\n                $fatal(1, \"Heartbeat toggled before configured terminal count\");\n            @(posedge sys_clk);\n            #1ns;\n            if (heartbeat === hb_start)\n                $fatal(1, \"Heartbeat did not toggle at configured terminal count\");\n        end\n"
+        insert = needle + r'''
+        /* Align to a real transition and verify exactly 16 clocks per toggle. */
+        begin : check_heartbeat_period
+            logic hb_start;
+            @(heartbeat);
+            #1ns;
+            hb_start = heartbeat;
+            repeat (15) @(posedge sys_clk);
+            #1ns;
+            if (heartbeat !== hb_start)
+                $fatal(1, "Heartbeat toggled before configured terminal count");
+            @(posedge sys_clk);
+            #1ns;
+            if (heartbeat === hb_start)
+                $fatal(1, "Heartbeat did not toggle at configured terminal count");
+        end
+
+        /* FIX-001 acceptance: security state must not masquerade as liveness. */
+        begin : check_heartbeat_security_independence
+            integer hb_edges;
+            integer k;
+            logic hb_prev;
+
+            @(negedge sys_clk);
+            zeroize_n = 1'b0;
+            repeat (3) @(posedge sys_clk);
+            hb_prev = heartbeat;
+            hb_edges = 0;
+            for (k = 0; k < 40; k = k + 1) begin
+                @(posedge sys_clk);
+                #1ns;
+                if (heartbeat !== hb_prev) begin
+                    hb_edges = hb_edges + 1;
+                    hb_prev = heartbeat;
+                end
+            end
+            if (hb_edges < 2)
+                $fatal(1, "Heartbeat stopped while ZEROIZE_N asserted");
+
+            @(negedge sys_clk);
+            zeroize_n = 1'b1;
+            while (dut.transport_zeroize !== 1'b0)
+                @(negedge sys_clk);
+
+            @(negedge sys_clk);
+            fatal_latched = 1'b1;
+            repeat (3) @(posedge sys_clk);
+            hb_prev = heartbeat;
+            hb_edges = 0;
+            for (k = 0; k < 40; k = k + 1) begin
+                @(posedge sys_clk);
+                #1ns;
+                if (heartbeat !== hb_prev) begin
+                    hb_edges = hb_edges + 1;
+                    hb_prev = heartbeat;
+                end
+            end
+            if (hb_edges < 2)
+                $fatal(1, "Heartbeat stopped while fatal_latched asserted");
+
+            @(negedge sys_clk);
+            fatal_latched = 1'b0;
+            repeat (4) @(posedge sys_clk);
+        end
+'''
         if needle not in src:
             raise SystemExit("heartbeat insertion point not found")
         src = src.replace(needle, insert, 1)
