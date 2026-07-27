@@ -168,3 +168,21 @@ Rules:
 - PC: [`targets/pc/README.md`](targets/pc/README.md)
 - Primer #1 BTP profile: [`docs/interfaces/FPST-PRIMER1-DEPLOYMENT-PROFILE-v1.1.md`](docs/interfaces/FPST-PRIMER1-DEPLOYMENT-PROFILE-v1.1.md)
 - Implementation decisions: [`docs/spec-delta/FPST-v1.1-implementation-decisions.md`](docs/spec-delta/FPST-v1.1-implementation-decisions.md)
+
+## 7. Hướng dẫn đấu dây phần cứng
+
+Trước khi cấp nguồn/nạp thử trên mạch thật, dùng tài liệu sau làm checklist đấu dây:
+
+- **[`docs/hardware/FPST-WIRING-GUIDE-v1.1.md`](docs/hardware/FPST-WIRING-GUIDE-v1.1.md)** — sơ đồ toàn hệ thống, PC↔SN32 UART, shared SPI hai Primer, Tiny supervisor harness, bảng chân đầy đủ, polarity, fail-safe bias và thứ tự bring-up.
+
+Các điểm quan trọng đã khóa trong guide:
+
+- UART0 EVK: `P3.1 TX / P3.2 RX`, 115200 8N1;
+- shared SPI: `P1.0 SCK / P1.1 MISO / P1.2 MOSI`;
+- Primer #1: `P2.1 CS1_N / P2.3 IRQ1_N`;
+- Primer #2: `P2.2 CS2_N / P2.8 IRQ2_N`;
+- Tiny receives `HB_MCU` từ SN32 `P2.9` và heartbeat từ J2-18 của hai Primer;
+- Tiny `J1-8` là **`ZEROIZE_N` active-low ở dây vật lý**;
+- `SYSTEM_RESET_N` chưa được nối vào một destination reset net cụ thể cho tới khi pin/net reset phía đích được xác nhận.
+
+Không bật `FPST_SN32F407_HARNESS_VERIFIED=1` trước khi continuity/common-ground/MISO-release/polarity đều được kiểm tra trên phần cứng.
