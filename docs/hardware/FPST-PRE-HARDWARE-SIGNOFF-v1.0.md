@@ -1,189 +1,163 @@
 # FPST Pre-Hardware Repair Sign-off v1.0
 
-**Scope:** execution record for `FPST_PRE_HARDWARE_REPAIR_SPEC_v1.0.md` against the audit baseline `150dee70e88f6270bc82be6bd30549e64501d1d9`.
+**Scope:** execution record for `FPST_PRE_HARDWARE_REPAIR_SPEC_v1.0.md` against audit baseline `150dee70e88f6270bc82be6bd30549e64501d1d9`, updated after the retrospective authority audit.
 
-**Rule:** a CI, simulation, Yosys or source-review result is never substituted for vendor-tool or physical evidence. A Phase-5 row may be marked `PASS` only when the referenced evidence files actually exist and identify the tested hardware/artifact.
+## 0. Evidence and authority rules
 
-## 1. Repair status by phase
+A CI, simulation, Yosys or source-review result is never substituted for vendor-tool or physical evidence. A Phase-5 row may be marked `PASS` only when the referenced evidence actually exists and identifies the tested hardware/artifact.
 
-| Phase | FIX | Repository status | Acceptance status |
-|---|---|---|---|
-| 1 | FIX-001 heartbeat=liveness | implemented in both Primer deployment tops | automated regression PASS; board measurement still Phase 5 |
-| 1 | FIX-002 direct P2 crypto fatal | P2 local `auth_threshold_fault` -> J2-12 -> verified Tiny J1-11/pin15 -> `0x0608` | integrated RTL PASS; physical continuity pending FIX-012 |
-| 1 | FIX-011 system supervisor integration | 12-case Tiny+P1+P2 regression is a hard CI gate | PASS |
-| 2 | FIX-003 two-stage harness gate | Gate A flag=0 electrical-only; Gate B flag=1 measured SPI | procedure repaired; physical execution pending FIX-012/FIX-010 |
-| 2 | FIX-004 standalone deployment fail-safe | `ZEROIZE_N` pull-down retained; Tiny or isolated fixture required | source/profile acceptance PASS; voltage measurement pending |
-| 2 | FIX-007 Tiny zeroize polarity docs | internal active-high wipe vs physical active-low `ZEROIZE_N` separated | PASS |
-| 2 | FIX-006 legacy A1/A2/CRC16 | removed from active tree; archived as obsolete/pre-BTP | portable firmware + RTL CI PASS |
-| 3 | FIX-005 Tiny -> SN32 fatal reset/zeroize | **FORMALLY DEFERRED**; no unverified SN32 physical pin assigned | release blocker until schematic/connector destination is frozen |
-| 4 | FIX-008 PC host vs final dual-MCU CLI | final command registry + special interactive `kem-session` | Python 3.10/3.12 CI PASS |
-| 5 | FIX-009 exact vendor builds | procedure frozen below | **OPEN — vendor evidence required** |
-| 5 | FIX-010 external SPI timing | 1→2→3→4→5 MHz measured ladder frozen below | **OPEN — measurement required** |
-| 5 | FIX-012 physical harness | continuity/electrical matrix frozen below | **OPEN — measurement required** |
+When sources disagree, use this order:
 
-The branch must remain a pre-hardware/deployment candidate while any Phase-5 gate is OPEN or FIX-005 remains deferred without explicit system-security acceptance.
+1. real hardware, schematic, pinout and electrical constraints;
+2. official organizer/manufacturer board documentation and SDK material;
+3. current RTL/firmware/CST/SDC and behavior already established by executable tests;
+4. explicit project integration decisions;
+5. `FPST-SYS-SPEC-001 v1.1` as a reference/baseline only;
+6. historical/archive material.
 
----
+The nominal **100 ms heartbeat**, **350 ms Tiny heartbeat timeout**, and project error code **`0x0608 ERR_AUTH_THRESHOLD`** are project-profile values adopted from the FPST reference baseline. They are not claimed as manufacturer/board electrical requirements.
 
-## 2. FIX-009 — exact vendor build evidence
+## 1. Repair status by FIX
 
-### 2.1 Primer #1 exact Gowin build
+| FIX | Repository status | Retrospective classification / acceptance |
+|---|---|---|
+| FIX-001 heartbeat=liveness | implemented in both Primer deployment tops | **CONFIRMED** by current recovery architecture + automated regression; real waveform pending Phase 5 |
+| FIX-002 direct P2 crypto fault | P2 local `auth_threshold_fault` drives J2-12/T13; Tiny project profile assigns J1-11/pin15 input | **PROVISIONAL / PHYSICAL-PENDING**: Tiny pin15 is confirmed General I/O; assembled P2→Tiny route not yet measured |
+| FIX-003 two-stage harness gate | Gate A flag=0 electrical-only; Gate B flag=1 measured SPI | **CONFIRMED** procedure; physical execution pending FIX-010/012 |
+| FIX-004 standalone fail-safe | active-low `ZEROIZE_N` pull-down intent retained | **PROVISIONAL / PHYSICAL-PENDING** until actual powered/unpowered levels and sequencing are measured |
+| FIX-005 Tiny→SN32 reset/zeroize | **MVP Policy B adopted**: Tiny hardware-containment scope is P1/P2; SN32 is trusted controller with software state hygiene; no mandatory Tiny→SN32 wire | **CONFIRMED project decision; not an MVP release blocker**. Async containment of a wedged/compromised MCU is not claimed |
+| FIX-006 legacy A1/A2/CRC16 | removed from active production paths; archived under `pre-btp-direct` | **CONFIRMED**; current production/self-test paths do not depend on legacy transport |
+| FIX-007 Tiny zeroize polarity | internal active-high wipe vs physical active-low `ZEROIZE_N` separated | **CONFIRMED** |
+| FIX-008 PC host vs final dual-MCU CLI | final command registry + interactive `kem-session` | **CONFIRMED** by source comparison + Python CI; real UART session remains physical integration evidence |
+| FIX-009 exact vendor builds | procedure frozen below | **OPEN — vendor evidence required** |
+| FIX-010 external SPI timing | project 1→2→3→4→5 MHz measured ladder below | **OPEN — measurement required** |
+| FIX-011 supervisor integration | 12-case Tiny+P1+P2 regression is a hard CI gate | **CONFIRMED / PASS** at source-simulation level |
+| FIX-012 physical harness | continuity/electrical matrix below | **OPEN — measurement required** |
 
-Frozen inputs:
+The branch remains a pre-hardware/deployment candidate while any applicable Phase-5 gate is OPEN. FIX-005 no longer blocks the MVP because Policy B explicitly limits the hardware-containment claim to the two Primer endpoints.
+
+## 2. FIX-005 — MVP Policy B security boundary
 
 ```text
-FPGA        : GW2A-LV18PG256C8/I7
-Top         : kiwi_primer20k_fpst_tx_top
-Sources     : targets/primer20k_1/sources-fpst-deployment.f
-CST         : constraints/kiwi_primer_20k/kiwi_primer20k_fpst_tx.cst
-SDC         : constraints/kiwi_primer_20k/kiwi_primer20k_fpst_tx.sdc
-System clk  : 27 MHz
-SPI start   : 1 MHz physical bring-up; <=5 MHz only after FIX-010
+Tiny hardware safety authority
+    -> Primer #1 SECURE_ENABLE / ZEROIZE_N / FAULT_LATCH handling
+    -> Primer #2 SECURE_ENABLE / ZEROIZE_N / FAULT_LATCH handling
+
+SN32 trusted controller
+    -> software session invalidation
+    -> software wipe of transient shared-secret / KDF / CSPRNG state
 ```
 
-Required evidence before `PASS`:
+MVP requirements:
 
-- [ ] Gowin tool version recorded.
-- [ ] exact device/package/speed grade recorded in project/report.
+- Tiny J1-9 `SYSTEM_RESET_N` remains **not connected to SN32**.
+- No spare SN32 GPIO/reset pin may be assigned merely because it appears unused.
+- SN32 software zeroization/invalidation behavior remains part of the firmware acceptance scope.
+- The MVP must not be described as providing asynchronous hardware containment of MCU-resident state when SN32 itself is wedged or compromised.
+
+Future hardening may add a Tiny→SN32 reset/zeroize path only after schematic/connector/polarity/voltage/ownership/fan-out evidence is unambiguous and firmware/wiring/tests are updated together.
+
+## 3. FIX-009 — exact vendor build evidence
+
+### 3.1 Primer #1
+
+```text
+FPGA       : GW2A-LV18PG256C8/I7
+Top        : kiwi_primer20k_fpst_tx_top
+Sources    : targets/primer20k_1/sources-fpst-deployment.f
+CST        : constraints/kiwi_primer_20k/kiwi_primer20k_fpst_tx.cst
+SDC        : constraints/kiwi_primer_20k/kiwi_primer20k_fpst_tx.sdc
+System clk : 27 MHz
+```
+
+Required before PASS:
+
+- [ ] Gowin tool version and exact device/package/speed grade recorded.
 - [ ] synthesis PASS.
 - [ ] place-and-route PASS.
-- [ ] timing report PASS for the frozen SDC; no relevant unconstrained deployment clock/port silently ignored.
+- [ ] timing PASS for the deployment SDC; no relevant unconstrained deployment port/clock silently ignored.
 - [ ] utilization report archived.
 - [ ] generated `.fs` archived with SHA-256.
-- [ ] programmed-board confirmation identifies board P1 and exact `.fs` hash.
+- [ ] programming record identifies P1 and exact `.fs` hash.
 
-Evidence references:
+**Current: OPEN / NOT CAPTURED.** Generic Yosys does not close this gate.
 
-```text
-Gowin version        : NOT CAPTURED
-synthesis report     : NOT CAPTURED
-P&R/timing report    : NOT CAPTURED
-utilization report   : NOT CAPTURED
-.fs path + SHA-256   : NOT CAPTURED
-programming log      : NOT CAPTURED
-```
-
-**Current result: OPEN / NOT RUN WITH EXACT VENDOR TOOL.** Generic Yosys success does not close this row.
-
-### 2.2 Primer #2 exact Gowin build
-
-Frozen inputs:
+### 3.2 Primer #2
 
 ```text
-FPGA        : GW2A-LV18PG256C8/I7
-Top         : kiwi_primer20k_fpst_rx_top
-Sources     : targets/primer20k_2/sources-fpst-deployment.f
-CST         : constraints/kiwi_primer_20k/kiwi_primer20k_fpst_rx.cst
-SDC         : constraints/kiwi_primer_20k/kiwi_primer20k_fpst_rx.sdc
-System clk  : 27 MHz
+FPGA       : GW2A-LV18PG256C8/I7
+Top        : kiwi_primer20k_fpst_rx_top
+Sources    : targets/primer20k_2/sources-fpst-deployment.f
+CST        : constraints/kiwi_primer_20k/kiwi_primer20k_fpst_rx.cst
+SDC        : constraints/kiwi_primer_20k/kiwi_primer20k_fpst_rx.sdc
+System clk : 27 MHz
 ```
 
-Required evidence is identical to Primer #1, with a distinct `.fs` hash and programming record for board P2.
+Required evidence is the same as P1, with a distinct P2 `.fs` hash/programming record.
+
+**Current: OPEN / NOT CAPTURED.**
+
+### 3.3 Tiny 1P5
 
 ```text
-Gowin version        : NOT CAPTURED
-synthesis report     : NOT CAPTURED
-P&R/timing report    : NOT CAPTURED
-utilization report   : NOT CAPTURED
-.fs path + SHA-256   : NOT CAPTURED
-programming log      : NOT CAPTURED
+FPGA       : GW1N-UV1P5QN48XC7/I6
+Top        : supervisor_top
+Sources    : targets/tiny1p5/sources.f
+CST        : targets/tiny1p5/constraints/kiwi_tiny1p5_fpst.cst
+SDC        : targets/tiny1p5/constraints/kiwi_tiny1p5_fpst.sdc
+System clk : 27 MHz
+LUT target : <=70% of device budget
 ```
 
-**Current result: OPEN / NOT RUN WITH EXACT VENDOR TOOL.**
+Required:
 
-### 2.3 Tiny 1P5 exact Gowin build
-
-Frozen inputs:
-
-```text
-FPGA        : GW1N-UV1P5QN48XC7/I6
-Top         : supervisor_top
-Sources     : targets/tiny1p5/sources.f
-CST         : targets/tiny1p5/constraints/kiwi_tiny1p5_fpst.cst
-SDC         : targets/tiny1p5/constraints/kiwi_tiny1p5_fpst.sdc
-System clk  : 27 MHz
-LUT target  : <=70% of device budget
-```
-
-Required evidence:
-
-- [ ] exact Gowin device and tool version.
+- [ ] exact Gowin device/tool version.
 - [ ] synthesis/P&R/timing PASS at 27 MHz.
 - [ ] LUT utilization <=70%.
-- [ ] `.fs` archived with SHA-256 and programming log.
-- [ ] boot behavior on the actual Tiny: secure disabled and physical `ZEROIZE_N` asserted until qualification.
+- [ ] `.fs` SHA-256 + programming log.
+- [ ] real Tiny boot shows secure disabled and physical `ZEROIZE_N` asserted until qualification.
+
+**Current: OPEN / NOT CAPTURED.**
+
+### 3.4 SN32F407F
 
 ```text
-Gowin version        : NOT CAPTURED
-synthesis report     : NOT CAPTURED
-P&R/timing report    : NOT CAPTURED
-utilization report   : NOT CAPTURED
-.fs path + SHA-256   : NOT CAPTURED
-programming log      : NOT CAPTURED
+MCU             : SONiX SN32F407F / Cortex-M0
+Flash           : 32 KiB
+SRAM            : 8 KiB
+DFP             : SONiX.SN32F4_DFP.1.1.1.pack
+Compiler        : ARM Compiler 6
+Entry point     : fpst_sn32f407_dual_main.c
+Production list : targets/sn32f407/firmware/KEIL_DUAL_PRIMER_BUILD.md
 ```
 
-**Current result: OPEN / NOT RUN WITH EXACT VENDOR TOOL.**
+Required:
 
-### 2.4 SN32F407F exact ARM Compiler 6 build
-
-Frozen target:
-
-```text
-MCU            : SONiX SN32F407F / Cortex-M0
-Flash          : 32 KiB
-SRAM           : 8 KiB
-DFP            : SONiX.SN32F4_DFP.1.1.1.pack
-Compiler       : ARM Compiler 6
-Entry point    : fpst_sn32f407_dual_main.c
-Production list: targets/sn32f407/firmware/KEIL_DUAL_PRIMER_BUILD.md
-```
-
-Build once with `FPST_SN32F407_HARNESS_VERIFIED=0` for Gate A and, only after FIX-012 electrical acceptance, rebuild the release candidate with `=1` for Gate B.
-
-Required evidence:
-
-- [ ] Keil/ARM Compiler 6 and SONiX DFP versions recorded.
-- [ ] build log contains no unresolved warning that changes hardware semantics.
-- [ ] `.map`/region usage proves Flash <=32 KiB.
+- [ ] Keil/ARM Compiler 6 and DFP versions recorded.
+- [ ] build log reviewed for hardware-semantic warnings.
+- [ ] `.map` proves Flash <=32 KiB.
 - [ ] static SRAM <=8 KiB with explicit margin.
-- [ ] call graph / stack-usage evidence establishes worst-case stack; do not lower stack merely to make the linker fit.
-- [ ] final `.hex` archived with SHA-256.
+- [ ] call graph / stack evidence establishes worst-case stack.
+- [ ] final `.hex` SHA-256 archived.
 - [ ] SN-LINK programming record identifies exact `.hex` hash.
 
-```text
-Keil/AC6 version     : NOT CAPTURED
-DFP version          : expected 1.1.1; runtime evidence NOT CAPTURED
-.map path            : NOT CAPTURED
-Flash usage          : NOT CAPTURED
-SRAM static usage    : NOT CAPTURED
-worst-case stack     : NOT CAPTURED
-.hex path + SHA-256  : NOT CAPTURED
-programming log      : NOT CAPTURED
-```
+Gate A uses `FPST_SN32F407_HARNESS_VERIFIED=0`; only after FIX-012 electrical acceptance is the Gate-B candidate rebuilt with `=1`.
 
-**Current result: OPEN / NOT RUN WITH ARM COMPILER 6.** Host CMake/SRAM-preflight tests are useful regression gates but are not this acceptance test.
+**Current: OPEN / NOT CAPTURED.** Host CMake/SRAM preflight does not replace ARM Compiler 6 evidence.
 
----
+## 4. FIX-010 — measured external SPI qualification
 
-## 3. FIX-010 — measured external SPI timing ladder
+The 1→2→3→4→5 MHz sequence is a **project qualification ladder**, not a claim that the manufacturer guarantees those rates on the assembled harness.
 
-The FPGA SDC/generic STA validates internal implementation assumptions. It does **not** prove the external SN32↔Primer shared SPI bus at the connector/wire level.
+Before 1 MHz traffic:
 
-### 3.1 Mandatory setup
+- FIX-012 Gate-A continuity/common-ground/no-contention checks pass;
+- firmware is rebuilt with `FPST_SN32F407_HARNESS_VERIFIED=1`;
+- full deployment Primer images have a healthy Tiny or an isolated lab fixture that legitimately releases `ZEROIZE_N`;
+- SPI remains Mode 0, MSB-first;
+- no CST pin is changed merely to match an assembled wire.
 
-Before the first measured transaction:
-
-- FIX-012 Gate-A continuity/common-ground/no-contention checks must pass;
-- firmware must then be rebuilt with `FPST_SN32F407_HARNESS_VERIFIED=1`;
-- full deployment Primer images require a healthy Tiny or an isolated lab fixture that legitimately releases `ZEROIZE_N`;
-- SPI mode is fixed to Mode 0, MSB-first;
-- do not alter CST pins to fit the assembled wires.
-
-### 3.2 Qualification progression
-
-Advance only one row at a time. A failed row stops the ladder; do not test a higher rate as a substitute.
-
-| SCK | P1 PING/discover | P2 PING/discover | MISO deselect high-Z | CRC/retry negative tests | waveform/evidence | Result |
+| SCK | P1 PING/discover | P2 PING/discover | deselected MISO high-Z | CRC/retry negative tests | waveform | Result |
 |---:|---|---|---|---|---|---|
 | 1 MHz | not measured | not measured | not measured | not measured | NOT CAPTURED | OPEN |
 | 2 MHz | not measured | not measured | not measured | not measured | NOT CAPTURED | BLOCKED by 1 MHz |
@@ -191,30 +165,19 @@ Advance only one row at a time. A failed row stops the ladder; do not test a hig
 | 4 MHz | not measured | not measured | not measured | not measured | NOT CAPTURED | BLOCKED by prior row |
 | 5 MHz | not measured | not measured | not measured | not measured | NOT CAPTURED | BLOCKED by prior row |
 
-For every passing row archive a logic-analyzer/scope capture containing at minimum `SCK`, `MOSI`, shared `MISO`, selected `CS_N` and corresponding `IRQ_N`. For the dual-board bus also capture or otherwise prove that the non-selected CS stays high and the non-selected endpoint does not drive MISO.
+Each passing row must archive a logic-analyzer/scope capture with at least `SCK`, `MOSI`, shared `MISO`, selected `CS_N` and corresponding `IRQ_N`; also prove the non-selected endpoint does not drive MISO.
 
-Acceptance must record observed signal integrity/timing margin using the actual measurement capability available in the lab. **No numeric setup/hold or overshoot limit may be invented here**; compare measurements against the actual device/vendor electrical/timing requirement used for sign-off and cite that source in the evidence record.
+At 1 MHz additionally run P1/P2 PING/discover/selftest, bad-CRC request, exact-duplicate retry, transaction-ID/content collision rejection, truncated-response retry where applicable, and shared-MISO deselection checks.
 
-At 1 MHz additionally run:
+Observed setup/hold/signal-integrity margins must be compared with the actual device/vendor requirement used for sign-off. Do not invent numeric limits.
 
-- P1 and P2 direct PING/discover/selftest flow;
-- bad CRC request;
-- duplicate retry with same txid + byte-identical request;
-- transaction-ID/content collision rejection;
-- truncated response read/retry where applicable;
-- shared-MISO deselection check.
+**Current FIX-010: OPEN — no external timing capture stored.**
 
-**Current FIX-010 result: OPEN — no external timing capture is stored in the repository.**
+## 5. FIX-012 — physical harness evidence
 
----
+### 5.1 Power-off continuity matrix
 
-## 4. FIX-012 — physical harness evidence
-
-### 4.1 Power-off continuity matrix
-
-Record actual resistance/continuity, not merely a visual inspection.
-
-| Source | Destination | Expected | Measurement | Result |
+| Source | Destination | Project expectation | Measurement | Result |
 |---|---|---|---|---|
 | SN32 P1.0 SCK | P1 J2-3 / P16 | connected | NOT MEASURED | OPEN |
 | SN32 P1.0 SCK | P2 J2-3 / P16 | connected | NOT MEASURED | OPEN |
@@ -229,69 +192,62 @@ Record actual resistance/continuity, not merely a visual inspection.
 | SN32 P2.9 HB_MCU | Tiny J1-1 | connected | NOT MEASURED | OPEN |
 | P1 J2-18 / T11 HB_PQC | Tiny J1-2 | connected | NOT MEASURED | OPEN |
 | P2 J2-18 / T11 HB_CRYPTO | Tiny J1-3 | connected | NOT MEASURED | OPEN |
-| P2 J2-12 / T13 local fault | Tiny J1-11 / pin15 | connected | NOT MEASURED | OPEN |
+| P2 J2-12 / T13 local fault | Tiny J1-11 / pin15 | **project-proposed connection** | NOT MEASURED | OPEN / PHYSICAL-PENDING |
 | Tiny J1-7 SECURE_ENABLE | P1/P2 J2-15 / T12 | fan-out | NOT MEASURED | OPEN |
 | Tiny J1-8 ZEROIZE_N | P1/P2 J2-16 / R11 | fan-out | NOT MEASURED | OPEN |
 | Tiny J1-10 FAULT_LATCH | P1/P2 J2-13 / R12 | fan-out | NOT MEASURED | OPEN |
 | all boards GND | common GND | connected | NOT MEASURED | OPEN |
-| Tiny J1-9 SYSTEM_RESET_N | SN32/Primer reset destination | **NOT CONNECTED — FIX-005 deferred** | N/A | DEFERRED |
+| Tiny J1-9 SYSTEM_RESET_N | SN32 reset/zeroize destination | **NOT CONNECTED by MVP Policy B** | N/A | NOT REQUIRED FOR MVP |
 
-Also verify connector orientation/pin-1 and absence of unintended short circuits between power, ground and adjacent signal nets.
+Tiny J1-11 / FPGA pin15 is supported by official board material as a normal General-I/O pin. That evidence proves pin capability only; it does not prove the P2 J2-12→Tiny J1-11 assembled route.
 
-### 4.2 Powered electrical checks
+Also verify connector orientation/pin-1 and absence of unintended shorts between power, ground and adjacent nets.
 
-With safe current limiting / lab procedure:
+### 5.2 Powered electrical checks
 
-- [ ] all inter-board logic levels are compatible 3.3 V.
+- [ ] all connected inter-board logic levels are compatible 3.3 V.
 - [ ] CS1_N, CS2_N and onboard W25Q16 CS are inactive when expected.
 - [ ] no simultaneous P1/P2 CS assertion.
 - [ ] shared MISO is not driven by a deselected endpoint.
-- [ ] Tiny absent/unpowered leaves Primer full-deployment `ZEROIZE_N` in the safe asserted-low state.
+- [ ] Tiny absent/unpowered leaves full-deployment Primer `ZEROIZE_N` at the safe asserted-low level **as actually measured**, not merely inferred from CST.
 - [ ] healthy Tiny releases `ZEROIZE_N` only after supervisor qualification.
-- [ ] `SECURE_ENABLE` default/transition levels match the profile.
-- [ ] P2 local fault idles low at Tiny input and asserts high on the designed auth-threshold event.
+- [ ] `SECURE_ENABLE` default/transition levels match the project profile.
+- [ ] P2 local-fault wire idles low at Tiny and asserts high on the designed auth-threshold event.
 
-### 4.3 Supervisor behavior measurements
+### 5.3 Supervisor behavior measurements
 
 Archive timestamped captures/results for:
 
-- [ ] each live heartbeat transition interval is nominally 100 ms and remains present while the endpoint is zeroized/safe-locked but still alive;
-- [ ] each independent heartbeat loss trips the Tiny watchdog after the specified 350 ms timeout behavior;
-- [ ] P2 authentication-threshold fault reaches Tiny directly and latches `0x0608`, without waiting for heartbeat timeout;
-- [ ] fatal path deasserts `SECURE_ENABLE`, asserts physical `ZEROIZE_N` before any connected reset action;
+- [ ] live heartbeat transition interval matches the project-profile nominal ~100 ms and remains present while an endpoint is zeroized/safe-locked but its clock/logic is alive;
+- [ ] independent heartbeat loss trips the project-profile ~350 ms watchdog behavior;
+- [ ] P2 authentication-threshold fault reaches Tiny through the proposed direct route and latches project code `0x0608` without waiting for heartbeat timeout;
+- [ ] fatal path deasserts `SECURE_ENABLE` and asserts physical `ZEROIZE_N`;
+- [ ] Tiny-local `ZEROIZE_N` precedes any `SYSTEM_RESET_N` output pulse if that local output ordering is tested;
 - [ ] clear is rejected while the originating fault remains active;
-- [ ] qualified recovery succeeds only with all three heartbeats healthy and fatal sources inactive;
-- [ ] recovery does not resurrect old endpoint key/session state.
+- [ ] qualified recovery succeeds only with heartbeats healthy and fatal sources inactive;
+- [ ] recovery does not resurrect old Primer key/session state.
 
-Because FIX-005 is formally deferred, there is currently no claim that Tiny resets/zeroizes MCU-resident secret state through a dedicated physical wire. Do not mark system-wide fatal containment complete until that architecture is resolved or explicitly accepted by the final security authority.
+Policy B note: these measurements establish hardware containment of the two Primer endpoints. They do **not** establish asynchronous hardware containment of MCU-resident state.
 
-**Current FIX-012 result: OPEN — physical measurements are not available in repository evidence.**
+**Current FIX-012: OPEN — physical measurements are not available in repository evidence.**
 
----
+## 6. End-to-end gate after FIX-009/010/012
 
-## 5. End-to-end gate after FIX-009/010/012 evidence
+Only after vendor images are exact and applicable physical/timing rows pass:
 
-Only after vendor images are exact and the physical harness/timing rows pass:
-
-1. program the recorded P1/P2/Tiny `.fs` hashes and SN32 `.hex` hash;
-2. run host demo exactly:
-
-```text
-wiring -> discover -> selftest -> status -> status2 -> rng-status
-```
-
-3. establish the pair session with the maintained `fpst-host kem-session` interactive path;
+1. program recorded P1/P2/Tiny `.fs` hashes and SN32 `.hex` hash;
+2. run host demo `wiring -> discover -> selftest -> status -> status2 -> rng-status`;
+3. establish the pair session with `fpst-host kem-session`;
 4. confirm `key-status` and `key-status2` report the same session and initial sequence state;
-5. send telemetry and prove P1 TX -> P2 authenticate/commit -> P1 commit reconciliation;
+5. prove P1 TX -> P2 authenticate/commit -> P1 commit reconciliation;
 6. exercise lost ACK/retry/replay/bad-tag/auth-threshold fault;
-7. exercise Tiny tamper/fault/zeroize/recovery and verify a new session must be provisioned afterward;
-8. archive UART logs, logic-analyzer captures and artifact hashes. Do not archive shared secret, traffic key, nonce prefix or private ML-KEM material.
+7. exercise Tiny tamper/fault/zeroize/recovery and verify a new endpoint session must be provisioned afterward;
+8. verify the SN32 software zeroize path clears its session/CSPRNG state as required by Policy B;
+9. archive UART logs, logic-analyzer captures and artifact hashes without shared secret, traffic key, nonce prefix or private ML-KEM material.
 
----
+## 7. Evidence-record rule
 
-## 6. Evidence-record rule
-
-A future engineer may replace `NOT CAPTURED` / `NOT MEASURED` only with concrete evidence such as:
+Replace `NOT CAPTURED` / `NOT MEASURED` only with concrete evidence containing, as applicable:
 
 ```text
 file path or immutable artifact identifier
