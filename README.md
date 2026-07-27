@@ -186,6 +186,7 @@ Code integration is ready for exact vendor builds. Hardware qualification still 
 Controlled evidence checklist:
 
 - [`docs/hardware/FPST-PRE-HARDWARE-SIGNOFF-v1.0.md`](docs/hardware/FPST-PRE-HARDWARE-SIGNOFF-v1.0.md)
+- [`docs/hardware/README_DEPLOYMENT_DIAGNOSTICS.md`](docs/hardware/README_DEPLOYMENT_DIAGNOSTICS.md) — build/resource/timing/memory/runtime/benchmark diagnostics và bộ log cần thu để review.
 
 CI/generic Yosys is functional evidence; it does **not** substitute for exact-device vendor reports or measurements.
 
@@ -225,3 +226,4 @@ Rules:
 - Integration decisions: [`docs/spec-delta/FPST-v1.1-implementation-decisions.md`](docs/spec-delta/FPST-v1.1-implementation-decisions.md)
 - Wiring guide: [`docs/hardware/FPST-WIRING-GUIDE-v1.1.md`](docs/hardware/FPST-WIRING-GUIDE-v1.1.md)
 - Pre-hardware sign-off: [`docs/hardware/FPST-PRE-HARDWARE-SIGNOFF-v1.0.md`](docs/hardware/FPST-PRE-HARDWARE-SIGNOFF-v1.0.md)
+- Deployment diagnostics: [`docs/hardware/README_DEPLOYMENT_DIAGNOSTICS.md`](docs/hardware/README_DEPLOYMENT_DIAGNOSTICS.md)
