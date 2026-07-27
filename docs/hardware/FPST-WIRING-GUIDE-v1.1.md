@@ -68,7 +68,7 @@ Các kết nối phải đọc đúng:
 - `SYSTEM_RESET_N` có output phía Tiny nhưng chưa nối cho tới khi destination reset net được xác nhận từ schematic.
 
 > [!CAUTION]
-> Không nối chung `fault_o` của Primer #1 và Primer #2. Đây là output push-pull LVCMOS33. Chỉ Primer #2 `J2-12` được route tới input dedicated `Tiny J1-11` vì P2 có local authentication-threshold fault độc lập. Primer #1 `fault_o` hiện không mang một local independent fatal cần route riêng.
+> Không nối chung `fault_o` của Primer #1 và Primer #2. Đây là output push-pull LVCMOS33. Chỉ Primer #2 `J2-12` được route tới input dedicated `Tiny J1-11` vì P2 có local authentication-threshold fault độc lập.
 
 ---
 
@@ -148,9 +148,7 @@ CST khóa J1 như sau:
 | 10 | 14 | `FAULT_LATCH` | active-high | output |
 | 11 | 15 | `P2_CRYPTO_FAULT` | active-high local P2 fatal | input |
 
-`J1-11 / FPGA pin15 (IOB2B)` được chọn sau khi đối chiếu bảng pin chính thức Kiwi 1P5 Rev2.2: chân này được ghi là **General I/O** và không phải JTAG/JTAGSEL_N/RECONFIG_N/MSPI special pin. Không thay pin này nếu chưa có schematic/constraint evidence mới.
-
-On-board Tiny: S1 = local tamper, S2 = local clear/recovery, D3 = fault LED, D4 = secure LED.
+`J1-11 / FPGA pin15 (IOB2B)` được chọn sau khi đối chiếu bảng pin chính thức Kiwi 1P5 Rev2.2: chân này là **General I/O** và không phải JTAG/JTAGSEL_N/RECONFIG_N/MSPI special pin.
 
 ### 5.1 Heartbeats → Tiny
 
@@ -160,9 +158,7 @@ On-board Tiny: S1 = local tamper, S2 = local clear/recovery, D3 = fault LED, D4 
 | Primer #1 `J2-18 / T11` | `J1-2 / HB_PQC` |
 | Primer #2 `J2-18 / T11` | `J1-3 / HB_CRYPTO` |
 
-Nominal deployment heartbeat toggle khoảng `100 ms`; Tiny timeout sau `350 ms` không có transition.
-
-**Semantics bắt buộc:** heartbeat chỉ biểu diễn liveness. `ZEROIZE_N=0`, `SECURE_ENABLE=0`, `FAULT_LATCH=1` hoặc P2 authentication-threshold fault không được tự làm heartbeat dừng. Heartbeat chỉ mất khi endpoint thực sự không còn tiến (reset/clock/stall).
+Nominal heartbeat toggle khoảng `100 ms`; Tiny timeout sau `350 ms` không có transition. Heartbeat chỉ biểu diễn liveness và không bị gate bởi zeroize/fatal state.
 
 ### 5.2 Tiny → cả hai Primer
 
@@ -178,19 +174,13 @@ Nominal deployment heartbeat toggle khoảng `100 ms`; Tiny timeout sau `350 ms`
 Primer #2 J2-12 / T13 fault_o  ---->  Tiny J1-11 / pin15 crypto_fault_i
 ```
 
-P2 `fault_o` trên deployment top mang **local `auth_threshold_fault`**, không echo `FAULT_LATCH` của Tiny. Điều này tránh vòng phản hồi:
-
-```text
-Tiny FAULT_LATCH -> P2 fatal_latched_i -> P2 fault_o -> Tiny
-```
-
-Ba authentication failures liên tiếp phải đưa Tiny vào fatal path với common FPST code `0x0608 ERR_AUTH_THRESHOLD` trong khi P2 heartbeat vẫn tiếp tục toggle nếu board còn sống.
+P2 `fault_o` mang local `auth_threshold_fault`, không echo `FAULT_LATCH` của Tiny. Ba authentication failures liên tiếp phải đưa Tiny vào fatal path với `0x0608 ERR_AUTH_THRESHOLD` trong khi P2 heartbeat vẫn toggle nếu board còn sống.
 
 ### 5.4 SYSTEM_RESET_N
 
 `Tiny J1-9 / SYSTEM_RESET_N` đã khóa ở phía Tiny nhưng destination reset net cuối trên Primer/SN32 chưa được khóa.
 
-**Bring-up đầu tiên:** để J1-9 chưa nối. Chỉ nối sau khi destination reset pin/net được xác nhận từ schematic và cập nhật đồng bộ trong profile/CST/board profile. Không đoán một chân reset từ tên net mơ hồ.
+**Bring-up đầu tiên:** để J1-9 chưa nối. Chỉ nối sau khi destination reset pin/net được xác nhận từ schematic và cập nhật đồng bộ trong profile/CST/board profile. Không đoán reset pin từ tên net mơ hồ.
 
 ### 5.5 External tamper / manual / clear
 
@@ -202,8 +192,6 @@ Ba authentication failures liên tiếp phải đưa Tiny vào fatal path với 
 ---
 
 ## 6. Primer J2 deployment harness
-
-Primer #1 và #2 dùng cùng vị trí J2 nhưng là **hai board riêng**.
 
 | J2 | FPGA pin | Signal | Nối tới | Hướng tại Primer |
 |---:|---|---|---|---|
@@ -223,7 +211,7 @@ Không tự đấu `BUSY` hoặc P1 `FAULT` vào MCU/Tiny chân chưa được p
 
 ---
 
-## 7. Fail-safe bias cần kiểm tra
+## 7. Fail-safe bias và standalone deployment image
 
 Supervisor-control net phải có safe default khi Tiny mất nguồn hoặc dây hở:
 
@@ -234,59 +222,78 @@ SYSTEM_RESET_N  -> default LOW  (assert reset, nếu reset path được khóa)
 P2_CRYPTO_FAULT -> Tiny input default LOW (inactive source when undriven)
 ```
 
-Primer CST cấu hình pull-down cho `secure_enable_i`, `zeroize_ni` và `fatal_latched_i`. Internal FPGA pull không thay physical sign-off. Giá trị external resistor cuối cùng phải được xác nhận theo topology/tải thực.
+Primer CST cố ý có pull-down trên `secure_enable_i` và `zeroize_ni`. Vì `ZEROIZE_N` active-low, **full deployment bitstream khi Tiny chưa nối phải ở trạng thái zeroized**. Đây là fail-safe đúng, không phải lỗi pin.
+
+### 7.1 Test self-test image
+
+Các target NTT/Ascon KAT riêng có thể được program và chạy độc lập theo profile self-test của chúng; chúng không phải full deployment image.
+
+### 7.2 Test full deployment image
+
+Muốn chạy BTP/session với full deployment bitstream phải có một trong hai cấu hình:
+
+1. Tiny đã nối, boot/qualification hợp lệ và drive `ZEROIZE_N=1` khi cho phép hoạt động; hoặc
+2. **fixture lab tạm thời** drive mức hợp lệ cho `ZEROIZE_N`/`SECURE_ENABLE` trong lúc Tiny hoàn toàn chưa nối vào cùng net.
+
+Không đổi CST pull-down sang pull-up chỉ để ping dễ hơn. Không hard-wire `ZEROIZE_N` lên 3V3 rồi đồng thời nối output Tiny vào cùng net vì có thể gây contention. Phải đo level thực khi supervisor present/absent.
 
 ---
 
-## 8. Thứ tự đấu dây / bring-up khuyến nghị
+## 8. Bring-up theo hai harness gate
 
-### Stage A — chưa cấp nguồn
+Firmware production chặn mọi Primer BTP transaction khi `FPST_SN32F407_HARNESS_VERIFIED=0`. Vì vậy không thể vừa giữ flag = 0 vừa yêu cầu logic-analyzer capture một SPI transaction do firmware tạo ra.
+
+### Gate A — electrical-only, `HARNESS_VERIFIED=0`
+
+#### Stage A1 — chưa cấp nguồn
 
 - [ ] Gắn nhãn `P1` / `P2` cho hai Primer.
-- [ ] Kiểm tra không nhầm CS1/CS2.
-- [ ] Continuity-check từng dây connector-to-connector, gồm P2 J2-12 → Tiny J1-11 khi lắp security harness.
-- [ ] Kiểm tra không short `3V3-GND`, `SCK-GND`, `MOSI-GND`, `MISO-GND`.
-- [ ] Xác nhận tất cả board dùng 3.3 V logic.
+- [ ] Xác nhận connector orientation/pin-1.
+- [ ] Continuity-check connector-to-connector cho SCK/MOSI/MISO/CS1/IRQ1/CS2/IRQ2/GND.
+- [ ] Nếu security harness đã lắp: continuity P2 J2-12 → Tiny J1-11 và các heartbeat/control net.
+- [ ] Kiểm tra không short `3V3-GND`, signal-GND hoặc hai output với nhau.
 
-### Stage B — PC ↔ SN32
+#### Stage A2 — PC ↔ SN32
 
-- [ ] Chỉ nối UART + GND.
-- [ ] Xác nhận banner/CLI `115200 8N1`.
-- [ ] Kiểm tra `P2.9` heartbeat độc lập.
+- [ ] Build/program SN32 với `FPST_SN32F407_HARNESS_VERIFIED=0`.
+- [ ] Chỉ UART + GND cũng phải boot và trả CLI diagnostics.
+- [ ] Xác nhận heartbeat MCU, ADC/RNG diagnostics nếu cần.
+- [ ] Không kỳ vọng PING/BTP SPI; guard phải trả state error thay vì phát traffic.
 
-### Stage C — SN32 ↔ Primer #1
+#### Stage A3 — electrical harness, vẫn flag = 0
 
-- [ ] Nối `SCK/MOSI/MISO/CS1/IRQ1/GND`.
-- [ ] Giữ `FPST_SN32F407_HARNESS_VERIFIED=0` trong lần kiểm tra điện đầu tiên.
-- [ ] Xác nhận `CS2_N` không active.
-- [ ] Bắt đầu SPI Mode 0 ở 1 MHz.
-- [ ] Capture `SCK/MOSI/MISO/CS1/IRQ1` bằng logic analyzer.
+- [ ] Nối SCK/MOSI/MISO/CS1/IRQ1; sau đó thêm CS2/IRQ2 theo bảng.
+- [ ] Xác nhận CS1/CS2 idle high và không overlap.
+- [ ] Xác nhận onboard W25Q16 CS `P1.8` inactive.
+- [ ] Kiểm tra common ground, static bias và MISO không có contention khi endpoints deselected.
+- [ ] Không bypass guard trong code để tạo SPI khi flag = 0.
 
-> Stage C còn được tách thành electrical-only gate và measured-transaction gate trong FIX-003; không bypass firmware guard để tạo traffic khi flag vẫn bằng 0.
+#### Stage A4 — Tiny/fail-safe
 
-### Stage D — thêm Primer #2
-
-- [ ] Nối shared `SCK/MOSI/MISO` + `CS2/IRQ2/GND`.
-- [ ] Xác nhận chỉ selected board drive MISO.
-- [ ] Ping từng endpoint độc lập sau khi harness gate hợp lệ.
-
-### Stage E — Tiny supervisor
-
-- [ ] Trước tiên nối ba heartbeat input.
-- [ ] Kiểm tra Tiny chỉ assert `SECURE_ENABLE` sau startup/grace/qualification.
+- [ ] Nối 3 heartbeat và kiểm tra Tiny qualification.
 - [ ] Nối `SECURE_ENABLE`, `ZEROIZE_N`, `FAULT_LATCH` tới cả hai Primer.
-- [ ] Nối **P2 J2-12 → Tiny J1-11** và kiểm tra idle LOW / asserted HIGH.
-- [ ] Kiểm tra polarity bằng đồng hồ/logic analyzer trước key/session operation.
-- [ ] Test S1 tamper: `SECURE_ENABLE` hạ, `ZEROIZE_N` assert low, hai Primer heartbeat vẫn toggle nếu logic còn chạy.
-- [ ] Chưa nối `SYSTEM_RESET_N` cho tới khi reset destination được xác nhận.
+- [ ] Nối P2 J2-12 → Tiny J1-11.
+- [ ] Tiny absent: Primer deployment phải fail-safe zeroized.
+- [ ] Tiny healthy: đo release của `ZEROIZE_N` và secure-enable sau qualification.
+- [ ] Tamper: `SECURE_ENABLE` hạ, `ZEROIZE_N` assert low, heartbeat Primer vẫn toggle nếu logic còn sống.
+- [ ] `SYSTEM_RESET_N` vẫn để **NOT CONNECTED** tới khi Phase 3 khóa destination từ schematic.
 
-### Stage F — đóng harness gate
+### Gate B — measured transaction, `HARNESS_VERIFIED=1`
 
-Chỉ sau continuity/common-ground/MISO-release/polarity đúng mới build firmware release với:
+Chỉ sau Gate A có evidence continuity/common-ground/no-contention/polarity:
+
+1. rebuild firmware với:
 
 ```text
 FPST_SN32F407_HARNESS_VERIFIED=1
 ```
+
+2. start **SPI Mode 0 / 1 MHz**;
+3. P1 `ping`, P2 `ping2`, rồi `discover`/`selftest`;
+4. capture `SCK/MOSI/MISO/CS1/CS2/IRQ1/IRQ2` bằng logic analyzer;
+5. xác nhận deselected MISO high-Z và CS không overlap;
+6. chạy bad-CRC/retry/truncated-read tests;
+7. chỉ tăng 1→2→3→4→5 MHz sau measured timing qualification của từng mức.
 
 ---
 
