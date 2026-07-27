@@ -123,10 +123,14 @@ module kiwi_primer20k_fpst_rx_top #(
     end
     assign fatal_latched_sys = fatal_sync_q[1];
 
-    /* Nominal heartbeat transition every 100 ms at 27 MHz. */
+    /*
+     * Heartbeat reports endpoint liveness only. Security controls and local
+     * authentication faults may disable/zeroize the endpoint but MUST NOT stop
+     * heartbeat; Tiny needs the live heartbeat during SAFE_LOCKED recovery.
+     * Only an actual board reset stops the divider.
+     */
     always_ff @(posedge sys_clk_i) begin
-        if (!internal_rst_n || transport_zeroize || fatal_latched_sys ||
-            auth_threshold_fault) begin
+        if (!internal_rst_n) begin
             heartbeat_counter_q <= '0;
             heartbeat_q <= 1'b0;
         end else if (HEARTBEAT_TOGGLE_CYCLES <= 1) begin
@@ -235,7 +239,13 @@ module kiwi_primer20k_fpst_rx_top #(
 
     assign irq_no = ~endpoint_irq_pending;
     assign busy_o = endpoint_busy;
-    assign fault_o = fatal_latched_sys || auth_threshold_fault;
+
+    /*
+     * J2-12 is the dedicated local Primer #2 crypto-fault route to Tiny.
+     * Do not mirror fatal_latched_sys back onto this output: doing so creates a
+     * Tiny FAULT_LATCH -> P2 fault_o -> Tiny feedback loop that cannot clear.
+     */
+    assign fault_o = auth_threshold_fault;
 
     assign led1_no = ~heartbeat_o;
     assign led2_no = ~endpoint_busy;
@@ -243,7 +253,8 @@ module kiwi_primer20k_fpst_rx_top #(
     assign led4_no = ~key_valid;
     assign led5_no = ~session_active;
     assign led6_no = ~(expected_sequence != 64'h0);
-    assign led7_no = ~(fault_o || (last_error_code != 16'h0000));
+    assign led7_no = ~((fatal_latched_sys || auth_threshold_fault) ||
+                       (last_error_code != 16'h0000));
 
 `ifndef SYNTHESIS
     initial begin
