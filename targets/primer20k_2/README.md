@@ -2,7 +2,7 @@
 
 ## 1. Vai trò
 
-Theo `FPST-SYS-SPEC-001 v1.1`, Primer #2 là endpoint nhận secure telemetry:
+Primer #2 là endpoint nhận secure telemetry của current project deployment. `FPST-SYS-SPEC-001 v1.1` là reference baseline cho protocol choices, không phải nguồn authoritative cao hơn hardware/schematic/current implementation evidence.
 
 ```text
 BTP STP_RX_PACKET
@@ -21,7 +21,7 @@ Ascon-AEAD128 decrypt + tag verify
       +--> auth failure: discard quarantine, sequence unchanged
 ```
 
-Primer #2 không chạy NTT/PQC datapath của Primer #1. Nó chỉ giữ receive-session context, thực hiện STP RX/decrypt/verify, replay protection, counters và security fault reporting.
+Primer #2 không chạy NTT/PQC datapath của Primer #1. Nó giữ receive-session context, thực hiện STP RX/decrypt/verify, replay protection, counters và local security-fault reporting.
 
 ## 2. Thiết bị và build target
 
@@ -36,9 +36,7 @@ SDC         : constraints/kiwi_primer_20k/kiwi_primer20k_fpst_rx.sdc
 Artifact    : Gowin *.fs
 ```
 
-Primer #2 cùng loại board với Primer #1 nhưng dùng top module và bitstream riêng.
-
-## 3. Deployment RTL hiện có
+## 3. Deployment RTL
 
 ```text
 rtl/session/primer2_session_context.sv
@@ -49,7 +47,7 @@ rtl/boards/kiwi_primer_20k/primer2_btp_endpoint_deploy.sv
 rtl/boards/kiwi_primer_20k/kiwi_primer20k_fpst_rx_top.sv
 ```
 
-Các khối transport dùng chung:
+Shared transport:
 
 ```text
 rtl/transport/fpst_btp_pkg.sv
@@ -58,13 +56,9 @@ rtl/transport/btp_request_parser.sv
 rtl/transport/btp_response_builder.sv
 ```
 
-Ascon dùng chung `ascon_round.sv`, `ascon_permutation.sv` và encrypt implementation hiện hữu để giữ cùng state/byte convention; integration boundary của Primer #2 đi qua interface compatibility `ascon_aead_core` đã khóa trong spec.
+## 4. STP receive policy
 
-## 4. STP v1 receive policy
-
-Primer #2 chỉ chạy AEAD sau khi precheck thành công.
-
-Header STP v1 cố định 24 byte:
+Header current profile dài 24 byte:
 
 ```text
 offset  size  field
@@ -80,7 +74,7 @@ offset  size  field
 23      1     reserved = 0
 ```
 
-MVP telemetry format `0x01` có ciphertext length đúng 24 byte và tag length 16 byte. Receiver vẫn giới hạn generic Ascon data length ở 128 byte để fail closed với packet ngoài profile.
+MVP telemetry format `0x01` dùng ciphertext length 24 byte và tag 16 byte. Generic Ascon data bound là 128 byte để fail closed ngoài profile.
 
 Strict sequence policy:
 
@@ -90,7 +84,7 @@ received > expected  -> ERR_SEQUENCE_GAP; không decrypt
 received = expected  -> decrypt/verify
 ```
 
-Nonce được dựng đúng convention của Primer #1:
+Nonce:
 
 ```text
 nonce = nonce_prefix_64 || sequence_number_64
@@ -98,9 +92,9 @@ nonce = nonce_prefix_64 || sequence_number_64
 
 `expected_sequence` bắt đầu từ 0 và chỉ tăng sau authenticated release thành công.
 
-## 5. Verify-before-release / quarantine
+## 5. Verify-before-release / local crypto fault
 
-`ascon_aead_decrypt` giữ toàn bộ plaintext trong quarantine RAM/register array. `out_valid_o` không được assert trước khi tag đã verify thành công.
+`ascon_aead_decrypt` giữ plaintext trong quarantine cho tới khi tag verify thành công.
 
 ```text
 ciphertext -> decrypt internal state -> quarantine
@@ -114,11 +108,32 @@ ciphertext -> decrypt internal state -> quarantine
                  sequence unchanged    sequence_commit pulse
 ```
 
-Ba authentication failures liên tiếp latch `auth_threshold_fault_o`; deployment top hạ heartbeat/fault path và receive session key bị invalidated. Recovery thuộc supervisor/new-session procedure, không tiếp tục dùng phiên cũ.
+Ba authentication failures liên tiếp latch `auth_threshold_fault_o` và invalidate receive-session key.
+
+Current RTL đưa **local fault này** ra `fault_o` trên P2 `J2-12 / T13`. Tiny project profile assign `J1-11 / FPGA pin15` làm `P2_CRYPTO_FAULT` input.
+
+Evidence boundary:
+
+- P2 RTL/CST `fault_o -> T13` = implemented/constraint-confirmed;
+- official Tiny material xác nhận J1-11/pin15 là usable **General I/O**;
+- semantic assignment `P2_CRYPTO_FAULT` = project integration decision;
+- assembled jumper `P2 J2-12 -> Tiny J1-11`, continuity và signal level = **PHYSICAL-PENDING**.
+
+P2 heartbeat không bị gate bởi auth-threshold fault, zeroize, secure-disable hay Tiny `FAULT_LATCH`; nó tiếp tục toggle nếu board/clock/logic còn sống. Đây là current architecture liveness contract cần thiết để Tiny recovery không deadlock.
+
+P2 `fault_o` không echo `fatal_latched_i` của Tiny, tránh vòng phản hồi `FAULT_LATCH -> P2 fault_o -> Tiny`.
+
+Current project error-profile code:
+
+```text
+0x0608 ERR_AUTH_THRESHOLD
+```
+
+`0x0608` được project adopt từ FPST v1.1 baseline; không phải manufacturer/board requirement.
 
 ## 6. BTP opcodes Primer #2
 
-Các opcode receive được khóa trong shared registry:
+Receive:
 
 ```text
 0x61 STP_RX_PACKET
@@ -126,7 +141,7 @@ Các opcode receive được khóa trong shared registry:
 0x63 STP_CLEAR_COUNTERS
 ```
 
-Ngoài ra endpoint hỗ trợ common control subset cần cho bring-up/session:
+Common control subset:
 
 ```text
 GET_DEVICE_ID / GET_STATUS / GET_ERROR / CLEAR_ERROR / PING
@@ -134,17 +149,17 @@ KEY_LOAD_BEGIN / KEY_LOAD_CHUNK / KEY_LOAD_COMMIT / KEY_LOAD_ABORT
 KEY_STATUS / ZEROIZE / SESSION_ACTIVATE
 ```
 
-Key-load direction của Primer #2 là `0x02`.
+Key-load direction P2 là `0x02`.
 
-### STP_RX_PACKET success response
+### STP_RX_PACKET response
 
-BTP response vẫn dùng generic 12-byte response prefix của project:
+Generic prefix:
 
 ```text
 status[2] || detail[2] || device_state[4] || data_len[4]
 ```
 
-Khi packet được authenticate và commit:
+Authenticated commit:
 
 ```text
 status = ERR_OK
@@ -152,7 +167,7 @@ detail = 0x0001  (COMMIT_ACCEPTED)
 data   = committed_sequence[8] || plaintext_len[2] || plaintext
 ```
 
-Khi nhận duplicate/replay hoặc sequence gap:
+Replay/gap:
 
 ```text
 status = ERR_REPLAY hoặc ERR_SEQUENCE_GAP
@@ -160,11 +175,9 @@ detail = 0x0002  (EXPECTED_SEQUENCE)
 data   = expected_sequence[8]
 ```
 
-Cấu trúc này làm cho MCU có thể phân biệt rõ: packet trước đã commit nhưng ACK bị mất, hay receiver thực sự chưa chấp nhận sequence đó.
-
 ## 7. Response cache / retry
 
-Primer #2 dùng cùng BTP two-transaction model với Primer #1:
+Primer #2 dùng BTP two-transaction model:
 
 ```text
 transaction 1: MCU -> request
@@ -173,31 +186,29 @@ irq_n asserted when response is ready
 transaction 2: MCU -> clocks response out
 ```
 
-Response gần nhất được cache khoảng 1 giây. Cùng `transaction_id` + opcode + payload length + request CRC trả lại response byte-identical; transaction collision bị reject.
+Response gần nhất cache khoảng 1 giây. Exact duplicate theo transaction identity/request content trả cached response mà không re-execute side effects; collision bị reject.
 
-Lưu ý STP-level retry khác BTP duplicate retry: nếu ACK của một STP packet bị mất và MCU gửi lại packet bằng một BTP transaction mới, receiver đã commit sẽ trả `ERR_REPLAY` kèm `expected_sequence`. `expected_sequence = sent_sequence + 1` là bằng chứng packet trước đã commit.
+STP lost-ACK retry khác BTP duplicate retry: resend packet bằng BTP transaction mới sau receiver commit sẽ trả `ERR_REPLAY` kèm `expected_sequence`; `expected=sent+1` chứng minh packet trước đã commit.
 
-## 8. FPGA-side J2 deployment harness
-
-Primer #2 là board vật lý riêng nên có thể dùng cùng vị trí J2 phía FPGA như Primer #1:
+## 8. FPGA-side J2 project harness
 
 ```text
 J2-3  / P16 : SPI SCK
 J2-5  / P15 : SPI MOSI
 J2-7  / T15 : SPI MISO
-J2-8  / R14 : CS_N dành riêng Primer #2
-J2-10 / T14 : IRQ_N Primer #2
+J2-8  / R14 : CS_N dedicated P2
+J2-10 / T14 : IRQ_N P2
 J2-11 / R13 : busy
-J2-12 / T13 : endpoint fault
+J2-12 / T13 : local auth-threshold fault -> proposed Tiny J1-11 route
 J2-13 / R12 : Tiny fatal_latched
 J2-15 / T12 : Tiny secure_enable
-J2-16 / R11 : Tiny zeroize_n
-J2-18 / T11 : heartbeat -> Tiny
+J2-16 / R11 : Tiny ZEROIZE_N
+J2-18 / T11 : heartbeat -> Tiny J1-3
 ```
 
-Không được nối chung `CS_N` của hai Primer. SCK/MOSI/MISO được dùng chung, còn mỗi Primer có CS/IRQ riêng. Shared `btp_spi_slave` đã được sửa để MISO về high-impedance khi CS không chọn endpoint; SN32 multiport adapter luôn deassert flash CS, P1 CS và P2 CS trước khi chọn đúng một endpoint.
+Không nối chung CS của hai Primer. SCK/MOSI/MISO shared; mỗi Primer có CS/IRQ riêng. `btp_spi_slave` tri-state MISO khi deselected; actual high-Z/shared-bus behavior vẫn phải đo trên hardware.
 
-SN32 deployment profile hiện khóa:
+SN32 current profile:
 
 ```text
 shared SCK  : P1.0
@@ -207,80 +218,53 @@ Primer #1   : CS=P2.1, IRQ=P2.3
 Primer #2   : CS=P2.2, IRQ=P2.8
 ```
 
-CST chỉ khóa FPGA-side pin mapping. Physical continuity/common-ground/MISO-release measurement vẫn là hardware sign-off item.
+CST chỉ khóa FPGA-side pin mapping; inter-board continuity/common-ground/MISO-release và P2 J2-12→Tiny J1-11 là physical sign-off evidence.
 
-## 9. Verification entrypoints
+## 9. Heartbeat / supervisor contract
 
-Primer #2 regression entrypoint:
+Project-profile heartbeat transition interval:
+
+```text
+2,700,000 / 27,000,000 Hz = 100 ms
+```
+
+Nominal 100 ms heartbeat và Tiny ~350 ms watchdog được adopt từ FPST baseline và được giữ như **project-profile values**, không phải board/manufacturer timing requirements.
+
+Heartbeat = liveness-only. Local P2 auth-threshold fault là cause riêng và không được reclassify thành `HB_CRYPTO_TIMEOUT`.
+
+```text
+P2 local auth fault -> proposed direct Tiny input
+Tiny -> SECURE_ENABLE low / ZEROIZE_N low / FAULT_LATCH high
+P2 heartbeat continues if endpoint logic remains alive
+```
+
+After source removal + healthy heartbeats, Tiny may perform qualified recovery; old P2 session/key must not resurrect.
+
+## 10. Verification entrypoints
 
 ```bash
 bash scripts/sim/run_primer2_deployment_tests.sh
+bash scripts/sim/run_supervisor_system_integration.sh
 bash scripts/synth/check_kiwi_primer20k_fpst_rx_deployment_yosys.sh
 ```
 
-`run_primer2_deployment_tests.sh` hiện chạy bốn gate:
+Regression covers Ascon decrypt/quarantine, P1→P2 STP policy, P2 BTP session/replay/counters, bad-tag threshold, direct local-fault arbitration, heartbeat through safe-lock, blocked clear, qualified recovery and full hierarchy compile.
 
-```text
-Ascon-AEAD128 decrypt KAT / quarantine
-Primer #1 STP TX -> Primer #2 STP RX cross-endpoint policy regression
-actual Primer #2 BTP endpoint key/session/STP/replay/counter contract regression
-complete Primer #2 deployment hierarchy compile
-```
+Generic Yosys is structural/synthesizability evidence only; it is not exact-device Gowin P&R/timing.
 
-Cross-endpoint regression đã bắt được và dẫn tới sửa một lỗi streaming có thật ở `primer1_stp_tx`: ciphertext có thể được Ascon xuất ngay trong lúc wrapper còn feed block plaintext tiếp theo, nên TX phải capture `core_out_valid` trong toàn transaction chứ không chỉ ở `ST_WAIT_CRYPTO`.
+## 11. Hardware evidence still required
 
-SN32 portable regression hiện kiểm cả independent-link và low-RAM routed one-link pair flow. Routed flow dùng một `fpst_fpga_link_t` cho cả hai Primer, kiểm session provisioning, exact retained STP forwarding, COMMIT, lost-ACK -> `ERR_REPLAY expected=sent+1` reconciliation và pair zeroize. ML-KEM regression còn kiểm 42-byte `KEY_STATUS` response không được ghi đè 768-byte ciphertext scratch; scratch hiện bắt đầu ở `response_buf[48]`.
+Before Primer #2 hardware sign-off:
 
-GitHub Actions run #420 trên commit `d3f4956f1898f6222909a087e81efad2448b297f` đã PASS toàn bộ portable C, ML-KEM differential/SRAM preflight, RTL regression và Primer #1/#2 generic Yosys deployment synthesis gates. Final `Report verification failure` được skip, nên không còn `continue-on-error` raw failure bị che.
+- exact Gowin synthesis + P&R + timing for `GW2A-LV18PG256C8/I7`;
+- generated/programmed P2 `.fs` hash;
+- ARM Compiler 6 SN32 `.map`/stack/`.hex` evidence;
+- continuity/common-ground/MISO-release checks;
+- continuity + voltage/level evidence for **proposed** P2 J2-12/T13 -> Tiny J1-11/pin15;
+- measured project-profile heartbeat and direct auth-fault behavior;
+- SPI Mode-0 logic-analyzer qualification starting at 1 MHz;
+- programmed-board telemetry TX -> RX -> commit/retry/zeroize/fault/recovery.
 
-Generic Yosys synthesis chỉ là structural/synthesizability smoke gate và không thay Gowin exact-device synthesis/place-and-route/timing. Host SRAM preflight cũng không thay ARM Compiler 6 `.map`/stack proof.
+Controlled evidence matrix: `docs/hardware/FPST-PRE-HARDWARE-SIGNOFF-v1.0.md`.
 
-Các evidence còn bắt buộc trước board sign-off:
-
-- Gowin synthesis + P&R + timing cho `GW2A-LV18PG256C8/I7` của cả hai Primer;
-- generated/programmed Primer `.fs` artifacts;
-- ARM Compiler 6 exact SN32 build, `.map`, stack/call-graph evidence và `.hex`;
-- continuity/common-ground/MISO-release check cho shared SPI harness;
-- logic-analyzer validation bắt đầu ở SPI Mode 0, 1 MHz;
-- programmed-board end-to-end telemetry TX -> RX -> commit/retry/zeroize/fault test.
-
-## 10. Trạng thái hiện tại
-
-```text
-IMPLEMENTED + CI-VERIFIED ON primer2-deployment-v1:
-  Primer #2 secure RX top + BTP endpoint
-  receive session context / expected_sequence
-  STP precheck + replay/gap guard
-  Ascon-AEAD128 decrypt/verify compatibility core
-  plaintext quarantine / verify-before-release
-  auth-failure threshold -> fault request
-  response cache and commit/reconcile response
-  shared-SPI MISO tri-state behavior
-  CST/SDC + source manifest
-  decrypt KAT/quarantine regression
-  Primer1-TX -> Primer2-RX cross-endpoint regression
-  actual Primer #2 BTP response-contract regression
-  replay / sequence-gap / bad-tag x3 threshold regression
-  SN32 Primer #2 BTP client
-  SN32 shared-SPI dual-CS/dual-IRQ adapter
-  SN32 atomic P1-TX/P2-RX pair session provisioning
-  SN32 retained-packet bridge + lost-ACK reconciliation
-  SN32 low-RAM one-link routing
-  ML-KEM ciphertext scratch protection at byte 48
-  strict host syntax gate for new SN32 board sources
-  dual-Primer source-level SRAM preflight
-  Primer #1 and Primer #2 generic Yosys deployment synthesis
-  full CI run #420 with hidden-failure detector clean
-
-NOT YET HARDWARE-SIGNED-OFF:
-  Gowin exact-device P&R/timing
-  generated/programmed *.fs
-  ARM Compiler 6 exact SN32 map/stack and generated *.hex
-  physical two-Primer harness continuity/common-ground/MISO-release evidence
-  logic-analyzer SPI evidence
-  programmed-board end-to-end evidence
-```
-
-SN32 dual-Primer Keil source list, memory profile and bring-up sequence are documented in `targets/sn32f407/firmware/KEIL_DUAL_PRIMER_BUILD.md`.
-
-Không tạo bitstream/hex giả và không gọi target là hardware-ready chỉ vì RTL/host CI đã pass.
+Do not create fake `.fs`/`.hex`/timing/logic-analyzer evidence and do not call the target hardware-ready because CI passes.

@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
 """FPST SN32F407F ML-KEM-512 UART session bring-up helper.
 
-Usage example:
-    python tools/sn32_uart_session.py --port COM5 \
-        --public-key receiver_mlkem512_pk.bin \
-        --session-id 0x10203040 \
-        --ciphertext-out session.ct
-
-Requires:
-    pip install pyserial
+Prefer ``fpst-host kem-session`` for the maintained deployment interface. This
+standalone helper is retained for lab use and follows the same final dual-Primer
+MCU framing.
 """
 
 from __future__ import annotations
@@ -37,17 +32,25 @@ CT_BEGIN_RE = re.compile(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Establish an FPST ML-KEM-512 TX session over the SN32 UART console."
+        description="Establish an FPST ML-KEM-512 P1-TX/P2-RX session over SN32 UART."
     )
     parser.add_argument("--port", required=True, help="Serial port, e.g. COM5 or /dev/ttyUSB0")
-    parser.add_argument("--public-key", required=True, type=pathlib.Path,
-                        help="800-byte receiver ML-KEM-512 public key")
-    parser.add_argument("--session-id", required=True,
-                        help="Non-zero 32-bit session ID, decimal or 0x-prefixed")
-    parser.add_argument("--ciphertext-out", required=True, type=pathlib.Path,
-                        help="Destination for the 768-byte ML-KEM ciphertext")
-    parser.add_argument("--timeout", type=float, default=120.0,
-                        help="Overall response timeout in seconds (default: 120)")
+    parser.add_argument(
+        "--public-key", required=True, type=pathlib.Path,
+        help="800-byte receiver ML-KEM-512 public key",
+    )
+    parser.add_argument(
+        "--session-id", required=True,
+        help="Non-zero 32-bit session ID, decimal or 0x-prefixed",
+    )
+    parser.add_argument(
+        "--ciphertext-out", required=True, type=pathlib.Path,
+        help="Destination for the 768-byte ML-KEM ciphertext",
+    )
+    parser.add_argument(
+        "--timeout", type=float, default=120.0,
+        help="Overall response timeout in seconds (default: 120)",
+    )
     return parser.parse_args()
 
 
@@ -74,9 +77,7 @@ def main() -> int:
 
     public_key = args.public_key.read_bytes()
     if len(public_key) != PK_BYTES:
-        raise SystemExit(
-            f"public key must be exactly {PK_BYTES} bytes, got {len(public_key)}"
-        )
+        raise SystemExit(f"public key must be exactly {PK_BYTES} bytes, got {len(public_key)}")
 
     try:
         session_id = int(args.session_id, 0)
@@ -85,7 +86,6 @@ def main() -> int:
     if not 1 <= session_id <= 0xFFFFFFFF:
         raise SystemExit("--session-id must be in 1..0xFFFFFFFF")
 
-    # Python's zlib.crc32 is the standard reflected CRC-32 used by FPST BTP.
     public_key_crc = zlib.crc32(public_key) & 0xFFFFFFFF
     command = f"kem-session {session_id:08X} {public_key_crc:08X}\r\n".encode("ascii")
 
@@ -99,7 +99,6 @@ def main() -> int:
         ser.flush()
         wait_for_token(ser, b"KEM_PK_READY", deadline)
 
-        # Hex keeps the console protocol inspectable while still being easy to automate.
         encoded = public_key.hex().upper().encode("ascii") + b"\r\n"
         ser.write(encoded)
         ser.flush()
@@ -115,7 +114,7 @@ def main() -> int:
 
             if b"KEM_PK_CRC_FAIL" in line or b"KEM_PK_ABORT" in line:
                 raise RuntimeError(printable)
-            if b"kem-session=FAILED" in line or b"REMOTE_ERR" in line:
+            if b"kem-pair-session=FAILED" in line or b"REMOTE_ERR" in line:
                 raise RuntimeError(printable)
 
             match = CT_BEGIN_RE.match(line)
@@ -162,8 +161,8 @@ def main() -> int:
                 f"got 0x{actual_ct_crc:08X}"
             )
 
-        # Wait for the explicit post-sink ACTIVE acknowledgement as the final gate.
-        wait_for_token(ser, b"kem-session=ACTIVE", deadline)
+        # Final dual-Primer firmware acknowledges pair activation with this exact token.
+        wait_for_token(ser, b"kem-pair-session=ACTIVE", deadline)
 
     args.ciphertext_out.write_bytes(ciphertext)
     print(

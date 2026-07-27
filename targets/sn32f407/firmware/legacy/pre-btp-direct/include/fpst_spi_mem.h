@@ -1,5 +1,10 @@
-#ifndef FPST_SPI_MEM_H
-#define FPST_SPI_MEM_H
+/*
+ * OBSOLETE / NOT FOR DEPLOYMENT.
+ * Historical pre-direct-BTP A1/A2 memory-burst helper, archived by FIX-006.
+ * Current deployment sends direct BTP v1 frames and must not include this file.
+ */
+#ifndef FPST_LEGACY_SPI_MEM_H
+#define FPST_LEGACY_SPI_MEM_H
 
 #include <stdint.h>
 #include "fpst_common.h"

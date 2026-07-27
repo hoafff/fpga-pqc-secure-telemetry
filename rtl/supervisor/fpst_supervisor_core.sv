@@ -14,6 +14,7 @@ module fpst_supervisor_core #(
     input  logic        hb_mcu_i,
     input  logic        hb_pqc_i,
     input  logic        hb_crypto_i,
+    input  logic        crypto_fault_i,
     input  logic        tamper_active_i,
     input  logic        clear_fault_pulse_i,
     input  logic        manual_fault_i,
@@ -35,6 +36,8 @@ module fpst_supervisor_core #(
     localparam logic [15:0] ERR_TAMPER            = 16'h0704;
     localparam logic [15:0] ERR_MANUAL_FAULT      = 16'h0705;
     localparam logic [15:0] ERR_SUP_ILLEGAL_STATE = 16'h0706;
+    /* Common FPST registry: P2 consecutive authentication failure threshold. */
+    localparam logic [15:0] ERR_AUTH_THRESHOLD    = 16'h0608;
 
     localparam logic [2:0] ST_STARTUP          = 3'd0;
     localparam logic [2:0] ST_QUALIFY          = 3'd1;
@@ -52,6 +55,7 @@ module fpst_supervisor_core #(
     logic fault_latched_q;
 
     logic manual_fault_sync_w;
+    logic crypto_fault_sync_w;
     logic hb_mcu_seen_w, hb_pqc_seen_w, hb_crypto_seen_w;
     logic hb_mcu_timeout_w, hb_pqc_timeout_w, hb_crypto_timeout_w;
     logic hb_mcu_healthy_w, hb_pqc_healthy_w, hb_crypto_healthy_w;
@@ -62,6 +66,10 @@ module fpst_supervisor_core #(
 
     fpst_sync_bit #(.RESET_VALUE(1'b0)) u_manual_fault_sync (
         .clk_i(clk_i), .rst_ni(rst_ni), .async_i(manual_fault_i), .sync_o(manual_fault_sync_w)
+    );
+
+    fpst_sync_bit #(.RESET_VALUE(1'b0)) u_crypto_fault_sync (
+        .clk_i(clk_i), .rst_ni(rst_ni), .async_i(crypto_fault_i), .sync_o(crypto_fault_sync_w)
     );
 
     assign hb_arm_w = (uptime_ms_q >= STARTUP_GRACE_MS);
@@ -84,14 +92,26 @@ module fpst_supervisor_core #(
 
     assign all_hb_healthy_w = hb_mcu_healthy_w && hb_pqc_healthy_w && hb_crypto_healthy_w;
 
+    /*
+     * Same-cycle first-fatal priority is deterministic. The local P2 crypto
+     * fault is above heartbeat timeouts because it is the direct root cause;
+     * heartbeat remains a liveness channel after FIX-001.
+     */
     always_comb begin
         fatal_request_w = 1'b0;
         fatal_code_w = ERR_NONE;
-        if (tamper_active_i) begin fatal_request_w = 1'b1; fatal_code_w = ERR_TAMPER;
-        end else if (manual_fault_sync_w) begin fatal_request_w = 1'b1; fatal_code_w = ERR_MANUAL_FAULT;
-        end else if (hb_arm_w && hb_mcu_timeout_w) begin fatal_request_w = 1'b1; fatal_code_w = ERR_HB_MCU_TIMEOUT;
-        end else if (hb_arm_w && hb_pqc_timeout_w) begin fatal_request_w = 1'b1; fatal_code_w = ERR_HB_PQC_TIMEOUT;
-        end else if (hb_arm_w && hb_crypto_timeout_w) begin fatal_request_w = 1'b1; fatal_code_w = ERR_HB_CRYPTO_TIMEOUT;
+        if (tamper_active_i) begin
+            fatal_request_w = 1'b1; fatal_code_w = ERR_TAMPER;
+        end else if (manual_fault_sync_w) begin
+            fatal_request_w = 1'b1; fatal_code_w = ERR_MANUAL_FAULT;
+        end else if (crypto_fault_sync_w) begin
+            fatal_request_w = 1'b1; fatal_code_w = ERR_AUTH_THRESHOLD;
+        end else if (hb_arm_w && hb_mcu_timeout_w) begin
+            fatal_request_w = 1'b1; fatal_code_w = ERR_HB_MCU_TIMEOUT;
+        end else if (hb_arm_w && hb_pqc_timeout_w) begin
+            fatal_request_w = 1'b1; fatal_code_w = ERR_HB_PQC_TIMEOUT;
+        end else if (hb_arm_w && hb_crypto_timeout_w) begin
+            fatal_request_w = 1'b1; fatal_code_w = ERR_HB_CRYPTO_TIMEOUT;
         end
     end
 
@@ -109,72 +129,106 @@ module fpst_supervisor_core #(
                 ST_STARTUP: begin
                     if (fatal_request_w) begin
                         if (!fault_latched_q) begin
-                            fault_latched_q <= 1'b1; error_code_q <= fatal_code_w; first_fault_time_ms_q <= uptime_ms_q;
+                            fault_latched_q <= 1'b1;
+                            error_code_q <= fatal_code_w;
+                            first_fault_time_ms_q <= uptime_ms_q;
                         end
-                        state_q <= ST_ZEROIZE; state_timer_ms_q <= 16'd0;
+                        state_q <= ST_ZEROIZE;
+                        state_timer_ms_q <= 16'd0;
                     end else if (tick_ms_i) begin
                         if ((STARTUP_ZEROIZE_MS <= 1) || (state_timer_ms_q >= STARTUP_ZEROIZE_MS - 1)) begin
-                            state_q <= ST_QUALIFY; state_timer_ms_q <= 16'd0;
-                        end else state_timer_ms_q <= state_timer_ms_q + 1'b1;
+                            state_q <= ST_QUALIFY;
+                            state_timer_ms_q <= 16'd0;
+                        end else begin
+                            state_timer_ms_q <= state_timer_ms_q + 1'b1;
+                        end
                     end
                 end
                 ST_QUALIFY: begin
                     if (fatal_request_w) begin
                         if (!fault_latched_q) begin
-                            fault_latched_q <= 1'b1; error_code_q <= fatal_code_w; first_fault_time_ms_q <= uptime_ms_q;
+                            fault_latched_q <= 1'b1;
+                            error_code_q <= fatal_code_w;
+                            first_fault_time_ms_q <= uptime_ms_q;
                         end
-                        state_q <= ST_ZEROIZE; state_timer_ms_q <= 16'd0;
+                        state_q <= ST_ZEROIZE;
+                        state_timer_ms_q <= 16'd0;
                     end else if (!hb_arm_w || !all_hb_healthy_w) begin
                         state_timer_ms_q <= 16'd0;
                     end else if (tick_ms_i) begin
                         if ((QUALIFY_MS <= 1) || (state_timer_ms_q >= QUALIFY_MS - 1)) begin
-                            state_q <= ST_MONITOR; state_timer_ms_q <= 16'd0;
-                        end else state_timer_ms_q <= state_timer_ms_q + 1'b1;
+                            state_q <= ST_MONITOR;
+                            state_timer_ms_q <= 16'd0;
+                        end else begin
+                            state_timer_ms_q <= state_timer_ms_q + 1'b1;
+                        end
                     end
                 end
                 ST_MONITOR: begin
                     if (fatal_request_w) begin
                         if (!fault_latched_q) begin
-                            fault_latched_q <= 1'b1; error_code_q <= fatal_code_w; first_fault_time_ms_q <= uptime_ms_q;
+                            fault_latched_q <= 1'b1;
+                            error_code_q <= fatal_code_w;
+                            first_fault_time_ms_q <= uptime_ms_q;
                         end
-                        state_q <= ST_ZEROIZE; state_timer_ms_q <= 16'd0;
+                        state_q <= ST_ZEROIZE;
+                        state_timer_ms_q <= 16'd0;
                     end
                 end
                 ST_ZEROIZE: begin
                     if (tick_ms_i) begin
                         if ((ZEROIZE_HOLD_MS <= 1) || (state_timer_ms_q >= ZEROIZE_HOLD_MS - 1)) begin
                             state_timer_ms_q <= 16'd0;
-                            if (RESET_ON_FATAL) state_q <= ST_RESET_PULSE; else state_q <= ST_SAFE_LOCKED;
-                        end else state_timer_ms_q <= state_timer_ms_q + 1'b1;
+                            if (RESET_ON_FATAL) state_q <= ST_RESET_PULSE;
+                            else state_q <= ST_SAFE_LOCKED;
+                        end else begin
+                            state_timer_ms_q <= state_timer_ms_q + 1'b1;
+                        end
                     end
                 end
                 ST_RESET_PULSE: begin
                     if (tick_ms_i) begin
                         if ((RESET_PULSE_MS <= 1) || (state_timer_ms_q >= RESET_PULSE_MS - 1)) begin
-                            state_q <= ST_SAFE_LOCKED; state_timer_ms_q <= 16'd0;
-                        end else state_timer_ms_q <= state_timer_ms_q + 1'b1;
+                            state_q <= ST_SAFE_LOCKED;
+                            state_timer_ms_q <= 16'd0;
+                        end else begin
+                            state_timer_ms_q <= state_timer_ms_q + 1'b1;
+                        end
                     end
                 end
                 ST_SAFE_LOCKED: begin
                     state_timer_ms_q <= 16'd0;
-                    if (clear_fault_pulse_i && !tamper_active_i && !manual_fault_sync_w && all_hb_healthy_w)
+                    if (clear_fault_pulse_i &&
+                        !tamper_active_i &&
+                        !manual_fault_sync_w &&
+                        !crypto_fault_sync_w &&
+                        all_hb_healthy_w)
                         state_q <= ST_RECOVERY_QUALIFY;
                 end
                 ST_RECOVERY_QUALIFY: begin
-                    if (tamper_active_i || manual_fault_sync_w || !all_hb_healthy_w) begin
-                        state_q <= ST_SAFE_LOCKED; state_timer_ms_q <= 16'd0;
+                    if (tamper_active_i || manual_fault_sync_w || crypto_fault_sync_w || !all_hb_healthy_w) begin
+                        state_q <= ST_SAFE_LOCKED;
+                        state_timer_ms_q <= 16'd0;
                     end else if (tick_ms_i) begin
                         if ((RECOVERY_QUALIFY_MS <= 1) || (state_timer_ms_q >= RECOVERY_QUALIFY_MS - 1)) begin
-                            fault_latched_q <= 1'b0; error_code_q <= ERR_NONE; first_fault_time_ms_q <= 32'd0;
-                            state_q <= ST_STARTUP; state_timer_ms_q <= 16'd0;
-                        end else state_timer_ms_q <= state_timer_ms_q + 1'b1;
+                            fault_latched_q <= 1'b0;
+                            error_code_q <= ERR_NONE;
+                            first_fault_time_ms_q <= 32'd0;
+                            state_q <= ST_STARTUP;
+                            state_timer_ms_q <= 16'd0;
+                        end else begin
+                            state_timer_ms_q <= state_timer_ms_q + 1'b1;
+                        end
                     end
                 end
                 default: begin
                     if (!fault_latched_q) begin
-                        fault_latched_q <= 1'b1; error_code_q <= ERR_SUP_ILLEGAL_STATE; first_fault_time_ms_q <= uptime_ms_q;
+                        fault_latched_q <= 1'b1;
+                        error_code_q <= ERR_SUP_ILLEGAL_STATE;
+                        first_fault_time_ms_q <= uptime_ms_q;
                     end
-                    state_q <= ST_ZEROIZE; state_timer_ms_q <= 16'd0;
+                    state_q <= ST_ZEROIZE;
+                    state_timer_ms_q <= 16'd0;
                 end
             endcase
         end

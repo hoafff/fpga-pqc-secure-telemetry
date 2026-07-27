@@ -1,3 +1,4 @@
+/* OBSOLETE / NOT FOR DEPLOYMENT: historical pre-direct-BTP helper. */
 #include "fpst_spi_mem.h"
 #include "fpst_crc16.h"
 
@@ -19,9 +20,8 @@ fpst_result_t fpst_spi_mem_validate_header(
     uint16_t *length) {
     if (header == 0 || address == 0 || length == 0) return FPST_ERR_ARGUMENT;
     if (header[0] != expected_command) return FPST_ERR_FORMAT;
-    if (fpst_load_be16(&header[5]) != fpst_crc16_ccitt_false(header, 5u)) {
+    if (fpst_load_be16(&header[5]) != fpst_crc16_ccitt_false(header, 5u))
         return FPST_ERR_CRC;
-    }
     *address = fpst_load_be16(&header[1]);
     *length = fpst_load_be16(&header[3]);
     return FPST_OK;

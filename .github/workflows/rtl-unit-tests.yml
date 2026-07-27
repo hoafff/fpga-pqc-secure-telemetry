@@ -84,6 +84,22 @@ jobs:
           bash scripts/sim/run_iverilog_unit_tests.sh \
             > build/sim/rtl-unit-tests.log 2>&1
 
+      - name: Run Tiny 1P5 supervisor unit regression
+        id: tiny_supervisor_tests
+        continue-on-error: true
+        run: |
+          mkdir -p build/sim
+          bash targets/tiny1p5/scripts/run_iverilog.sh \
+            > build/sim/tiny-supervisor.log 2>&1
+
+      - name: Run full supervisor security-plane integration regression
+        id: supervisor_system_tests
+        continue-on-error: true
+        run: |
+          mkdir -p build/sim
+          bash scripts/sim/run_supervisor_system_integration.sh \
+            > build/sim/supervisor-system-integration.log 2>&1
+
       - name: Run Primer 1 complete PQC SPI regression
         id: primer1_pqc_wire
         continue-on-error: true
@@ -138,6 +154,8 @@ jobs:
             build/mlkem/build.log
             build/mlkem/test.log
             build/sim/rtl-unit-tests.log
+            build/sim/tiny-supervisor.log
+            build/sim/supervisor-system-integration.log
             build/sim/primer1-pqc-wire.log
             build/sim/primer2-deployment.log
             build/synth/yosys-forward-ntt-memory.log
@@ -149,51 +167,29 @@ jobs:
           if-no-files-found: warn
 
       - name: Report verification failure
-        if: steps.sn32_portable.outcome == 'failure' || steps.sn32_mlkem.outcome == 'failure' || steps.rtl_tests.outcome == 'failure' || steps.primer1_pqc_wire.outcome == 'failure' || steps.primer2_rx_tests.outcome == 'failure' || steps.core_synth_check.outcome == 'failure' || steps.ntt_board_synth_check.outcome == 'failure' || steps.ascon_board_synth_check.outcome == 'failure' || steps.primer1_deploy_synth_check.outcome == 'failure' || steps.primer2_deploy_synth_check.outcome == 'failure'
+        if: steps.sn32_portable.outcome == 'failure' || steps.sn32_mlkem.outcome == 'failure' || steps.rtl_tests.outcome == 'failure' || steps.tiny_supervisor_tests.outcome == 'failure' || steps.supervisor_system_tests.outcome == 'failure' || steps.primer1_pqc_wire.outcome == 'failure' || steps.primer2_rx_tests.outcome == 'failure' || steps.core_synth_check.outcome == 'failure' || steps.ntt_board_synth_check.outcome == 'failure' || steps.ascon_board_synth_check.outcome == 'failure' || steps.primer1_deploy_synth_check.outcome == 'failure' || steps.primer2_deploy_synth_check.outcome == 'failure'
         run: |
-          if [ -f build/sn32-portable/configure.log ]; then
-            cat build/sn32-portable/configure.log
-          fi
-          if [ -f build/sn32-portable/build.log ]; then
-            cat build/sn32-portable/build.log
-          fi
-          if [ -f build/sn32-portable/test.log ]; then
-            cat build/sn32-portable/test.log
-          fi
-          if [ -f build/mlkem/configure.log ]; then
-            cat build/mlkem/configure.log
-          fi
-          if [ -f build/mlkem/build.log ]; then
-            cat build/mlkem/build.log
-          fi
-          if [ -f build/mlkem/test.log ]; then
-            cat build/mlkem/test.log
-          fi
-          if [ -f build/sim/rtl-unit-tests.log ]; then
-            cat build/sim/rtl-unit-tests.log
-          fi
-          if [ -f build/sim/primer1-pqc-wire.log ]; then
-            cat build/sim/primer1-pqc-wire.log
-          fi
-          if [ -f build/sim/primer2-deployment.log ]; then
-            cat build/sim/primer2-deployment.log
-          fi
-          if [ -f build/synth/yosys-forward-ntt-memory.log ]; then
-            cat build/synth/yosys-forward-ntt-memory.log
-          fi
-          if [ -f build/synth/yosys-forward-ntt-core.log ]; then
-            cat build/synth/yosys-forward-ntt-core.log
-          fi
-          if [ -f build/synth/yosys-kiwi-primer20k-selftest.log ]; then
-            cat build/synth/yosys-kiwi-primer20k-selftest.log
-          fi
-          if [ -f build/synth/yosys-kiwi-primer20k-ascon-selftest.log ]; then
-            cat build/synth/yosys-kiwi-primer20k-ascon-selftest.log
-          fi
-          if [ -f build/synth/yosys-kiwi-primer20k-fpst-deployment.log ]; then
-            cat build/synth/yosys-kiwi-primer20k-fpst-deployment.log
-          fi
-          if [ -f build/synth/yosys-kiwi-primer20k-fpst-rx-deployment.log ]; then
-            cat build/synth/yosys-kiwi-primer20k-fpst-rx-deployment.log
-          fi
+          for log in \
+            build/sn32-portable/configure.log \
+            build/sn32-portable/build.log \
+            build/sn32-portable/test.log \
+            build/mlkem/configure.log \
+            build/mlkem/build.log \
+            build/mlkem/test.log \
+            build/sim/rtl-unit-tests.log \
+            build/sim/tiny-supervisor.log \
+            build/sim/supervisor-system-integration.log \
+            build/sim/primer1-pqc-wire.log \
+            build/sim/primer2-deployment.log \
+            build/synth/yosys-forward-ntt-memory.log \
+            build/synth/yosys-forward-ntt-core.log \
+            build/synth/yosys-kiwi-primer20k-selftest.log \
+            build/synth/yosys-kiwi-primer20k-ascon-selftest.log \
+            build/synth/yosys-kiwi-primer20k-fpst-deployment.log \
+            build/synth/yosys-kiwi-primer20k-fpst-rx-deployment.log; do
+            if [ -f "$log" ]; then
+              echo "===== $log ====="
+              cat "$log"
+            fi
+          done
           exit 1

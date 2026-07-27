@@ -1,3 +1,4 @@
+/* OBSOLETE / NOT FOR DEPLOYMENT: historical pre-direct-BTP helper. */
 #include "fpst_crc16.h"
 
 uint16_t fpst_crc16_ccitt_false(const uint8_t *data, size_t len) {
