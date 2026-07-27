@@ -1,8 +1,8 @@
 # FPST PC Host Deployment
 
-This directory contains the deployable PC-side control application for `FPST-SYS-SPEC-001 v1.1`.
+`software/host/` contains the deployable PC-side control application for `FPST-SYS-SPEC-001 v1.1`.
 
-## Current hardware contract
+## Hardware contract
 
 ```text
 PC
@@ -11,46 +11,40 @@ PC
   v
 SONiX SN32F407F
   |
-  | SPI0 Mode 0, 3 MHz + sidebands
-  v
-Primer #1 / FPST hardware
+  | shared SPI0, direct FPST BTP v1
+  | Mode 0 / MSB first
+  | bring-up 1 MHz, Primer envelope <=5 MHz after qualification
+  +---- Primer #1 TX/PQC
+  +---- Primer #2 RX/verify
 ```
 
-The PC does not talk directly to a Primer or Tiny 1P5. The SN32F407F remains the control/security-session owner and bridge.
+The PC never talks directly to Primer #1, Primer #2 or Tiny 1P5. SN32F407F remains the control/session owner and bridge.
 
-## What is deployable now
+## Package
 
-The host works with the line-oriented SN32 firmware already present in the repository:
+Python 3.10+:
 
 ```text
-help
-wiring
-ping
-caps
-status
-zeroize
-reset
+fpst-host
 ```
 
-It provides:
+Implemented host functions include:
 
-- serial-port enumeration;
-- robust prompt-delimited UART transactions;
-- `wiring` / `ping` / `caps` / `status` commands;
-- explicit confirmation for `zeroize` and `reset`;
-- non-destructive bring-up sequence;
-- repeated command latency benchmark;
+- serial-port enumeration through `pyserial`;
+- prompt-delimited UART transport;
+- parser for the line-oriented SN32 CLI;
+- `wiring`, `ping`, `caps`, `status` and non-destructive bring-up flows;
+- guarded `zeroize` / `reset` operations requiring explicit confirmation;
 - JSON output for automation;
-- append-only JSONL result logging with obvious secret-bearing fields redacted;
-- unit tests that do not require hardware.
+- append-only JSONL result logging with secret-field redaction;
+- command round-trip benchmark;
+- hardware-independent unit tests.
 
-The parser accepts future `key=value` status lines before the final `OK`/`ERR`, so SN32 can expose richer machine-readable status without breaking the host.
+The consolidated SN32 firmware on `main` exposes richer ML-KEM/session/telemetry diagnostics than the current Python adapter. Those commands can be added to `fpst_host/protocol.py` without replacing serial transport, logging or benchmark code.
 
 ## Install
 
-Python 3.10 or newer is required.
-
-### Windows
+Windows:
 
 ```powershell
 cd software/host
@@ -61,7 +55,7 @@ pip install -e .
 python -m unittest discover -s tests -v
 ```
 
-### Linux
+Linux:
 
 ```bash
 cd software/host
@@ -72,116 +66,68 @@ pip install -e .
 python -m unittest discover -s tests -v
 ```
 
-## Find the board
+## Bring-up
+
+List serial ports:
 
 ```bash
 fpst-host ports
 ```
 
-Examples of port names:
-
-```text
-Windows: COM5
-Linux:   /dev/ttyUSB0 or /dev/ttyACM0
-```
-
-## Bring-up
+Non-destructive board probe/demo:
 
 ```bash
 fpst-host probe --port COM5
 fpst-host demo  --port COM5
 ```
 
-`demo` is deliberately non-destructive and runs:
-
-```text
-wiring -> ping -> caps -> status
-```
-
-If the firmware still reports `wiring=UNVERIFIED`, SPI mailbox commands may intentionally fail or be blocked. This is expected until the physical MCU-Primer harness gate is closed.
-
-## Individual commands
+Individual commands:
 
 ```bash
+fpst-host wiring --port COM5
 fpst-host ping   --port COM5
 fpst-host caps   --port COM5
 fpst-host status --port COM5
-fpst-host wiring --port COM5
 ```
 
-Machine-readable output:
-
-```bash
-fpst-host --json status --port COM5
-```
-
-## State-changing commands
-
-The host refuses these unless the operator explicitly confirms them:
+State-changing operations require confirmation:
 
 ```bash
 fpst-host zeroize --port COM5 --yes
 fpst-host reset   --port COM5 --yes
 ```
 
-Do not put key material, shared secrets, private seeds, passwords or tokens on the command line or into result logs.
+On Linux replace `COM5` with the appropriate `/dev/ttyUSB*` or `/dev/ttyACM*` device.
 
-## Benchmark
-
-Example:
+## Benchmark and logging
 
 ```bash
 fpst-host bench ping --port COM5 --count 100
+fpst-host demo --port COM5 --log results/pc/bringup.jsonl
 ```
 
-Reported metrics:
+The benchmark measures PC-observed command RTT, not FPGA cycle counts.
 
-```text
-count
-success/failure count
-min latency
-mean latency
-p50 latency
-p95 latency
-max latency
-```
+Never put ML-KEM private material, shared secrets, `K_TX`, `NP_TX`, seeds, passwords or tokens into CLI arguments or result logs. Name-based log redaction is defense-in-depth only.
 
-These are host-observed round-trip latencies, not FPGA cycle counts. Hardware cycle counters must be reported separately by the endpoint when that telemetry interface becomes available.
-
-## Result logging
+## Automated checks
 
 ```bash
-fpst-host demo --port COM5 --log results/pc/bringup.jsonl
-fpst-host bench ping --port COM5 --count 100 --log results/pc/ping.jsonl
+cd software/host
+python -m unittest discover -s tests -v
+fpst-host --help
 ```
 
-The logger redacts fields whose names indicate key/secret/seed/private/password/token data. This is defense-in-depth only; secret material must never be intentionally passed to logging APIs.
+GitHub Actions runs the host package on supported Python versions through `.github/workflows/pc-host.yml`.
 
-## Current end-to-end boundary
+## Hardware verification gate
 
-The PC transport itself is now frozen to the verified SN32 UART profile. However, the current SN32 CLI only exposes the seven commands listed above. Therefore these higher-level capabilities remain gated by corresponding MCU/Primer implementation:
+The PC target is hardware-verified only after:
 
-```text
-ML-KEM session establishment UI
-stage/commit context from PC
-STP telemetry transmit command
-RX authentication/replay display
-plaintext/ciphertext/tag structured display
-FPGA cycle-count and throughput telemetry
-supervisor event stream
-```
-
-The host package is intentionally layered so those commands can be added in `fpst_host/protocol.py` without replacing the serial transport, logging, CLI shell or benchmark code.
-
-## Acceptance gate
-
-PC deployment is considered hardware-verified only after:
-
-1. unit tests pass on the deployment PC;
-2. the correct serial port is detected;
-3. SN32 banner/CLI responds at 115200 8N1;
-4. `wiring` reflects the actual harness state;
-5. non-destructive `demo` passes on real hardware;
-6. `zeroize` and `reset` are observed on hardware under controlled testing;
-7. no secret material is present in captured logs;
-8. later telemetry/session commands pass after their SN32/Primer owners are implemented.
+1. package/unit tests pass on the intended deployment PC;
+2. the real SN32 serial port is detected and UART responds at 115200 8N1;
+3. `wiring` reflects the measured harness state;
+4. non-destructive probe/demo pass on programmed hardware;
+5. controlled zeroize/reset behavior is observed where supported by the supervisor topology;
+6. captured logs contain no secret material;
+7. any added ML-KEM/STP host commands pass against the final dual-Primer firmware and boards.
