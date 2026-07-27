@@ -112,7 +112,7 @@ module kiwi_primer20k_fpst_tx_top #(
 
     /*
      * zeroize_n asserts asynchronously so secret invalidation starts without
-     * waiting for a clock edge.  Deassertion is deliberately synchronized and
+     * waiting for a clock edge. Deassertion is deliberately synchronized and
      * the level remains active for two clean system clocks after release.
      */
     always_ff @(posedge sys_clk_i or negedge zeroize_ni) begin
@@ -126,9 +126,9 @@ module kiwi_primer20k_fpst_tx_top #(
     assign transport_zeroize = !zeroize_sync_q[1];
 
     /*
-     * fatal_latched is an active-high security indication.  Assertion sets the
+     * fatal_latched is an active-high security indication. Assertion sets the
      * local synchronized copy asynchronously; release is shifted out only on
-     * clean system clocks.  This keeps the fail-safe direction fast.
+     * clean system clocks. This keeps the fail-safe direction fast.
      */
     always_ff @(posedge sys_clk_i or posedge fatal_latched_i) begin
         if (fatal_latched_i)
@@ -141,13 +141,16 @@ module kiwi_primer20k_fpst_tx_top #(
     assign fatal_latched_sys = fatal_sync_q[1];
 
     /*
-     * FPST v1.1 requires a nominal heartbeat transition every 100 ms. At the
-     * production 27 MHz clock this is exactly 2,700,000 cycles. Use an explicit
-     * terminal-count divider because no power-of-two counter bit meets the
-     * required 100 ms +/-20% transition window at 27 MHz.
+     * Heartbeat is a liveness signal, not a security-state signal. It MUST
+     * continue while secure_enable is low, ZEROIZE_N is asserted, or a fatal
+     * latch is present so Tiny can distinguish a live safe-locked endpoint
+     * from a dead/reset endpoint during qualified recovery.
+     *
+     * FPST v1.1 requires a nominal transition every 100 ms. At 27 MHz this is
+     * exactly 2,700,000 cycles. Only actual board reset stops the divider.
      */
     always_ff @(posedge sys_clk_i) begin
-        if (!internal_rst_n || transport_zeroize || fatal_latched_sys) begin
+        if (!internal_rst_n) begin
             heartbeat_counter_q <= '0;
             heartbeat_q <= 1'b0;
         end else if (HEARTBEAT_TOGGLE_CYCLES <= 1) begin
