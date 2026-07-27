@@ -41,6 +41,15 @@
  * P2.9 is assigned to the MCU heartbeat output. Its final wire to Tiny 1P5 is
  * still evidence-dependent and does not alter the BTP SPI contract.
  *
+ * IMPORTANT — Tiny -> SN32 supervisor reset/zeroize path:
+ * No SN32 GPIO/reset macro is defined here for Tiny SYSTEM_RESET_N or a
+ * dedicated Tiny ZEROIZE event. The current schematic/connector evidence does
+ * not yet freeze an unambiguous deployment destination with confirmed polarity,
+ * ownership and fan-out. FIX-005 is therefore formally deferred in
+ * docs/spec-delta/FPST-v1.1-implementation-decisions.md. Do not add a spare
+ * GPIO just because it is unused in this file; any future assignment must be
+ * backed by schematic/connector evidence and updated end-to-end.
+ *
  * This file describes intended wiring, not continuity evidence. The harness
  * guard defaults to zero. Only after continuity/common-ground/MISO-release
  * checks on BOTH Primer links may release builds define
@@ -69,10 +78,7 @@
  */
 #define FPST_SN32F407_PFPA_SPI0_VALUE        0x0000002Au
 
-/*
- * PFPA_UART0 bits 1:0 = UTXD0 route and bits 3:2 = URXD0 route.
- * Route 2/2 selects P3.1/P3.2, which are the EVK J10 DB_UART nets.
- */
+/* PFPA UART0 route 2/2 selects P3.1/P3.2, the EVK J10 DB_UART nets. */
 #define FPST_SN32F407_PFPA_UART0_VALUE       0x0000000Au
 
 #define FPST_SN32F407_SPI_SCK_PORT            1u
