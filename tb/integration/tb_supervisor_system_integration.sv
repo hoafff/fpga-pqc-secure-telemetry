@@ -128,11 +128,11 @@ module tb_supervisor_system_integration;
 
     task automatic wait_state(input logic [2:0] expected, input integer limit);
         integer i;
-        begin
+        begin : wait_state_block
             for (i = 0; i < limit; i = i + 1) begin
                 @(posedge clk);
                 if (tiny.u_supervisor_core.state_q == expected)
-                    return;
+                    disable wait_state_block;
             end
             $fatal(1, "timeout waiting state=%0d current=%0d", expected, tiny.u_supervisor_core.state_q);
         end
@@ -140,11 +140,11 @@ module tb_supervisor_system_integration;
 
     task automatic wait_fault_code(input logic [15:0] expected, input integer limit);
         integer i;
-        begin
+        begin : wait_fault_block
             for (i = 0; i < limit; i = i + 1) begin
                 @(posedge clk);
                 if (fault_latched && tiny.u_supervisor_core.error_code_q == expected)
-                    return;
+                    disable wait_fault_block;
             end
             $fatal(1, "timeout waiting fault=%04h got fault=%0b code=%04h", expected,
                    fault_latched, tiny.u_supervisor_core.error_code_q);
@@ -153,18 +153,20 @@ module tb_supervisor_system_integration;
 
     task automatic pulse_clear;
         begin
+            /* Hold long enough for the 2-flop event synchronizer, then release. */
             clear_fault = 1'b1;
-            repeat (3) @(posedge clk);
+            repeat (2) @(posedge clk);
             clear_fault = 1'b0;
-            repeat (3) @(posedge clk);
+            @(posedge clk);
         end
     endtask
 
     task automatic recover_to_monitor;
         begin
+            /* Allow async causes/reset-held heartbeat sources to settle healthy first. */
             repeat (8) @(posedge clk);
             pulse_clear();
-            wait_state(ST_RECOVERY, 30);
+            wait_state(ST_RECOVERY, 12);
             wait_state(ST_MONITOR, 80);
             if (fault_latched || !secure_enable || !zeroize_n)
                 $fatal(1, "recovery failed fault=%0b secure=%0b zeroize_n=%0b", fault_latched, secure_enable, zeroize_n);
@@ -246,7 +248,7 @@ module tb_supervisor_system_integration;
         tamper_ext_n = 1'b1;
         repeat (8) @(posedge clk);
         pulse_clear();
-        wait_state(ST_RECOVERY, 30);
+        wait_state(ST_RECOVERY, 12);
         manual_fault = 1'b1;
         wait_state(ST_SAFE, 20);
         if (!fault_latched || tiny.u_supervisor_core.error_code_q != E_TAMP)
