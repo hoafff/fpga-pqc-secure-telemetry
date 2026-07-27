@@ -6,11 +6,11 @@ Thư mục này là điểm vào duy nhất để xác định **code nào dùng
 
 | Target | Thiết bị | Vai trò | Trạng thái |
 |---|---|---|---|
-| [`primer20k_1`](primer20k_1/README.md) | Kiwi Primer 20K #1 | NTT/INTT, Ascon encrypt, STP TX | NTT self-test đã có; phần còn lại đang phát triển |
-| [`primer20k_2`](primer20k_2/README.md) | Kiwi Primer 20K #2 | Ascon decrypt/verify, STP RX, replay | Chưa triển khai RTL target |
+| [`primer20k_1`](primer20k_1/README.md) | Kiwi Primer 20K #1 | NTT/INTT, Ascon encrypt, STP TX | Functional deployment RTL complete; chờ Gowin exact-device và hardware qualification |
+| [`primer20k_2`](primer20k_2/README.md) | Kiwi Primer 20K #2 | Ascon decrypt/verify, STP RX, replay | Secure RX deployment RTL + dual-Primer integration đã qua CI; chờ Gowin/hardware qualification |
 | [`tiny1p5`](tiny1p5/README.md) | Kiwi FPGA Tiny 1P5 | Supervisor/watchdog/tamper | Deployment candidate: RTL/CST/SDC/tests đã có; chờ Gowin + hardware evidence |
-| [`sn32f407`](sn32f407/README.md) | SONiX SN32F407 EVK | Firmware control và PC–FPGA bridge | Chưa khóa pin/protocol |
-| [`pc`](pc/README.md) | Máy tính | Host, golden model, simulation, benchmark | Golden NTT đã có; host app chưa hoàn tất |
+| [`sn32f407`](sn32f407/README.md) | SONiX SN32F407 EVK | Firmware control và PC–FPGA bridge | Deployment firmware + dual-Primer integration đã có; chờ ARM Compiler 6 và hardware qualification |
+| [`pc`](pc/README.md) | Máy tính | Host, golden model, simulation, benchmark | Python host deployment candidate đã có cho SN32 UART; hardware bring-up còn chờ board thật |
 
 ## Artifact map
 
