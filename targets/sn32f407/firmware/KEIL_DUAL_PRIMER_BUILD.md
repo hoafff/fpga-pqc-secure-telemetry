@@ -1,6 +1,6 @@
 # SN32F407F dual-Primer Keil build profile
 
-This profile extends `KEIL_BUILD.md` for the final FPST v1.1 topology:
+This profile extends `KEIL_BUILD.md` for the final dual-Primer project topology. `FPST-SYS-SPEC-001 v1.1` is a reference baseline for protocol/profile choices; physical/schematic/official-board evidence and the current maintained implementation take precedence when they disagree.
 
 ```text
 SN32F407F
@@ -82,9 +82,9 @@ all boards:
   GND common ground
 ```
 
-Onboard W25Q16 CS at P1.8 remains high during Primer traffic. Both BTP slaves release MISO to high impedance while CS is high. The multiport adapter deasserts FLASH_CS, CS1 and CS2 before asserting exactly one selected Primer CS and rejects nested bus ownership.
+Onboard W25Q16 CS at P1.8 remains high during Primer traffic. Both BTP slaves implement MISO high impedance while CS is high. The multiport adapter deasserts FLASH_CS, CS1 and CS2 before asserting exactly one selected Primer CS and rejects nested bus ownership. Actual continuity/high-Z behavior remains a physical acceptance item.
 
-## 4. SPI profile
+## 4. SPI project profile
 
 ```text
 SN32 role       : master
@@ -92,11 +92,11 @@ Primer roles    : slaves
 mode            : SPI mode 0
 bit order       : MSB first
 bring-up SCK    : 1 MHz
-FPGA envelope   : <= 5 MHz after measured validation
+FPGA envelope   : <= 5 MHz only after measured validation
 transaction     : one BTP frame per CS assertion
 ```
 
-Primer #1 and #2 are never addressed simultaneously.
+Primer #1 and #2 are never addressed simultaneously. The 1→2→3→4→5 MHz progression is a project qualification procedure, not a manufacturer-guaranteed rate ladder.
 
 ## 5. Low-RAM routing
 
@@ -150,7 +150,7 @@ SN32 -> P1 commit_retained_sequence(sequence)
   -> P1 tx_sequence++
 ```
 
-Lost-acknowledgement recovery follows FPST v1.1: replay with `expected=sent+1` proves previous receiver commit; `expected=sent` causes byte-identical resend; any other expected value is sequence desync/fail-closed.
+Current project lost-acknowledgement semantics, adopted from the FPST reference baseline: `expected=sent+1` proves the receiver already committed; `expected=sent` causes byte-identical resend; any other expected value is sequence desynchronization and fails closed.
 
 ## 8. Required compile defines and harness boundary
 
@@ -188,11 +188,30 @@ Then start Mode 0 / 1 MHz and perform P1/P2 PING plus logic-analyzer capture. Th
 
 ## 9. Full deployment bitstream and ZEROIZE_N
 
-Primer deployment CST intentionally defaults active-low `ZEROIZE_N` low. If Tiny is absent/unpowered, Primer stays zeroized and BTP/session operation is not expected.
+Primer deployment CST intentionally defaults active-low `ZEROIZE_N` low. If Tiny is absent/unpowered, Primer stays in the designed zeroized state and normal BTP/session operation is not expected until the control level is legitimately released. Actual supervisor-present/absent voltage and power-sequencing behavior must still be measured.
 
 For deployment-image testing, either connect a healthy Tiny and let it release `ZEROIZE_N` after qualification, or use a temporary lab fixture while Tiny is completely disconnected from that net. Do not change the fail-safe pull-down and do not hard-wire the net to 3V3 while a Tiny output is connected.
 
-## 10. Mandatory memory gate
+## 10. MVP Policy B security boundary
+
+The project decision for FIX-005 is:
+
+```text
+Tiny hardware containment -> Primer #1 + Primer #2
+SN32 trusted controller    -> software session/CSPRNG/transient-state hygiene
+```
+
+Therefore:
+
+- Tiny `SYSTEM_RESET_N` is not connected to SN32 in the MVP;
+- a dedicated Tiny→SN32 hardware reset/zeroize path is optional future hardening, not an MVP release blocker;
+- do not invent a spare SN32 GPIO/reset assignment;
+- firmware/end-to-end acceptance must verify SN32 software session invalidation and CSPRNG/transient-state zeroization;
+- the MVP does not claim asynchronous hardware containment of a wedged/compromised SN32.
+
+Any future asynchronous MCU-containment feature requires an explicit threat-model/architecture revision plus schematic/connector/polarity/voltage/ownership/fan-out evidence.
+
+## 11. Mandatory memory gate
 
 Host CMake/CI is not proof that this Cortex-M0 image fits 32-KiB Flash / 8-KiB SRAM. Before programming the SN32 board, ARM Compiler 6 must produce and retain:
 
@@ -206,20 +225,21 @@ full build log
 
 Reject the image if static SRAM plus verified worst-case stack exceeds `0x2000` bytes. Do not reduce the stack target merely to make the linker pass without call-graph evidence.
 
-## 11. Bring-up sequence
+## 12. Bring-up sequence
 
 1. Build `FPST_SN32F407_HARNESS_VERIFIED=0`; verify image/link map and UART/heartbeat/ADC/RNG diagnostics.
 2. Program Primer bitstreams/SN32 image as appropriate for the stage.
 3. Power off; continuity-check SCK/MOSI/MISO, CS1, CS2, IRQ1, IRQ2 and common GND.
-4. With power applied safely, verify CS idle, W25Q16 CS inactive and no deselected MISO contention. Do **not** expect BTP traffic at flag=0.
-5. For full deployment images, connect a qualified Tiny or isolated safe lab fixture so `ZEROIZE_N` can be legitimately released.
-6. Rebuild with `FPST_SN32F407_HARNESS_VERIFIED=1`.
-7. Start SPI Mode 0 / 1 MHz; capture both endpoint transactions with logic analyzer.
-8. UART `discover` -> both device IDs/statuses must respond.
-9. UART `selftest` -> P1 and P2 PING must pass.
-10. Establish pair session with `kem-session`.
-11. Run `key-status` and `key-status2`; session IDs must match.
-12. Run `telemetry`; expect `telemetry=COMMITTED`.
-13. Run `rx-counters`; accepted increments with no unexpected replay/auth failure.
-14. Exercise retry/truncated-read/CRC/zeroize/fault/recovery before raising SPI clock.
-15. Qualify 1→2→3→4→5 MHz only with measured evidence at every step.
+4. If the Tiny security harness is installed, continuity/level-check its control/heartbeat nets and the **proposed** P2 J2-12/T13 → Tiny J1-11/pin15 local-fault route.
+5. With power applied safely, verify CS idle, W25Q16 CS inactive and no deselected MISO contention. Do **not** expect BTP traffic at flag=0.
+6. For full deployment images, connect a qualified Tiny or isolated safe lab fixture so `ZEROIZE_N` can be legitimately released.
+7. Rebuild with `FPST_SN32F407_HARNESS_VERIFIED=1`.
+8. Start SPI Mode 0 / 1 MHz; capture both endpoint transactions with logic analyzer.
+9. UART `discover` -> both device IDs/statuses must respond.
+10. UART `selftest` -> P1 and P2 PING must pass.
+11. Establish pair session with `kem-session`.
+12. Run `key-status` and `key-status2`; session IDs must match.
+13. Run `telemetry`; expect `telemetry=COMMITTED`.
+14. Run `rx-counters`; accepted increments with no unexpected replay/auth failure.
+15. Exercise retry/truncated-read/CRC/zeroize/fault/recovery and verify SN32 software zeroize behavior required by Policy B.
+16. Qualify 1→2→3→4→5 MHz only with measured evidence at every step.
