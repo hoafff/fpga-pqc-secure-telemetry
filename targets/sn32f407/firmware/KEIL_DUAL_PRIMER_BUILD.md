@@ -33,7 +33,7 @@ targets/sn32f407/firmware/src/fpst_pair_bridge.c
 targets/sn32f407/firmware/platform/sn32f407/fpst_sn32f407_multiport.c
 ```
 
-The final source set therefore includes:
+Final production source set:
 
 ```text
 targets/sn32f407/firmware/src/fpst_crc32.c
@@ -60,7 +60,7 @@ targets/sn32f407/firmware/platform/sn32f407/fpst_sn32f407_dual_main.c
 software/third_party/mlkem-native/src/mlkem/mlkem_native.c
 ```
 
-Do not add files under `tests/`.
+Do not add files under `tests/` or `firmware/legacy/` to the production target.
 
 ## 3. Shared-SPI pin profile
 
@@ -82,11 +82,7 @@ all boards:
   GND common ground
 ```
 
-The onboard W25Q16 CS at P1.8 remains high during Primer traffic.
-
-Both FPGA BTP slaves release MISO to high impedance while their CS is high. The
-SN32 multiport adapter deasserts FLASH_CS, CS1 and CS2 before asserting exactly
-one selected Primer CS, and rejects nested bus ownership.
+Onboard W25Q16 CS at P1.8 remains high during Primer traffic. Both BTP slaves release MISO to high impedance while CS is high. The multiport adapter deasserts FLASH_CS, CS1 and CS2 before asserting exactly one selected Primer CS and rejects nested bus ownership.
 
 ## 4. SPI profile
 
@@ -100,12 +96,11 @@ FPGA envelope   : <= 5 MHz after measured validation
 transaction     : one BTP frame per CS assertion
 ```
 
-Primer #1 and Primer #2 are never addressed simultaneously. Shared SCK/MOSI/MISO
-therefore saves MCU pins without changing BTP transaction semantics.
+Primer #1 and #2 are never addressed simultaneously.
 
 ## 5. Low-RAM routing
 
-The dual image intentionally creates only one `fpst_fpga_link_t`.
+The dual image intentionally creates only one `fpst_fpga_link_t`:
 
 ```text
 one request_buf + one response_buf
@@ -115,9 +110,7 @@ one request_buf + one response_buf
        +-- rebind -> Primer #2 platform
 ```
 
-This avoids allocating a second roughly 1.3-KiB BTP buffer set on the 8-KiB
-SN32F407F. BTP calls are synchronous, so no endpoint transaction remains active
-when the link is rebound.
+This avoids a second roughly 1.3-KiB BTP buffer set on the 8-KiB SN32F407F. BTP calls are synchronous, so no endpoint transaction remains active when the link is rebound.
 
 The 768-byte ML-KEM public ciphertext scratch begins at byte 48:
 
@@ -127,15 +120,9 @@ response_buf[42..47]  : guard/alignment margin
 response_buf[48..815] : ML-KEM-512 ciphertext scratch
 ```
 
-`KEY_STATUS` is the largest P1/P2 session-control response used before ciphertext
-release: 10-byte BTP header + 12-byte generic envelope + 16-byte status data +
-4-byte CRC = 42 bytes. The 48-byte protected prefix is therefore enforced by a
-compile-time assertion and a regression test that writes a full 42-byte control
-response before checking that the ciphertext remains byte-identical.
+The 48-byte protected prefix is enforced by compile-time assertion/regression.
 
 ## 6. Session order
-
-The live pair-session path is:
 
 ```text
 ML-KEM-512 encapsulation using Primer #1 forward NTT
@@ -150,12 +137,9 @@ ML-KEM-512 encapsulation using Primer #1 forward NTT
   -> release public ML-KEM ciphertext to UART sink
 ```
 
-Any asymmetric provisioning failure causes best-effort zeroize of both endpoints
-and the MCU does not advertise an active pair session.
+Any asymmetric provisioning failure causes best-effort zeroize of both endpoints and the MCU does not advertise an active pair session.
 
 ## 7. Telemetry delivery order
-
-The `telemetry` UART command executes the complete MVP delivery transaction:
 
 ```text
 P1 TELEMETRY_TX_SAMPLE
@@ -166,21 +150,9 @@ SN32 -> P1 commit_retained_sequence(sequence)
   -> P1 tx_sequence++
 ```
 
-Lost acknowledgement recovery follows the system specification:
+Lost-acknowledgement recovery follows FPST v1.1: replay with `expected=sent+1` proves previous receiver commit; `expected=sent` causes byte-identical resend; any other expected value is sequence desync/fail-closed.
 
-```text
-P2 ERR_REPLAY + expected = sent + 1
-  -> previous receiver commit is proven
-  -> commit/release P1 retained packet locally
-
-expected = sent
-  -> resend byte-identical retained packet
-
-any other expected value
-  -> sequence desync / fail closed
-```
-
-## 8. Required compile defines
+## 8. Required compile defines and harness boundary
 
 Keep:
 
@@ -189,18 +161,40 @@ FPST_MLKEM_NATIVE_ENABLED=1
 MLK_CONFIG_FILE="fpst_mlkem512_config.h"
 ```
 
-Only after physical continuity/common-ground validation of **both** Primer links:
+### Gate A — electrical-only
+
+Until **both** Primer harnesses have measured continuity/common-ground/no-contention evidence, build with:
+
+```text
+FPST_SN32F407_HARNESS_VERIFIED=0
+```
+
+At this value the production multiport adapter intentionally returns `FPST_ERR_STATE` before a Primer transfer. Therefore:
+
+- UART/heartbeat/ADC/RNG diagnostics can run;
+- continuity/static-level/MISO-contention checks can run;
+- **no BTP SPI transaction is expected from production firmware**;
+- do not bypass the guard merely to obtain a logic-analyzer trace.
+
+### Gate B — measured SPI transaction
+
+Only after Gate A passes, rebuild with:
 
 ```text
 FPST_SN32F407_HARNESS_VERIFIED=1
 ```
 
-Before that, the production image intentionally blocks BTP traffic.
+Then start Mode 0 / 1 MHz and perform P1/P2 PING plus logic-analyzer capture. This ordering must match `targets/sn32f407/README.md` and `docs/hardware/FPST-WIRING-GUIDE-v1.1.md`.
 
-## 9. Mandatory memory gate
+## 9. Full deployment bitstream and ZEROIZE_N
 
-Host CMake/CI is not proof that this Cortex-M0 image fits 32-KiB Flash / 8-KiB
-SRAM. Before programming the SN32 board, ARM Compiler 6 must produce and retain:
+Primer deployment CST intentionally defaults active-low `ZEROIZE_N` low. If Tiny is absent/unpowered, Primer stays zeroized and BTP/session operation is not expected.
+
+For deployment-image testing, either connect a healthy Tiny and let it release `ZEROIZE_N` after qualification, or use a temporary lab fixture while Tiny is completely disconnected from that net. Do not change the fail-safe pull-down and do not hard-wire the net to 3V3 while a Tiny output is connected.
+
+## 10. Mandatory memory gate
+
+Host CMake/CI is not proof that this Cortex-M0 image fits 32-KiB Flash / 8-KiB SRAM. Before programming the SN32 board, ARM Compiler 6 must produce and retain:
 
 ```text
 .map file
@@ -210,22 +204,22 @@ full build log
 .hex
 ```
 
-Reject the image if static SRAM plus the verified worst-case stack exceeds
-`0x2000` bytes. Do not reduce the stack target merely to make the linker pass
-without call-graph evidence.
+Reject the image if static SRAM plus verified worst-case stack exceeds `0x2000` bytes. Do not reduce the stack target merely to make the linker pass without call-graph evidence.
 
-## 10. Bring-up sequence
+## 11. Bring-up sequence
 
-1. Build with `FPST_SN32F407_HARNESS_VERIFIED=0` and verify the image/link map.
-2. Program both Primer bitstreams and SN32 firmware.
-3. Power off and continuity-check SCK/MOSI/MISO, CS1, CS2, IRQ1, IRQ2 and common GND.
-4. Confirm neither FPGA drives MISO while deselected.
-5. Enable `FPST_SN32F407_HARNESS_VERIFIED=1` and rebuild.
-6. Start SPI at mode 0 / 1 MHz.
-7. UART: `discover` -> both device IDs/statuses must respond.
-8. UART: `selftest` -> P1 and P2 PING must pass.
-9. Establish a pair session with `kem-session`.
-10. Run `key-status` and `key-status2`; both session IDs must match.
-11. Run `telemetry`; expect `telemetry=COMMITTED`.
-12. Run `rx-counters`; accepted must increment with no unexpected replay/auth failure.
-13. Exercise response-loss/retry and zeroize tests before raising SPI clock.
+1. Build `FPST_SN32F407_HARNESS_VERIFIED=0`; verify image/link map and UART/heartbeat/ADC/RNG diagnostics.
+2. Program Primer bitstreams/SN32 image as appropriate for the stage.
+3. Power off; continuity-check SCK/MOSI/MISO, CS1, CS2, IRQ1, IRQ2 and common GND.
+4. With power applied safely, verify CS idle, W25Q16 CS inactive and no deselected MISO contention. Do **not** expect BTP traffic at flag=0.
+5. For full deployment images, connect a qualified Tiny or isolated safe lab fixture so `ZEROIZE_N` can be legitimately released.
+6. Rebuild with `FPST_SN32F407_HARNESS_VERIFIED=1`.
+7. Start SPI Mode 0 / 1 MHz; capture both endpoint transactions with logic analyzer.
+8. UART `discover` -> both device IDs/statuses must respond.
+9. UART `selftest` -> P1 and P2 PING must pass.
+10. Establish pair session with `kem-session`.
+11. Run `key-status` and `key-status2`; session IDs must match.
+12. Run `telemetry`; expect `telemetry=COMMITTED`.
+13. Run `rx-counters`; accepted increments with no unexpected replay/auth failure.
+14. Exercise retry/truncated-read/CRC/zeroize/fault/recovery before raising SPI clock.
+15. Qualify 1→2→3→4→5 MHz only with measured evidence at every step.
