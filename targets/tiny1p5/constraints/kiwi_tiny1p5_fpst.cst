@@ -2,7 +2,10 @@
 // Exact FPGA: GW1N-UV1P5QN48XC7/I6, all user I/O at 3.3 V.
 // On-board: SYS_CLK pin4; S1 pin35 tamper; S2 pin36 clear; D3 pin27 fault; D4 pin28 secure.
 // External J1: 1/2/3 heartbeats, 4 tamper_n, 5 manual fault, 6 clear, 7 SEC_EN,
-// 8 ZEROIZE, 9 SYSTEM_RESET_N, 10 FAULT_LATCH. Avoid JTAG/JTAGSEL_N/RECONFIG_N/MSPI special pins.
+// 8 ZEROIZE_N (active-low physical wire), 9 SYSTEM_RESET_N, 10 FAULT_LATCH.
+// The reusable supervisor core keeps active-high KEY_ZEROIZE semantics; supervisor_top
+// inverts it only at the physical J1-8 boundary to match Primer zeroize_ni.
+// Avoid JTAG/JTAGSEL_N/RECONFIG_N/MSPI special pins.
 IO_LOC  "clk_27m" 4;
 IO_PORT "clk_27m" IO_TYPE=LVCMOS33;
 IO_LOC  "hb_mcu_i" 2;
@@ -19,8 +22,8 @@ IO_LOC  "clear_fault_i" 9;
 IO_PORT "clear_fault_i" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
 IO_LOC  "secure_enable_o" 10;
 IO_PORT "secure_enable_o" IO_TYPE=LVCMOS33 DRIVE=8;
-IO_LOC  "key_zeroize_o" 11;
-IO_PORT "key_zeroize_o" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC  "zeroize_no" 11;
+IO_PORT "zeroize_no" IO_TYPE=LVCMOS33 DRIVE=8;
 IO_LOC  "system_reset_no" 12;
 IO_PORT "system_reset_no" IO_TYPE=LVCMOS33 DRIVE=8;
 IO_LOC  "fault_latched_o" 14;
