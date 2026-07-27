@@ -22,7 +22,7 @@ IO_PORT "rst_ni" IO_TYPE=LVCMOS33 PULL_MODE=UP;
 // J2-12 B2_R8_N  -> T13 : Primer #2 endpoint fault/auth-threshold indication
 // J2-13 B2_R11_P -> R12 : Tiny fatal_latched
 // J2-15 B2_R17_N -> T12 : Tiny secure_enable
-// J2-16 B2_R17_P -> R11 : Tiny zeroize_n
+// J2-16 B2_R17_P -> R11 : Tiny ZEROIZE_N (active-low)
 // J2-18 B3_R24_P -> T11 : Primer #2 heartbeat to Tiny
 IO_LOC "spi_sck_i" P16;
 IO_PORT "spi_sck_i" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
@@ -51,8 +51,9 @@ IO_PORT "fatal_latched_i" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
 IO_LOC "secure_enable_i" T12;
 IO_PORT "secure_enable_i" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
 
+// Fail-safe supervisor-loss behavior: undriven active-low ZEROIZE_N must assert.
 IO_LOC "zeroize_ni" R11;
-IO_PORT "zeroize_ni" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_PORT "zeroize_ni" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
 
 IO_LOC "heartbeat_o" T11;
 IO_PORT "heartbeat_o" IO_TYPE=LVCMOS33 DRIVE=8;
