@@ -1,156 +1,170 @@
 # FPGA PQC Secure Telemetry
 
-Hệ thống truyền telemetry an toàn nhiều thiết bị, kết hợp:
+Hệ thống telemetry an toàn nhiều thiết bị theo **`FPST-SYS-SPEC-001 v1.1`**, kết hợp:
 
-- **ML-KEM-512** để thiết lập shared secret;
-- **NTT/INTT accelerator** trên FPGA để tăng tốc phép toán đa thức;
-- **Ascon-AEAD128** để mã hóa, xác thực và kiểm tra tag;
-- **STP secure telemetry**, sequence counter và replay protection;
-- **supervisor độc lập** để giám sát heartbeat, timeout, tamper và zeroize.
+- ML-KEM-512 để thiết lập shared secret;
+- NTT/INTT/PQC accelerator trên FPGA;
+- Ascon-AEAD128 cho mã hóa/xác thực;
+- STP secure telemetry, sequence/replay handling;
+- Tiny 1P5 supervisor độc lập cho heartbeat, tamper, zeroize và safe-state;
+- SONiX SN32F407F làm control/session node và bridge tới PC.
 
-> **System baseline:** `FPST-SYS-SPEC-001 v1.1`.
->
-> Các tài liệu cũ chỉ được dùng để tham khảo lịch sử. Nếu có khác biệt, FPST v1.1 là nguồn ưu tiên cho kiến trúc, interface và phân vai thiết bị.
+> `main` là baseline tích hợp deployment hiện hành. Các branch/PR cũ chỉ còn giá trị lịch sử và không được dùng làm nguồn build thay cho `main`.
 
-## 1. Bản đồ thiết bị và phần mềm
+## 1. Deployment map
 
-| Đích | Vai trò theo FPST v1.1 | Loại code | Artifact sử dụng |
-|---|---|---|---|
-| Kiwi Primer 20K #1 | NTT/INTT accelerator, Ascon encrypt, STP TX | SystemVerilog RTL | Gowin bitstream `.fs` |
-| Kiwi Primer 20K #2 | Ascon decrypt/verify, STP RX, replay protection | SystemVerilog RTL | Gowin bitstream `.fs` |
-| Kiwi Tiny 1P5 | Supervisor, watchdog, tamper/fault latch, safe-state | SystemVerilog RTL | Gowin bitstream `.fs` |
-| SONiX SN32F407 EVK | ML-KEM control, SHAKE/KDF, session control, bridge PC–FPGA | Firmware C | MCU `.hex`/`.bin` |
-| PC/Host | Điều khiển demo, log, benchmark, golden model và simulation | Python/C++/testbench | Chạy trực tiếp trên PC |
+| Target | Vai trò | Artifact |
+|---|---|---|
+| Kiwi Primer 20K #1 | PQC/NTT/INTT, Ascon encrypt, STP TX | Gowin `.fs` |
+| Kiwi Primer 20K #2 | Ascon decrypt/verify, STP RX, replay/auth handling | Gowin `.fs` |
+| Kiwi Tiny 1P5 | Supervisor/watchdog/tamper/zeroize/reset | Gowin `.fs` |
+| SONiX SN32F407F EVK | ML-KEM/KDF/session control, dual-Primer SPI bridge, telemetry | `.hex`/`.bin` |
+| PC | UART host, bring-up, logs, benchmark, golden/reference tools | Python package/tools |
 
-Chi tiết build và nạp cho từng nơi nằm trong [`targets/`](targets/README.md).
+Chi tiết build/nạp: [`targets/`](targets/README.md).
 
-## 2. Luồng hệ thống
+## 2. Topology hiện hành
 
 ```text
 PC host
    |
-   | USB/UART
+   | UART0 115200 8N1
    v
-SONiX SN32F407
-   |-- ML-KEM control + SHAKE256/KDF + session/key commit
+SN32F407F
    |
-   +------------------------+
-   |                        |
-   v                        v
-Primer 20K #1          Primer 20K #2
-NTT/INTT               STP parser
-Ascon encrypt          replay check
-STP packet TX   ---->  Ascon decrypt/verify
-   |                        |
-   +-----------+------------+
-               |
-               v
-          Kiwi Tiny 1P5
-     supervisor/watchdog/tamper
+   | shared SPI0: Mode 0, MSB-first
+   | bring-up 1 MHz; Primer implementation envelope <= 5 MHz
+   |
+   +---- CS1/IRQ1 ----> Primer #1 TX/PQC
+   |                      |  NTT/INTT/MultiplyNTTs/add-sub
+   |                      |  session + Ascon encrypt + STP TX
+   |                      v
+   |                  retained STP packet
+   |
+   +---- CS2/IRQ2 ----> Primer #2 RX
+                          |  Ascon decrypt/verify
+                          |  replay/gap/auth handling
+                          v
+                       RX result
+
+Tiny 1P5 independently supervises MCU + Primer heartbeats,
+tamper/fault, secure-enable, zeroize and reset behavior.
 ```
 
-Đối với **SN32F407 ↔ Primer #1**, logical BTP/SPI contract và FPGA-side J2 constraint đã được khóa trên deployment branch. Điểm-to-điểm jumper thật vẫn chưa được coi là verified cho đến khi continuity/logic-analyzer evidence được ghi nhận. Không tự thay pin hoặc protocol bằng profile cũ.
+The old A1/A2 memory-mailbox + CRC-16 transport is obsolete. Deployment uses **direct FPST BTP v1 over SPI**, separate request/response CS transactions, `SOF=A55A`, version `01`, big-endian fields and CRC-32/ISO-HDLC.
 
-## 3. Quy tắc tổ chức repository
+## 3. Current implementation status
+
+### Primer #1
+
+Functional deployment RTL is complete and covered by repository regressions/generic synthesis:
+
+- BTP SPI + CDC and duplicate-safe cached responses;
+- complete PQC command path `0x20..0x28`;
+- forward NTT, INTT, ML-KEM `MultiplyNTTs`, add/sub, coefficient/poly access;
+- atomic `K_TX || NP_TX` session context;
+- Ascon-AEAD128 encrypt;
+- STP TX, retained 64-byte packet and commit-gated sequence advance;
+- frozen deployment CST/SDC.
+
+### Primer #2
+
+Secure RX deployment integration is present:
+
+- Ascon authenticated decrypt/quarantine;
+- session activation and expected-sequence state;
+- STP format/session/replay/gap checks;
+- authentication-failure handling/counters;
+- BTP endpoint and shared-SPI MISO tri-state behavior;
+- cross-endpoint Primer #1 TX -> Primer #2 RX regression;
+- deployment CST/SDC and generic synthesis checks.
+
+### SN32F407F
+
+Current firmware includes:
+
+- direct BTP v1 master transport and bounded duplicate-safe retry;
+- one low-RAM link object routed between two Primer endpoints;
+- Primer #1/#2 control/session clients and pair bridge;
+- pinned `mlkem-native v1.0.0` / ML-KEM-512 integration;
+- low-RAM KEM schedule for 8 KiB SRAM;
+- SHAKE256/KDF and atomic pair-session provisioning;
+- conditioned ADC entropy/CSPRNG boundary;
+- canonical telemetry generation and retained-packet commit/reconciliation;
+- UART diagnostics/session helpers and independent heartbeat.
+
+Final EVK routes are documented in `targets/sn32f407/firmware/platform/sn32f407/board_profile.h`; notably UART0 uses EVK J10 `P3.1/P3.2`, while shared external SPI0 uses `P1.0/P1.1/P1.2`.
+
+### Tiny 1P5
+
+Deployment source package contains supervisor RTL, target top, CST/SDC and testbenches for:
+
+- three heartbeat watchdogs;
+- tamper/manual fault handling;
+- startup/qualification/safe-locked/recovery states;
+- zeroize-before-reset ordering;
+- first-fatal latching and fail-safe behavior.
+
+### PC host
+
+`software/host/` contains the Python 3.10+ `fpst-host` deployment application with:
+
+- serial enumeration and robust UART transactions;
+- bring-up/status commands and guarded destructive commands;
+- JSON output and secret-redacted JSONL logging;
+- RTT benchmark and unit tests.
+
+The richer SN32 session/telemetry CLI already exists in firmware; the Python host adapter can be extended without changing the UART transport layer.
+
+## 4. What remains before a hardware-ready claim
+
+The remaining gates are primarily **vendor-tool and physical qualification**, not missing Primer #1/#2 datapath RTL:
+
+1. build Primer #1, Primer #2 and Tiny 1P5 with exact Gowin devices; pass synthesis/P&R/timing and generate `.fs`;
+2. build the final SN32 dual-Primer image with the official SONiX DFP / ARM Compiler 6; verify Flash <= 32 KiB, SRAM <= 8 KiB and stack margin from real map/call-graph evidence; generate `.hex`;
+3. continuity-check shared SPI, independent CS/IRQ, Tiny supervisor wiring and common ground;
+4. verify shared MISO release and start real-board SPI qualification at 1 MHz with a logic analyzer;
+5. program all devices and run PING -> ML-KEM pair session -> STP TX/RX -> commit/retry -> zeroize/fault/recovery tests;
+6. archive hardware evidence before marking the system hardware-verified.
+
+Repository CI/generic Yosys checks are useful functional evidence, but they are not substitutes for exact-device Gowin/Keil builds and real-board measurements.
+
+## 5. Repository structure
 
 ```text
-targets/                       Điểm vào theo từng thiết bị cần nạp/chạy
-  primer20k_1/                 FPGA phát / accelerator
-  primer20k_2/                 FPGA nhận / verify
-  tiny1p5/                     FPGA supervisor
-  sn32f407/                    MCU firmware
-  pc/                          Host và verification trên máy tính
-
-rtl/                           RTL dùng chung, không gắn cứng một board
-  arithmetic/                  Modular add/sub/multiply
-  ntt/                         NTT/INTT reusable cores
-  ascon/                       Ascon reusable cores
-  telemetry/                   STP formatter/parser và replay logic
-  supervisor/                  Reusable supervisor blocks
-  boards/                      Board wrappers hiện có hoặc legacy support
-
-tb/                            Unit/integration testbench, không nạp vào chip
-software/reference/            Golden model và vector generator, chạy trên PC
-software/host/                 Host application, chạy trên PC
-software/third_party/          Dependency lock metadata / external checkout locations
-constraints/                   Constraint theo board
-docs/                          Spec, kiến trúc và quyết định thiết kế
-scripts/                       Simulation, synthesis và benchmark scripts
-results/                       Báo cáo kết quả
+targets/                       device-specific deployment entry points
+rtl/                           reusable RTL cores
+  arithmetic/
+  ntt/
+  ascon/
+  telemetry/
+  supervisor/
+  transport/
+tb/                            unit/integration testbenches
+software/reference/            independent golden/reference models
+software/host/                 PC deployment application
+software/third_party/          pinned dependency metadata
+constraints/                   FPGA constraints
+docs/                          architecture/interface/decision records
+scripts/                       simulation/synthesis helpers
+results/                       generated verification/benchmark results
 ```
 
-### Nguyên tắc tách code
+Rules:
 
-1. **RTL thuật toán dùng chung** chỉ có một bản trong `rtl/`.
-2. **Top-level, source manifest, constraint và hướng dẫn nạp** được quản lý theo từng thư mục `targets/<target>/`.
-3. Code trong `tb/` và `software/reference/` chỉ dùng để kiểm chứng trên PC, không được đưa vào bitstream sản phẩm.
-4. Mỗi target phải ghi rõ top module/device/clock/source/constraint/output artifact và trạng thái triển khai.
-5. Thay đổi interface phải được đối chiếu với FPST v1.1 và cập nhật tài liệu cùng commit.
-6. Third-party crypto source phải được pin revision và không được thay bằng bản copy/patch không ghi nhận.
+1. reusable algorithms live once under `rtl/`;
+2. each hardware target owns its top/source manifest/constraint/build instructions under `targets/<target>/`;
+3. testbench/reference code is not deployment RTL;
+4. interface changes must update both endpoints and the decision register together;
+5. third-party crypto revisions must remain explicitly pinned.
 
-## 4. Trạng thái hiện tại
+## 6. Authoritative deployment entry points
 
-### Primer #1 — functional deployment complete / hardware qualification pending
-
-Đã có và qua host regression/generic synthesis:
-
-- BTP v1 direct SPI, CRC-32, retry cache và transaction collision protection;
-- complete ML-KEM polynomial path: NTT, INTT, `MultiplyNTTs`, add/sub, coefficient/poly load/read;
-- atomic K_TX/NP_TX context, session activation và zeroize;
-- Ascon-AEAD128 encrypt + STP TX + retained packet/commit sequence;
-- supervisor synchronization/heartbeat interface;
-- frozen Primer #1 CST/SDC deployment profile;
-- SystemVerilog regression, complete PQC wire test và Yosys deployment synthesis.
-
-Còn phải làm trên phần cứng: exact-device Gowin synthesis/P&R/timing, `.fs`, continuity và real-board logic-analyzer/fault/reset/zeroize tests.
-
-### SN32F407 — software/host integration complete / physical qualification pending
-
-Đã triển khai:
-
-- direct FPST BTP v1 master transport khớp Primer #1, với retry dùng cùng txid + byte-identical request;
-- Primer #1 control/session/PQC/telemetry client và retained-sequence commit/reconcile;
-- SHAKE256 KDF và atomic key stage/commit/activate/zeroize;
-- pinned `mlkem-native v1.0.0` / ML-KEM-512 baseline;
-- Primer #1 forward-NTT accelerator hook, INTT/base-mul vẫn ở pinned portable C;
-- low-RAM sender encapsulation schedule 3072 B, differential-tested byte-for-byte với unmodified pure-C reference;
-- SRAM-conscious link/ciphertext buffer reuse và CI preflight giữ 2 KiB stack reserve;
-- conditioned ADC entropy trên EVK `P2.0/AIN0`: health checks -> Von-Neumann -> SHAKE256 -> `fpst_csprng_t`, fail-closed;
-- canonical 24-byte telemetry, 64-bit uptime và SysTick heartbeat;
-- UART bring-up shell + `kem-session` flow và `tools/sn32_uart_session.py` cho PC.
-
-Entropy hiện được định danh đúng phạm vi là **research/competition conditioned source**, không claim certified production TRNG/min-entropy.
-
-Chưa được gọi hardware-ready cho đến khi: exact ARM Compiler 6 map/stack chứng minh fit 32 KiB Flash / 8 KiB RAM, SN-LINK programming/boot pass, harness continuity được đo và guard được bật, Primer #1 có exact-device Gowin P&R/`.fs`, sau đó logic-analyzer + end-to-end board tests pass.
-
-### Các khối khác còn mở
-
-- Primer #2 Ascon decrypt/verify + STP RX/replay integration;
-- Tiny 1P5 supervisor deployment bitstream;
-- PC host application hoàn chỉnh;
-- end-to-end two-Primer/supervisor demo và benchmark.
-
-Không hiểu “host test PASS” là “đã sẵn sàng nạp toàn hệ thống”. README của từng target và PR deployment phải ghi rõ functional verification và physical qualification là hai gate khác nhau.
-
-## 5. Bắt đầu từ đâu?
-
-- Primer #1 deployment/hardware qualification: [`targets/primer20k_1/README.md`](targets/primer20k_1/README.md).
-- SN32F407 firmware/build: [`targets/sn32f407/README.md`](targets/sn32f407/README.md).
-- Primer #2 receiver/decrypt: [`targets/primer20k_2/README.md`](targets/primer20k_2/README.md).
-- Tiny supervisor: [`targets/tiny1p5/README.md`](targets/tiny1p5/README.md).
-- PC/golden model: [`targets/pc/README.md`](targets/pc/README.md).
-- Toàn bộ mapping FPST v1.1: [`docs/architecture/deployment-map-fpst-v1.1.md`](docs/architecture/deployment-map-fpst-v1.1.md).
-
-## 6. Kiểm chứng bắt buộc
-
-- Mỗi module RTL có unit test trước khi tích hợp.
-- NTT/INTT so sánh với golden/reference behavior.
-- Ascon chạy KAT/differential test byte-for-byte.
-- ML-KEM accelerator hook phải differential-test với cùng pinned portable-C source.
-- Integration test phải có packet hợp lệ, CRC/tag sai, retry/replay, timeout, reset/zeroize và fault path.
-- Firmware phải có exact target build + Flash/RAM/stack report trước khi gọi MCU image board-ready.
-- Vendor synthesis, place-and-route, timing và BRAM mapping phải được kiểm tra trên đúng FPGA part trước khi nạp board.
-
-## 7. Cảnh báo bảo mật
-
-Đây là dự án nghiên cứu và thi đấu. Không dùng trực tiếp trong production trước khi có kiểm thử độc lập, đánh giá side-channel/fault injection, secure key storage/entropy source và rà soát giao thức đầy đủ. Không commit secret key, seed bí mật, token hoặc log chứa bí mật.
+- Primer #1: [`targets/primer20k_1/README.md`](targets/primer20k_1/README.md)
+- Primer #2: [`targets/primer20k_2/README.md`](targets/primer20k_2/README.md)
+- SN32F407F: [`targets/sn32f407/README.md`](targets/sn32f407/README.md)
+- SN32 dual-Primer Keil profile: [`targets/sn32f407/firmware/KEIL_DUAL_PRIMER_BUILD.md`](targets/sn32f407/firmware/KEIL_DUAL_PRIMER_BUILD.md)
+- Tiny 1P5: [`targets/tiny1p5/README.md`](targets/tiny1p5/README.md)
+- PC: [`targets/pc/README.md`](targets/pc/README.md)
+- Primer #1 BTP profile: [`docs/interfaces/FPST-PRIMER1-DEPLOYMENT-PROFILE-v1.1.md`](docs/interfaces/FPST-PRIMER1-DEPLOYMENT-PROFILE-v1.1.md)
+- Implementation decisions: [`docs/spec-delta/FPST-v1.1-implementation-decisions.md`](docs/spec-delta/FPST-v1.1-implementation-decisions.md)
