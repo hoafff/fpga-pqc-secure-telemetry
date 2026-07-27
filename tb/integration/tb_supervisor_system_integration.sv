@@ -128,26 +128,36 @@ module tb_supervisor_system_integration;
 
     task automatic wait_state(input logic [2:0] expected, input integer limit);
         integer i;
-        begin : wait_state_block
+        logic found;
+        begin
+            found = 1'b0;
             for (i = 0; i < limit; i = i + 1) begin
                 @(posedge clk);
-                if (tiny.u_supervisor_core.state_q == expected)
-                    disable wait_state_block;
+                if (tiny.u_supervisor_core.state_q == expected) begin
+                    found = 1'b1;
+                    i = limit;
+                end
             end
-            $fatal(1, "timeout waiting state=%0d current=%0d", expected, tiny.u_supervisor_core.state_q);
+            if (!found)
+                $fatal(1, "timeout waiting state=%0d current=%0d", expected, tiny.u_supervisor_core.state_q);
         end
     endtask
 
     task automatic wait_fault_code(input logic [15:0] expected, input integer limit);
         integer i;
-        begin : wait_fault_block
+        logic found;
+        begin
+            found = 1'b0;
             for (i = 0; i < limit; i = i + 1) begin
                 @(posedge clk);
-                if (fault_latched && tiny.u_supervisor_core.error_code_q == expected)
-                    disable wait_fault_block;
+                if (fault_latched && tiny.u_supervisor_core.error_code_q == expected) begin
+                    found = 1'b1;
+                    i = limit;
+                end
             end
-            $fatal(1, "timeout waiting fault=%04h got fault=%0b code=%04h", expected,
-                   fault_latched, tiny.u_supervisor_core.error_code_q);
+            if (!found)
+                $fatal(1, "timeout waiting fault=%04h got fault=%0b code=%04h", expected,
+                       fault_latched, tiny.u_supervisor_core.error_code_q);
         end
     endtask
 
