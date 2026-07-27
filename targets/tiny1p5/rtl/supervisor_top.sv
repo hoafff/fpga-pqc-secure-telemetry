@@ -15,6 +15,7 @@ module supervisor_top #(
     input  logic hb_mcu_i,
     input  logic hb_pqc_i,
     input  logic hb_crypto_i,
+    input  logic crypto_fault_i,
     input  logic tamper_ext_ni,
     input  logic manual_fault_i,
     input  logic clear_fault_i,
@@ -75,6 +76,7 @@ module supervisor_top #(
     ) u_supervisor_core (
         .clk_i(clk_27m), .rst_ni(rst_ni_q), .tick_ms_i(tick_ms_w),
         .hb_mcu_i(hb_mcu_i), .hb_pqc_i(hb_pqc_i), .hb_crypto_i(hb_crypto_i),
+        .crypto_fault_i(crypto_fault_i),
         .tamper_active_i(tamper_active_w), .clear_fault_pulse_i(clear_pulse_w), .manual_fault_i(manual_fault_i),
         .secure_enable_o(secure_enable_o), .key_zeroize_o(key_zeroize_core_w), .system_reset_no(system_reset_no),
         .fault_latched_o(fault_latched_o), .error_code_o(), .first_fault_time_ms_o(), .state_o(),
@@ -82,11 +84,10 @@ module supervisor_top #(
     );
 
     /*
-     * The reusable supervisor core follows FPST SUP-007 and exposes an
-     * active-high key-zeroize request.  The physical two-Primer harness uses
-     * active-low zeroize_ni inputs, so the Tiny target wrapper performs the
-     * polarity adaptation here.  Primer-side pull-downs then make supervisor
-     * loss fail-safe: an undriven ZEROIZE_N asserts endpoint zeroization.
+     * The reusable supervisor core follows FPST logical semantics and exposes
+     * an active-high key-zeroize request. The physical two-Primer harness uses
+     * active-low ZEROIZE_N inputs, so this wrapper performs the polarity
+     * adaptation only at the Tiny J1 boundary.
      */
     assign zeroize_no = ~key_zeroize_core_w;
 
