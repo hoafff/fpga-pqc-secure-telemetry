@@ -2,13 +2,13 @@
 #define FPST_SN32F407_BOARD_PROFILE_H
 
 /*
- * Evidence:
- *   - organizer SN32F400 CMSIS/Firmware Library V1.5R
- *   - SONiX DFP / Keil SN32F407F target
+ * Evidence / references, in decreasing authority for physical decisions:
  *   - organizer 32F407 EVK V1.0 schematic
- *   - SONiX SN32F400 PFPA table
- *   - FPST-SYS-SPEC-001 v1.1
- *   - frozen Primer #1/#2 deployment CST profiles
+ *   - organizer SN32F400 CMSIS/Firmware Library V1.5R
+ *   - SONiX DFP / Keil SN32F407F target and PFPA table
+ *   - current Primer #1/#2 deployment CST profiles and tested firmware behavior
+ *   - project integration decisions
+ *   - FPST-SYS-SPEC-001 v1.1 as a reference baseline only
  *
  * EVK UART connector J10 is wired to UTX_P31 / URX_P32. UART0 PFPA route 2
  * therefore maps UTXD0=P3.1 and URXD0=P3.2. Do not use route 0 here:
@@ -32,23 +32,28 @@
  *   common 3.3 V logic ground is mandatory.
  *
  * The FPGA transport tri-states MISO while deselected, and the SN32 multiport
- * adapter deasserts all CS lines before selecting exactly one endpoint.
+ * adapter deasserts all CS lines before selecting exactly one endpoint. Actual
+ * bus release/continuity remains a physical acceptance item.
  *
  * The EVK schematic also provides an onboard potentiometer on ADC_P20,
  * connected directly to P2.0/AIN0. The research/competition entropy profile
  * samples this existing node; no external RNG component is required.
  *
- * P2.9 is assigned to the MCU heartbeat output. Its final wire to Tiny 1P5 is
- * still evidence-dependent and does not alter the BTP SPI contract.
+ * P2.9 is assigned by the project profile to the MCU heartbeat output. Its
+ * inter-board wire to Tiny remains physical evidence-dependent.
  *
- * IMPORTANT — Tiny -> SN32 supervisor reset/zeroize path:
- * No SN32 GPIO/reset macro is defined here for Tiny SYSTEM_RESET_N or a
- * dedicated Tiny ZEROIZE event. The current schematic/connector evidence does
- * not yet freeze an unambiguous deployment destination with confirmed polarity,
- * ownership and fan-out. FIX-005 is therefore formally deferred in
- * docs/spec-delta/FPST-v1.1-implementation-decisions.md. Do not add a spare
- * GPIO just because it is unused in this file; any future assignment must be
- * backed by schematic/connector evidence and updated end-to-end.
+ * IMPORTANT — MVP Policy B / Tiny -> SN32 reset-zeroize boundary:
+ * Tiny is the hardware safety authority for the two Primer dataplane endpoints.
+ * SN32 is the trusted controller and is responsible for software invalidation /
+ * zeroization of its transient cryptographic and session state. Therefore the
+ * MVP does NOT require a dedicated Tiny SYSTEM_RESET_N or ZEROIZE wire to SN32.
+ * No corresponding SN32 GPIO/reset macro is defined here and no spare GPIO may
+ * be invented merely because it appears unused.
+ *
+ * A future threat model that requires asynchronous containment of a wedged or
+ * compromised MCU may add such a path only after schematic/connector/polarity/
+ * voltage/ownership/fan-out evidence is unambiguous and the change is updated
+ * end-to-end in firmware, wiring documentation and tests.
  *
  * This file describes intended wiring, not continuity evidence. The harness
  * guard defaults to zero. Only after continuity/common-ground/MISO-release
@@ -98,16 +103,20 @@
 #define FPST_SN32F407_P2_CS_N_PORT             2u
 #define FPST_SN32F407_P2_CS_N_PIN              2u
 #define FPST_SN32F407_P1_IRQ_N_PORT            2u
-#define FPST_SN32F407_P1_IRQ_N_PIN             3u
+#define FPST_SN32F407_P1_IRQ_N_PIN              3u
 #define FPST_SN32F407_P2_IRQ_N_PORT            2u
-#define FPST_SN32F407_P2_IRQ_N_PIN             8u
+#define FPST_SN32F407_P2_IRQ_N_PIN              8u
 
 /* Existing EVK analog demo node: ADC_P20 -> P2.0/AIN0. */
 #define FPST_SN32F407_ENTROPY_ADC_PORT          2u
 #define FPST_SN32F407_ENTROPY_ADC_PIN           0u
 #define FPST_SN32F407_ENTROPY_ADC_CHANNEL       0u
 
-/* MCU heartbeat is generated from SysTick, independently of the main loop. */
+/*
+ * MCU heartbeat is generated from SysTick, independently of the main loop.
+ * 100 ms is the current project-profile period adopted from the FPST reference
+ * baseline; it is not a manufacturer timing requirement.
+ */
 #define FPST_SN32F407_MCU_HEARTBEAT_PORT        2u
 #define FPST_SN32F407_MCU_HEARTBEAT_PIN         9u
 #define FPST_SN32F407_MCU_HEARTBEAT_PERIOD_MS 100u
