@@ -21,6 +21,24 @@ class CommandResult:
 
 
 @dataclass(frozen=True)
+class KemSessionResult:
+    """Secret-safe summary of the interactive dual-Primer ML-KEM session flow.
+
+    The public ML-KEM ciphertext is returned separately by the protocol client so
+    normal JSON/result logging never serializes a large binary field by accident.
+    """
+
+    command: str
+    ok: bool
+    status: str
+    session_id: int
+    ciphertext_len: int = 0
+    ciphertext_crc32: int = 0
+    lines: Sequence[str] = field(default_factory=tuple)
+    elapsed_ms: float = 0.0
+
+
+@dataclass(frozen=True)
 class BenchmarkResult:
     command: str
     count: int
