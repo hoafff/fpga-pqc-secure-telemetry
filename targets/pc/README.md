@@ -2,101 +2,202 @@
 
 ## 1. Vai trò
 
-PC không nhận bitstream hoặc MCU firmware. PC chạy các công cụ phát triển, golden model và chương trình điều khiển demo.
+PC không nhận bitstream hoặc MCU firmware. PC chạy chương trình điều khiển demo, verification/golden tools và thu kết quả.
 
 ```text
-PC
-├── simulation/testbench
-├── golden reference models
-├── vector generation
-├── synthesis helper scripts
-├── host command application
-├── telemetry/status display
-└── benchmark/result collection
+PC host
+   |
+   | UART0 115200 8N1
+   v
+SONiX SN32F407F
+   |
+   +--> session/control
+   +--> Primer #1 over SPI mailbox
+   +--> telemetry/status forwarding
 ```
 
-## 2. Artifact chạy trên PC
+PC không được giả định giao tiếp trực tiếp với Primer #1, Primer #2 hoặc Tiny 1P5.
+
+## 2. Trạng thái deployment
 
 ```text
-Python scripts
-C/C++ host executable nếu chọn
-Icarus/Verilator/Questa/Gowin simulation
-Yosys/Gowin synthesis commands
+CURRENT / IMPLEMENTED:
+  Python 3.10+ host package
+  pyserial UART transport
+  port enumeration
+  SN32 CLI protocol adapter
+  wiring/ping/caps/status
+  guarded zeroize/reset
+  non-destructive bring-up demo
+  host RTT benchmark
+  JSON output
+  secret-safe JSONL result logger
+  hardware-independent unit tests
+
+CURRENT SN32 HOST CONTRACT:
+  UART0 115200 8N1
+  text CLI commands:
+    help wiring ping caps status zeroize reset
+
+GATED BY LATER MCU/PRIMER WORK:
+  ML-KEM session command flow from PC
+  STP telemetry TX/RX commands
+  structured plaintext/ciphertext/tag reporting
+  authentication/replay result stream
+  endpoint cycle counters / throughput metrics
+  supervisor event stream
 ```
 
-Các file này không nạp vào FPGA hoặc MCU.
+The earlier `PC <-> SN32 likely USB/UART, final contract TBD` statement is obsolete. The organizer-backed SN32 implementation profile has now frozen the host link to UART0 115200 8N1.
 
-## 3. Code hiện có
-
-```text
-software/reference/            golden model và vector generator
-scripts/sim/                   simulation runners
-scripts/synth/                 synthesis sanity checks
-tb/unit/                       unit testbench
-tb/integration/                integration testbench
-```
-
-Forward NTT hiện đã có Python reference, deterministic vectors và board self-test vector generation.
-
-## 4. Code dự kiến
+## 3. Code location
 
 ```text
 software/host/
-├── transport/
-├── protocol/
-├── telemetry/
-├── benchmark/
-└── main.py
+├── pyproject.toml
+├── README.md
+├── fpst_host/
+│   ├── __init__.py
+│   ├── models.py
+│   ├── transport.py
+│   ├── protocol.py
+│   ├── benchmark.py
+│   ├── result_log.py
+│   └── cli.py
+└── tests/
+    ├── test_protocol.py
+    └── test_benchmark.py
 ```
 
-Host application dự kiến:
+Golden/reference code remains under:
 
-- mở cổng kết nối tới SN32F407;
-- gửi command và test payload;
-- hiển thị session state;
-- hiển thị plaintext/ciphertext/tag;
-- hiển thị authentication/replay result;
-- thu latency, cycle count, throughput và error code;
-- lưu result không chứa secret.
+```text
+software/reference/
+```
 
-## 5. Golden/reference responsibilities
+Do not merge the golden implementation into the production host transport/protocol layer.
+
+## 4. Install
+
+Windows:
+
+```powershell
+cd software/host
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -e .
+python -m unittest discover -s tests -v
+```
+
+Linux:
+
+```bash
+cd software/host
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+python -m unittest discover -s tests -v
+```
+
+## 5. Hardware bring-up commands
+
+List ports:
+
+```bash
+fpst-host ports
+```
+
+Probe the SN32 path:
+
+```bash
+fpst-host probe --port COM5
+```
+
+Run the non-destructive demo:
+
+```bash
+fpst-host demo --port COM5
+```
+
+Individual commands:
+
+```bash
+fpst-host wiring --port COM5
+fpst-host ping   --port COM5
+fpst-host caps   --port COM5
+fpst-host status --port COM5
+```
+
+State-changing operations require explicit confirmation:
+
+```bash
+fpst-host zeroize --port COM5 --yes
+fpst-host reset   --port COM5 --yes
+```
+
+Linux example replaces `COM5` with `/dev/ttyUSB0` or `/dev/ttyACM0` as appropriate.
+
+## 6. Benchmark/result collection
+
+```bash
+fpst-host bench ping --port COM5 --count 100
+fpst-host demo --port COM5 --log results/pc/bringup.jsonl
+```
+
+The current benchmark is PC-observed command round-trip latency. FPGA cycle count and datapath throughput remain separate endpoint metrics and must not be inferred from host RTT.
+
+Result logs must never contain secret key material, ML-KEM shared secrets, private seeds or credentials. The host logger performs name-based redaction as defense-in-depth, but producers remain responsible for never supplying secret values to logging code.
+
+## 7. Golden/reference responsibilities
 
 - NTT/INTT output oracle.
 - Ascon-AEAD128 byte-for-byte oracle.
 - ML-KEM/KDF test vector support.
 - STP packet encode/decode model.
-- Deterministic seeds/vectors để tái tạo lỗi.
+- Deterministic seeds/vectors for reproducible failures.
 
-Golden model không được dùng để che lỗi RTL bằng cách dùng cùng một implementation hoặc cùng một byte-order bug. Ưu tiên nguồn chuẩn độc lập và ghi provenance của vector/reference snapshot.
+Golden models must remain independent enough to expose RTL/firmware byte-order or algorithm bugs instead of reproducing them.
 
-## 6. Kiểm thử theo FPST v1.1
+## 8. Verification matrix
 
 ```text
 Unit:
-  arithmetic, butterfly, permutation, packer, parser
+  host protocol parser
+  benchmark statistics
+  secret-safe logging
+  arithmetic / crypto reference components
 
 Integration:
-  NTT/INTT core
-  Ascon encrypt/decrypt
-  STP TX -> RX
+  PC -> SN32 UART command path
+  SN32 -> Primer mailbox path
   session/key loading
+  STP TX -> RX
   supervisor response
 
 Negative:
-  malformed length
-  tag corruption
-  replay
-  timeout
+  missing/incorrect serial port
+  UART timeout
+  malformed/unknown response
+  wiring unverified
+  endpoint timeout
   reset
   zeroize
-  backpressure
+  authentication failure
+  replay
 ```
 
-## 7. Host transport
+## 9. Definition of done
 
-```text
-PC <-> SN32F407: likely USB/UART, final contract TBD
-PC <-> FPGA direct: not assumed
-```
+The PC target is source-complete for the currently exposed SN32 CLI when:
 
-Host code chỉ được khóa sau khi MCU command protocol và physical transport được chốt.
+- package installs on the deployment PC;
+- unit tests pass;
+- serial port enumeration works;
+- SN32 UART responds at 115200 8N1;
+- `probe`/`demo` execute against the real board;
+- destructive actions require explicit operator confirmation;
+- logs contain no secret material.
+
+The **full FPST host feature set** is only end-to-end complete when the still-open ML-KEM/STP/telemetry commands are implemented by their MCU/FPGA owners and then added to `fpst_host/protocol.py`.
+
+See [`software/host/README.md`](../../software/host/README.md) for deployment instructions.
