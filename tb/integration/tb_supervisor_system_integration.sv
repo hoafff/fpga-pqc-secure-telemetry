@@ -41,6 +41,7 @@ module tb_supervisor_system_integration;
     logic p1_hb_prev = 1'b0;
     logic p2_hb_prev = 1'b0;
     logic zeroize_seen_before_reset = 1'b0;
+    logic reset_order_check_active = 1'b0;
 
     always #5 clk = ~clk;
 
@@ -63,10 +64,17 @@ module tb_supervisor_system_integration;
             p2_hb_prev <= p2_hb;
         end
 
-        if (!zeroize_n)
-            zeroize_seen_before_reset <= 1'b1;
-        if (!system_reset_n && !zeroize_seen_before_reset)
-            $fatal(1, "SYSTEM_RESET_N asserted before ZEROIZE_N");
+        /*
+         * Zeroize-before-reset is a fatal-path property, not a time-zero/POR
+         * property. Arm this monitor immediately before the injected fatal so
+         * unknown/initial POR values cannot masquerade as an ordering failure.
+         */
+        if (reset_order_check_active) begin
+            if (!zeroize_n)
+                zeroize_seen_before_reset <= 1'b1;
+            if (!system_reset_n && !zeroize_seen_before_reset)
+                $fatal(1, "SYSTEM_RESET_N asserted before ZEROIZE_N during armed fatal path");
+        end
     end
 
     supervisor_top #(
@@ -227,10 +235,15 @@ module tb_supervisor_system_integration;
         recover_to_monitor();
 
         /* 5,7,8,9,10. Tamper, zeroize-before-reset, clear rejection, live HB, recovery. */
+        @(negedge clk);
         zeroize_seen_before_reset = 1'b0;
+        reset_order_check_active = 1'b1;
         tamper_ext_n = 1'b0;
         wait_fault_code(E_TAMP, 20);
         wait_state(ST_SAFE, 30);
+        reset_order_check_active = 1'b0;
+        if (!zeroize_seen_before_reset)
+            $fatal(1, "fatal path reached SAFE_LOCKED without observing ZEROIZE_N assertion");
         if (secure_enable || zeroize_n)
             $fatal(1, "tamper did not force secure-disable/zeroize");
         prove_live_heartbeats_while_safe();
