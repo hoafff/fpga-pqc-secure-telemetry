@@ -9,6 +9,17 @@
 #define MLK_CONFIG_NAMESPACE_PREFIX fpst_mlkem512_native
 
 /*
+ * The Cortex-M0 production image is constrained to 32 KiB of internal Flash.
+ * ARMClang's minsize function attribute applies -Oz-equivalent optimization to
+ * the pinned ML-KEM translation unit without changing its API, parameter set,
+ * arithmetic, wire format, or constant-time source structure.
+ */
+#if defined(__clang__)
+#define MLK_CONFIG_INTERNAL_API_QUALIFIER __attribute__((minsize))
+#define MLK_CONFIG_EXTERNAL_API_QUALIFIER __attribute__((minsize))
+#endif
+
+/*
  * Only the forward NTT hook is enabled today.  The remaining arithmetic stays
  * in the reviewed upstream C backend until its domain/scaling adapter has a
  * differential test.  In particular, do not enable INTT here merely because
