@@ -101,9 +101,22 @@ class SerialTransport:
             chunk = self._serial.read(256)
             if chunk:
                 buf.extend(chunk)
-                if self.PROMPT in buf:
-                    before_prompt = bytes(buf).split(self.PROMPT, 1)[0]
-                    return before_prompt.decode("utf-8", errors="replace")
+                data = bytes(buf)
+                prompt_index = -1
+
+                # Chỉ chấp nhận "> " nếu nó là prompt độc lập:
+                # ở đầu buffer hoặc ở đầu một dòng mới.
+                if data.startswith(self.PROMPT):
+                    prompt_index = 0
+                else:
+                    for marker in (b"\r\n> ", b"\n> "):
+                        index = data.find(marker)
+                        if index >= 0:
+                            prompt_index = index + len(marker) - len(self.PROMPT)
+                            break
+
+                if prompt_index >= 0:
+                    return data[:prompt_index].decode("utf-8", errors="replace")
             else:
                 time.sleep(0.002)
 
