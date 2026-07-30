@@ -42,7 +42,7 @@ module primer2_btp_endpoint_deploy #(
 
     localparam integer CACHE_CYCLES = CLOCK_HZ;
     localparam integer CACHE_COUNT_W = $clog2(CACHE_CYCLES + 1);
-    localparam integer MAX_STP_PACKET_BYTES = 168;
+    localparam integer MAX_STP_PACKET_BYTES = 64;
 
     localparam logic [15:0] DETAIL_COMMIT_ACCEPTED   = 16'h0001;
     localparam logic [15:0] DETAIL_EXPECTED_SEQUENCE = 16'h0002;
@@ -69,6 +69,7 @@ module primer2_btp_endpoint_deploy #(
         ST_RESP_START,
         ST_RESP_WAIT,
         ST_RESP_COMMIT,
+        ST_CACHE_PREFETCH,
         ST_CACHE_RESTORE,
         ST_CACHE_RECOMMIT
     } state_t;
@@ -130,7 +131,21 @@ module primer2_btp_endpoint_deploy #(
     logic [COUNT_W-1:0] builder_tx_wr_addr;
     logic [7:0] builder_tx_wr_data;
 
+    /*
+     * Cached BTP response.
+     *
+     * Synchronous read is mandatory here. An asynchronous read from the
+     * 1038-byte cache causes Gowin to implement a huge LUT multiplexer.
+     */
+    (* ram_style = "block", syn_ramstyle = "block_ram" *)
     logic [7:0] cache_mem [0:MAX_FRAME_BYTES-1];
+
+    localparam logic [COUNT_W-1:0] CACHE_INDEX_ONE =
+        {{(COUNT_W-1){1'b0}}, 1'b1};
+
+    localparam logic [COUNT_W-1:0] CACHE_INDEX_TWO =
+        {{(COUNT_W-2){1'b0}}, 2'b10};
+
     logic cache_valid_q;
     logic [15:0] cache_transaction_id_q;
     logic [7:0] cache_opcode_q;
@@ -138,7 +153,10 @@ module primer2_btp_endpoint_deploy #(
     logic [31:0] cache_request_crc32_q;
     logic [COUNT_W-1:0] cache_frame_len_q;
     logic [CACHE_COUNT_W-1:0] cache_age_q;
+
     logic [COUNT_W-1:0] cache_restore_index_q;
+    logic [COUNT_W-1:0] cache_rd_addr_q;
+    logic [7:0] cache_rd_data_q;
 
     logic session_zeroize;
     logic session_load_begin;
@@ -337,7 +355,7 @@ module primer2_btp_endpoint_deploy #(
                             10'd8: response_fill_byte = 8'h00;
                             10'd9: response_fill_byte = rx_release_len;
                             default: begin
-                                rx_release_rd_addr = response_fill_index_q - 10'd22;
+                                rx_release_rd_addr = response_fill_index_q[7:0] - 8'd22;
                                 response_fill_byte = rx_release_rd_data;
                             end
                         endcase
@@ -428,7 +446,7 @@ module primer2_btp_endpoint_deploy #(
         if (state_q == ST_CACHE_RESTORE) begin
             tx_wr_en_o   = 1'b1;
             tx_wr_addr_o = cache_restore_index_q;
-            tx_wr_data_o = cache_mem[cache_restore_index_q];
+            tx_wr_data_o = cache_rd_data_q;
         end else begin
             tx_wr_en_o   = builder_tx_wr_en;
             tx_wr_addr_o = builder_tx_wr_addr;
@@ -465,8 +483,16 @@ module primer2_btp_endpoint_deploy #(
     );
 
     primer2_stp_rx #(
-        .MAX_PAYLOAD_BYTES(128),
-        .MAX_PACKET_BYTES(MAX_STP_PACKET_BYTES)
+        /*
+         * Current Primer #2 deployment accepts only the fixed
+         * 24-byte TELEMETRY_DATA profile:
+         *
+         *   24 header + 24 ciphertext + 16 tag = 64 bytes.
+         *
+         * Reducing these generic bounds is a major Gowin resource fix.
+         */
+        .MAX_PAYLOAD_BYTES(24),
+        .MAX_PACKET_BYTES(64)
     ) u_stp_rx (
         .clk_i                    (clk_i),
         .rst_ni                   (rst_ni),
@@ -571,6 +597,9 @@ module primer2_btp_endpoint_deploy #(
             cache_frame_len_q <= '0;
             cache_age_q <= '0;
             cache_restore_index_q <= '0;
+            cache_rd_addr_q <= '0;
+            cache_rd_data_q <= 8'h00;
+
             loading_session_id_q <= '0;
             loading_direction_q <= '0;
             loading_total_len_q <= '0;
@@ -599,8 +628,21 @@ module primer2_btp_endpoint_deploy #(
                 cache_age_q <= '0;
             end
 
-            if (builder_tx_wr_en && response_cache_capture_q)
+            /*
+             * Synchronous BSRAM read.
+             *
+             * ST_CACHE_PREFETCH reads byte 0. During restore, the RAM read
+             * address stays one byte ahead of cache_restore_index_q.
+             */
+            if ((state_q == ST_CACHE_PREFETCH) ||
+                (state_q == ST_CACHE_RESTORE)) begin
+
+                cache_rd_data_q <= cache_mem[cache_rd_addr_q];
+            end
+
+            if (builder_tx_wr_en && response_cache_capture_q) begin
                 cache_mem[builder_tx_wr_addr] <= builder_tx_wr_data;
+            end
 
             case (state_q)
                 ST_IDLE: begin
@@ -620,9 +662,12 @@ module primer2_btp_endpoint_deploy #(
                                 (request_payload_len_i == cache_payload_len_q) &&
                                 (request_crc32_i == cache_request_crc32_q)) begin
                                 request_accept_o <= 1'b1;
+
                                 cache_restore_index_q <= '0;
+                                cache_rd_addr_q <= '0;
                                 cache_age_q <= '0;
-                                state_q <= ST_CACHE_RESTORE;
+
+                                state_q <= ST_CACHE_PREFETCH;
                             end else begin
                                 request_accept_o <= 1'b1;
                                 queue_response(ERR_BTP_TRANSACTION,16'h0001,
@@ -753,14 +798,34 @@ module primer2_btp_endpoint_deploy #(
                                 end
 
                                 OP_STP_RX_PACKET: begin
-                                    if ((request_payload_len_i >= 16'd40) &&
-                                        (request_payload_len_i <= MAX_STP_PACKET_BYTES)) begin
+
+                                    /*
+                                     * Current FPST deployment profile is fixed:
+                                     *
+                                     *   24-byte header
+                                     * + 24-byte ciphertext
+                                     * + 16-byte authentication tag
+                                     * = 64 bytes
+                                     *
+                                     * Reject non-profile packets before copying them into the crypto path.
+                                     */
+                                    if (request_payload_len_i == 16'd64) begin
+
                                         rx_copy_index_q <= '0;
                                         state_q <= ST_RX_COPY;
+
                                     end else begin
+
                                         request_accept_o <= 1'b1;
-                                        queue_response(ERR_STP_LENGTH,16'h0,RESP_GENERIC,
-                                            16'd0,1'b0,1'b1);
+
+                                        queue_response(
+                                            ERR_STP_LENGTH,
+                                            16'h0000,
+                                            RESP_GENERIC,
+                                            16'd0,
+                                            1'b0,
+                                            1'b1
+                                        );
                                     end
                                 end
 
@@ -1024,12 +1089,52 @@ module primer2_btp_endpoint_deploy #(
                     state_q <= ST_IDLE;
                 end
 
+                /*
+                 * One-cycle prefetch for synchronous BSRAM.
+                 *
+                 * At the end of this state, cache_rd_data_q contains byte 0.
+                 * The read address is advanced to byte 1 for the restore
+                 * pipeline.
+                 */
+                ST_CACHE_PREFETCH: begin
+
+                    if (cache_frame_len_q > CACHE_INDEX_ONE)
+                        cache_rd_addr_q <= CACHE_INDEX_ONE;
+                    else
+                        cache_rd_addr_q <= '0;
+
+                    state_q <= ST_CACHE_RESTORE;
+                end
+
+
+                /*
+                 * Restore one cached response byte per system-clock cycle.
+                 */
                 ST_CACHE_RESTORE: begin
-                    if (cache_restore_index_q + 1'b1 >= cache_frame_len_q) begin
+
+                    if ((cache_restore_index_q + CACHE_INDEX_ONE) >=
+                        cache_frame_len_q) begin
+
                         cache_restore_index_q <= '0;
+                        cache_rd_addr_q <= '0;
+
                         state_q <= ST_CACHE_RECOMMIT;
+
                     end else begin
-                        cache_restore_index_q <= cache_restore_index_q + 1'b1;
+
+                        cache_restore_index_q <=
+                            cache_restore_index_q + CACHE_INDEX_ONE;
+
+                        /*
+                         * Set up the byte after the currently prefetched byte.
+                         * The range check prevents reading cache_mem[1038].
+                         */
+                        if ((cache_restore_index_q + CACHE_INDEX_TWO) <
+                            cache_frame_len_q) begin
+
+                            cache_rd_addr_q <=
+                                cache_restore_index_q + CACHE_INDEX_TWO;
+                        end
                     end
                 end
 
@@ -1059,6 +1164,11 @@ module primer2_btp_endpoint_deploy #(
                 tx_frame_commit_o <= 1'b0;
                 cache_valid_q <= 1'b0;
                 cache_age_q <= '0;
+
+                cache_restore_index_q <= '0;
+                cache_rd_addr_q <= '0;
+                cache_rd_data_q <= 8'h00;
+
                 response_cache_capture_q <= 1'b0;
                 loading_session_id_q <= '0;
                 loading_direction_q <= '0;
