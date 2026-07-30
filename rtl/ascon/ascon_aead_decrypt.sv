@@ -1,5 +1,5 @@
 module ascon_aead_decrypt #(
-    parameter integer MAX_DATA_BYTES = 128
+    parameter integer MAX_DATA_BYTES = 24
 ) (
     input  logic         clk_i,
     input  logic         rst_ni,
@@ -70,7 +70,7 @@ module ascon_aead_decrypt #(
     logic [16:0]  total_input_q;
 
     logic [15:0] ad_count_q;
-    logic [15:0] data_count_q;
+    logic [4:0]  data_count_q;
     logic [16:0] input_count_q;
 
     logic [319:0] state_words_q;
@@ -78,8 +78,14 @@ module ascon_aead_decrypt #(
     logic [4:0]   block_count_q;
     logic [127:0] received_tag_q;
 
-    logic [7:0] quarantine_q [0:MAX_DATA_BYTES-1];
-    logic [7:0] release_index_q;
+    /*
+     * Primer #2 deployment has a fixed 24-byte plaintext. Keeping the
+     * quarantine as two fixed registers avoids Gowin inferring sixteen
+     * simultaneous variable-address memory write ports.
+     */
+    logic [127:0] quarantine_block_q;
+    logic [63:0]  quarantine_tail_q;
+    logic [4:0]   release_index_q;
 
     logic         permutation_start;
     logic [3:0]   permutation_rounds;
@@ -101,19 +107,19 @@ module ascon_aead_decrypt #(
     logic [127:0] decrypt_plain_block;
     logic [127:0] computed_tag;
 
-    integer i;
-
+    /*
+     * Primer #2 fixed profile always finishes both AD and ciphertext with
+     * an 8-byte partial block after one full 16-byte block.
+     */
     function automatic logic [127:0] padded_block (
         input logic [127:0] partial_block,
         input logic [4:0]   valid_bytes
     );
         logic [127:0] result;
-        integer bit_index;
         begin
             result = partial_block;
-            bit_index = valid_bytes * 8;
-            if (valid_bytes < 16)
-                result[bit_index] = 1'b1;
+            if (valid_bytes == 5'd8)
+                result[64] = 1'b1;
             padded_block = result;
         end
     endfunction
@@ -136,17 +142,12 @@ module ascon_aead_decrypt #(
         input logic [4:0]   valid_bytes
     );
         logic [319:0] result;
-        integer j;
-        integer pad_bit;
         begin
             result = current_state;
-            for (j = 0; j < 16; j = j + 1) begin
-                if (j < valid_bytes)
-                    result[8*j +: 8] = ciphertext_block[8*j +: 8];
+            if (valid_bytes == 5'd8) begin
+                result[63:0] = ciphertext_block[63:0];
+                result[64]   = result[64] ^ 1'b1;
             end
-            pad_bit = valid_bytes * 8;
-            if (valid_bytes < 16)
-                result[pad_bit] = result[pad_bit] ^ 1'b1;
             decrypt_partial_state = result;
         end
     endfunction
@@ -162,7 +163,37 @@ module ascon_aead_decrypt #(
 
     assign out_valid_o = (state_q == ST_RELEASE) && (data_len_q != 0);
     assign output_fire = out_valid_o && out_ready_i;
-    assign out_data_o = quarantine_q[release_index_q];
+
+    always_comb begin
+        case (release_index_q)
+            5'd0: out_data_o = quarantine_block_q[7:0];
+            5'd1: out_data_o = quarantine_block_q[15:8];
+            5'd2: out_data_o = quarantine_block_q[23:16];
+            5'd3: out_data_o = quarantine_block_q[31:24];
+            5'd4: out_data_o = quarantine_block_q[39:32];
+            5'd5: out_data_o = quarantine_block_q[47:40];
+            5'd6: out_data_o = quarantine_block_q[55:48];
+            5'd7: out_data_o = quarantine_block_q[63:56];
+            5'd8: out_data_o = quarantine_block_q[71:64];
+            5'd9: out_data_o = quarantine_block_q[79:72];
+            5'd10: out_data_o = quarantine_block_q[87:80];
+            5'd11: out_data_o = quarantine_block_q[95:88];
+            5'd12: out_data_o = quarantine_block_q[103:96];
+            5'd13: out_data_o = quarantine_block_q[111:104];
+            5'd14: out_data_o = quarantine_block_q[119:112];
+            5'd15: out_data_o = quarantine_block_q[127:120];
+            5'd16: out_data_o = quarantine_tail_q[7:0];
+            5'd17: out_data_o = quarantine_tail_q[15:8];
+            5'd18: out_data_o = quarantine_tail_q[23:16];
+            5'd19: out_data_o = quarantine_tail_q[31:24];
+            5'd20: out_data_o = quarantine_tail_q[39:32];
+            5'd21: out_data_o = quarantine_tail_q[47:40];
+            5'd22: out_data_o = quarantine_tail_q[55:48];
+            5'd23: out_data_o = quarantine_tail_q[63:56];
+            default: out_data_o = 8'h00;
+        endcase
+    end
+
     assign out_last_o = out_valid_o &&
                         (release_index_q + 1'b1 == data_len_q);
 
@@ -269,8 +300,8 @@ module ascon_aead_decrypt #(
             auth_ok_o        <= 1'b0;
             error_valid_o    <= 1'b0;
             error_code_o     <= 16'h0000;
-            for (i = 0; i < MAX_DATA_BYTES; i = i + 1)
-                quarantine_q[i] <= 8'h00;
+            quarantine_block_q <= '0;
+            quarantine_tail_q  <= '0;
         end else if (zeroize_i) begin
             state_q          <= ST_IDLE;
             key_q            <= '0;
@@ -291,8 +322,8 @@ module ascon_aead_decrypt #(
             auth_ok_o        <= 1'b0;
             error_valid_o    <= 1'b0;
             error_code_o     <= 16'h0000;
-            for (i = 0; i < MAX_DATA_BYTES; i = i + 1)
-                quarantine_q[i] <= 8'h00;
+            quarantine_block_q <= '0;
+            quarantine_tail_q  <= '0;
         end else begin
             done_o        <= 1'b0;
             auth_valid_o  <= 1'b0;
@@ -316,13 +347,15 @@ module ascon_aead_decrypt #(
                 release_index_q <= '0;
                 error_valid_o   <= 1'b1;
                 error_code_o    <= ERR_ASCON_LENGTH;
-                for (i = 0; i < MAX_DATA_BYTES; i = i + 1)
-                    quarantine_q[i] <= 8'h00;
+            quarantine_block_q <= '0;
+            quarantine_tail_q  <= '0;
             end else begin
                 case (state_q)
                     ST_IDLE: begin
                         if (start_i) begin
-                            if (data_len_i > MAX_DATA_BYTES) begin
+                            if ((MAX_DATA_BYTES != 24) ||
+                                (ad_len_i != 16'd24) ||
+                                (data_len_i != 16'd24)) begin
                                 error_valid_o <= 1'b1;
                                 error_code_o  <= ERR_ASCON_LENGTH;
                             end else begin
@@ -339,8 +372,8 @@ module ascon_aead_decrypt #(
                                 block_count_q   <= '0;
                                 received_tag_q  <= '0;
                                 release_index_q <= '0;
-                                for (i = 0; i < MAX_DATA_BYTES; i = i + 1)
-                                    quarantine_q[i] <= 8'h00;
+            quarantine_block_q <= '0;
+            quarantine_tail_q  <= '0;
                                 state_q <= ST_INIT_START;
                             end
                         end
@@ -439,8 +472,8 @@ module ascon_aead_decrypt #(
                     end
 
                     ST_DATA_FULL_START: begin
-                        for (i = 0; i < 16; i = i + 1)
-                            quarantine_q[data_count_q-16+i] <= decrypt_plain_block[8*i +: 8];
+                        /* First and only full 16-byte ciphertext block. */
+                        quarantine_block_q <= decrypt_plain_block;
                         state_q <= ST_DATA_FULL_WAIT;
                     end
 
@@ -458,11 +491,13 @@ module ascon_aead_decrypt #(
 
                     ST_DATA_FINAL_APPLY: begin
                         state_words_q <= decrypt_partial_state_value;
-                        for (i = 0; i < 16; i = i + 1) begin
-                            if (i < block_count_q)
-                                quarantine_q[data_count_q-block_count_q+i] <=
-                                    decrypt_plain_block[8*i +: 8];
-                        end
+
+                        /*
+                         * The fixed 24-byte profile contains exactly eight
+                         * bytes after the first full block.
+                         */
+                        quarantine_tail_q <= decrypt_plain_block[63:0];
+
                         block_q       <= '0;
                         block_count_q <= '0;
                         state_q       <= ST_WAIT_TAG;
@@ -505,8 +540,8 @@ module ascon_aead_decrypt #(
                                 nonce_q       <= '0;
                                 state_words_q <= '0;
                                 received_tag_q <= '0;
-                                for (i = 0; i < MAX_DATA_BYTES; i = i + 1)
-                                    quarantine_q[i] <= 8'h00;
+            quarantine_block_q <= '0;
+            quarantine_tail_q  <= '0;
                                 state_q <= ST_DONE;
                             end
                         end
@@ -532,8 +567,8 @@ module ascon_aead_decrypt #(
                         block_count_q   <= '0;
                         received_tag_q  <= '0;
                         release_index_q <= '0;
-                        for (i = 0; i < MAX_DATA_BYTES; i = i + 1)
-                            quarantine_q[i] <= 8'h00;
+            quarantine_block_q <= '0;
+            quarantine_tail_q  <= '0;
                         state_q <= ST_IDLE;
                     end
 
