@@ -43,17 +43,60 @@ module ascon_permutation (
         end
     endfunction
 
+    /*
+     * Logic-equivalent to rtl/ascon/ascon_round.sv.
+     * Keeping the round combinational logic local removes the u_round hierarchy
+     * that Gowin reports as NL0002 "swept in optimizing".
+     */
+    function automatic logic [319:0] round_comb (
+        input logic [319:0] s,
+        input logic [7:0]   rc
+    );
+        logic [63:0] x0, x1, x2, x3, x4;
+        logic [63:0] y0, y1, y2, y3, y4;
+        begin
+            x0 = s[63:0];
+            x1 = s[127:64];
+            x2 = s[191:128];
+            x3 = s[255:192];
+            x4 = s[319:256];
+
+            x2[7:0] = x2[7:0] ^ rc;
+
+            y0 = (x4 & x1) ^ x3 ^ (x2 & x1) ^ x2 ^
+                 (x1 & x0) ^ x1 ^ x0;
+            y1 = x4 ^ (x3 & x2) ^ (x3 & x1) ^ x3 ^
+                 (x2 & x1) ^ x2 ^ x1 ^ x0;
+            y2 = (x4 & x3) ^ x4 ^ x2 ^ x1 ^
+                 64'hffff_ffff_ffff_ffff;
+            y3 = (x4 & x0) ^ x4 ^ (x3 & x0) ^ x3 ^
+                 x2 ^ x1 ^ x0;
+            y4 = (x4 & x1) ^ x4 ^ x3 ^ (x1 & x0) ^ x1;
+
+            round_comb[63:0] =
+                y0 ^ ((y0 >> 19) | (y0 << 45)) ^
+                     ((y0 >> 28) | (y0 << 36));
+            round_comb[127:64] =
+                y1 ^ ((y1 >> 61) | (y1 << 3)) ^
+                     ((y1 >> 39) | (y1 << 25));
+            round_comb[191:128] =
+                y2 ^ ((y2 >> 1) | (y2 << 63)) ^
+                     ((y2 >> 6) | (y2 << 58));
+            round_comb[255:192] =
+                y3 ^ ((y3 >> 10) | (y3 << 54)) ^
+                     ((y3 >> 17) | (y3 << 47));
+            round_comb[319:256] =
+                y4 ^ ((y4 >> 7) | (y4 << 57)) ^
+                     ((y4 >> 41) | (y4 << 23));
+        end
+    endfunction
+
     always_comb begin
         round_constant = round_constant_at(5'd16 - {1'b0, rounds_q} +
                                            {1'b0, round_index_q});
     end
 
-    ascon_round u_round (
-        .state_i          (state_q),
-        .round_constant_i (round_constant),
-        .state_o          (round_state)
-    );
-
+    assign round_state = round_comb(state_q, round_constant);
     assign state_o = state_q;
 
     always_ff @(posedge clk_i) begin
