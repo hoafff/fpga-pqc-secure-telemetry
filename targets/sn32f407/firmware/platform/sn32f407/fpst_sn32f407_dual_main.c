@@ -470,13 +470,24 @@ static void handle_command(const char *line) {
     if (strcmp(line, "rx-counters") == 0) { handle_rx_counters(); return; }
     if (strcmp(line, "telemetry") == 0) { handle_telemetry(); return; }
 
-    if (strcmp(line, "fault") == 0) {
-        console("session_state=0x"); console_hex16((uint16_t)g_session.state);
-        console(" last_status=0x"); console_hex16(g_link.last_remote_status);
-        console(" last_detail=0x"); console_hex16(g_link.last_remote_detail);
-        console("\r\n");
-        return;
-    }
+		if (strcmp(line, "fault") == 0) {
+				console("session_state=0x");
+				console_hex16((uint16_t)g_session.state);
+
+				console(" last_status=0x");
+				console_hex16(g_link.last_remote_status);
+
+				console(" last_detail=0x");
+				console_hex16(g_link.last_remote_detail);
+
+				console(" raw_header=");
+				for (unsigned i = 0u; i < FPST_FRAME_HEADER_BYTES; ++i) {
+						console_hex8(g_link.response_buf[i]);
+				}
+
+				console("\r\n");
+				return;
+		}
 
     if (strcmp(line, "zeroize") == 0) {
         if (!require_link()) return;
