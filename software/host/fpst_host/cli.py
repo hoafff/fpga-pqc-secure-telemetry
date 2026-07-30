@@ -224,7 +224,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument(
             "--sync-timeout",
             type=float,
-            default=0.8,
+            default=3.0,
             help="time to wait for a fresh MCU boot prompt after opening",
         )
         p.add_argument("--log", type=Path, help="append secret-safe JSONL results")
