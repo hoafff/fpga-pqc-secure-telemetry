@@ -152,7 +152,14 @@ module primer1_endpoint_router #(
     primer1_btp_endpoint_deploy #(
         .CLOCK_HZ(CLOCK_HZ),
         .MAX_FRAME_BYTES(MAX_FRAME_BYTES),
-        .COUNT_W(COUNT_W)
+        .COUNT_W(COUNT_W),
+
+        /*
+         * PQC opcodes are handled by u_pqc_endpoint below.
+         * Do not synthesize the obsolete second forward-NTT engine inside
+         * the control endpoint.
+         */
+        .ENABLE_LEGACY_NTT(0)
     ) u_control_endpoint (
         .clk_i(clk_i),
         .rst_ni(rst_ni),
