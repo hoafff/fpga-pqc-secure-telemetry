@@ -27,17 +27,20 @@ module mod_mul_3329_pipe (
     logic [20:0] quotient_comb;
     logic [32:0] quotient_times_q_comb;
     logic [32:0] remainder_comb;
+    logic [32:0] corrected_remainder_comb;
     logic [15:0] reduced_comb;
 
     always_comb begin
-        quotient_comb         = scaled_s2 >> BARRETT_SHIFT;
+        quotient_comb          = scaled_s2 >> BARRETT_SHIFT;
         quotient_times_q_comb = quotient_comb * Q;
         remainder_comb        = {1'b0, product_s2} - quotient_times_q_comb;
 
         if (remainder_comb >= Q)
-            reduced_comb = remainder_comb - Q;
+            corrected_remainder_comb = remainder_comb - Q;
         else
-            reduced_comb = remainder_comb[15:0];
+            corrected_remainder_comb = remainder_comb;
+
+        reduced_comb = corrected_remainder_comb[15:0];
     end
 
     always_ff @(posedge clk_i) begin
