@@ -107,17 +107,20 @@ class Sn32CliClient:
         status = lines[-1] if lines else "EMPTY"
         if status == "OK":
             ok = True
-        elif status in {"ERR", "UNKNOWN"} or status.startswith("BLOCKED:"):
+        elif (
+            status in {"ERR", "UNKNOWN"}
+            or status.startswith(("ERR code=", "REMOTE_ERR", "BLOCKED:", "code=0x"))
+        ):
             ok = False
         elif any(
-            line.startswith(("ERR code=", "REMOTE_ERR", "BLOCKED:"))
+            line.startswith(("ERR code=", "REMOTE_ERR", "BLOCKED:", "code=0x"))
             for line in lines
         ):
             ok = False
             status = next(
                 line
                 for line in lines
-                if line.startswith(("ERR code=", "REMOTE_ERR", "BLOCKED:"))
+                if line.startswith(("ERR code=", "REMOTE_ERR", "BLOCKED:", "code=0x"))
             )
         elif name == "wiring" and "wiring" in fields:
             ok = True
