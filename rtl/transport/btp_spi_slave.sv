@@ -27,259 +27,458 @@ module btp_spi_slave #(
 
     output logic overflow_o
 );
+
     /*
-     * FPST BTP v1 uses two CS-bounded SPI transactions.  Bit shifting remains
-     * entirely in the SPI clock domain.  The 27 MHz domain observes only
-     * stable frame memory plus synchronized event/CS state.
+     * FPST BTP SPI slave
+     * ------------------
      *
-     * The response image is written and committed while SCK is stopped.  The
-     * master waits for IRQ before the response transaction, so tx_ready_q,
-     * tx_len_hold_q and tx_mem are stable well before the first sampling edge.
+     * Physical interface remains unchanged:
+     *   - SPI mode 0
+     *   - MSB first
+     *   - SCK / CS / MOSI / MISO pins unchanged
+     *
+     * spi_sck_i is NOT used as an FPGA clock.
+     *
+     * SCK, CS and MOSI are synchronized into the 27 MHz clk_i domain.
+     * Rising/falling SCK events are reconstructed with edge detectors.
+     *
+     * At the locked FPST SPI rate of 1 MHz there are about 27 clk_i cycles
+     * per SPI period, providing ample margin for synchronization.
      */
+
+    /* --------------------------------------------------------------------- */
+    /* Frame memories                                                        */
+    /* --------------------------------------------------------------------- */
+
     logic [7:0] rx_mem [0:MAX_FRAME_BYTES-1];
+
+    /*
+     * Keep the synchronous-read TX RAM inference added for Gowin.
+     * Without this, the 1038-byte TX image may be expanded into thousands
+     * of flip-flops.
+     */
+    (* ram_style = "block", syn_ramstyle = "block_ram" *)
     logic [7:0] tx_mem [0:MAX_FRAME_BYTES-1];
 
-    /* ------------------------ request / SCK domain ------------------------ */
+
+    /* --------------------------------------------------------------------- */
+    /* Asynchronous SPI input synchronizers                                  */
+    /* --------------------------------------------------------------------- */
+
+    logic sck_meta_q;
+    logic sck_sync_q;
+    logic sck_prev_q;
+
+    /*
+     * CS deliberately receives one additional synchronization stage versus
+     * SCK. This guarantees that the final falling SCK event is processed
+     * before the synchronized CS-rising/end-of-transaction event.
+     */
+    logic cs_meta_q;
+    logic cs_sync_q;
+    logic cs_delay_q;
+    logic cs_prev_q;
+
+    logic mosi_meta_q;
+    logic mosi_sync_q;
+
+    logic sck_rise_sys;
+    logic sck_fall_sys;
+    logic cs_fall_sys;
+    logic cs_rise_sys;
+
+    assign sck_rise_sys =  sck_sync_q && !sck_prev_q;
+    assign sck_fall_sys = !sck_sync_q &&  sck_prev_q;
+
+    assign cs_fall_sys = !cs_delay_q &&  cs_prev_q;
+    assign cs_rise_sys =  cs_delay_q && !cs_prev_q;
+
+
+    /* --------------------------------------------------------------------- */
+    /* RX/request state                                                      */
+    /* --------------------------------------------------------------------- */
+
     logic [7:0] rx_shift_q;
     logic [2:0] rx_bit_q;
     logic [COUNT_W-1:0] rx_count_q;
     logic rx_overflow_q;
-    logic rx_first_q;
-    logic rx_activity_toggle_q;
-
-    /* ------------------------ response / SCK domain ----------------------- */
-    logic [COUNT_W-1:0] tx_byte_q;
-    logic [2:0] tx_bit_q;
-    logic tx_done_sck_q;
-    logic tx_complete_toggle_q;
-
-    /* ------------------------- 27 MHz system domain ----------------------- */
-    logic cs_sync1_q, cs_sync2_q, cs_prev_q;
-    logic rx_activity_sync1_q, rx_activity_sync2_q, rx_activity_seen_q;
-    logic tx_complete_sync1_q, tx_complete_sync2_q, tx_complete_seen_q;
-    logic tx_complete_pending_q;
+    logic rx_capture_active_q;
 
     logic [COUNT_W-1:0] rx_len_hold_q;
     logic rx_overflow_hold_q;
     logic rx_pending_q;
 
+
+    /* --------------------------------------------------------------------- */
+    /* TX/response state                                                     */
+    /* --------------------------------------------------------------------- */
+
     logic [COUNT_W-1:0] tx_len_hold_q;
+
+    logic [COUNT_W-1:0] tx_byte_q;
+    logic [2:0] tx_bit_q;
+
+    logic [7:0] tx_rd_data_q;
+
     logic tx_ready_q;
+    logic tx_done_q;
+    logic tx_transaction_active_q;
 
-    logic cs_rise_sys;
-    logic tx_complete_event_sys;
 
-    assign cs_rise_sys = cs_sync2_q && !cs_prev_q;
-    assign tx_complete_event_sys = (tx_complete_sync2_q != tx_complete_seen_q);
+    /* --------------------------------------------------------------------- */
+    /* External status/read paths                                            */
+    /* --------------------------------------------------------------------- */
 
     assign rx_rd_data_o = rx_mem[rx_rd_addr_i];
+
     assign rx_frame_valid_o = rx_pending_q;
-    assign rx_frame_len_o = rx_len_hold_q;
-    assign overflow_o = rx_overflow_hold_q;
+    assign rx_frame_len_o   = rx_len_hold_q;
+    assign overflow_o       = rx_overflow_hold_q;
+
     assign tx_frame_ready_o = tx_ready_q;
 
+
+    /* --------------------------------------------------------------------- */
+    /* MISO                                                                  */
+    /* --------------------------------------------------------------------- */
+
     /*
-     * Mode 0 requires MISO bit 7 to be valid before the first rising SCK edge.
-     * tx_byte_q/tx_bit_q are reset to byte 0/bit 7 by CS rising, while the
-     * committed response memory remains immutable until a complete read.
+     * SPI mode 0:
+     *   - master samples MISO on rising SCK
+     *   - slave changes/advances MISO after falling SCK
      *
-     * The physical FPST harness is a multi-slave SPI0 bus: Primer #1, Primer #2
-     * and the disabled onboard flash share MISO.  An endpoint therefore MUST
-     * release MISO whenever its CS is high.  The top-level Z below is intended
-     * to infer the FPGA output-enable/tri-state buffer; driving a logic 0 while
-     * deselected would cause bus contention when the other Primer returns a 1.
+     * The raw CS input is intentionally used only for the output-enable.
+     * This releases the shared MISO bus immediately when this Primer is
+     * deselected.
+     *
+     * No sequential logic is clocked by raw CS or raw SCK.
      */
     always_comb begin
-        if (!spi_cs_ni && tx_ready_q && !tx_done_sck_q &&
-            (tx_byte_q < tx_len_hold_q))
-            spi_miso_o = tx_mem[tx_byte_q][tx_bit_q];
-        else
+        if (!spi_cs_ni &&
+            tx_ready_q &&
+            !tx_done_q &&
+            (tx_byte_q < tx_len_hold_q)) begin
+
+            spi_miso_o = tx_rd_data_q[tx_bit_q];
+
+        end else begin
             spi_miso_o = 1'bz;
+        end
     end
 
-    /*
-     * CS is asynchronous to clk_i.  Synchronizing the idle-high level lets the
-     * system domain detect the end of a request after rx_mem/count/flags have
-     * become stable.  rx_count_q is deliberately not cleared by CS; it remains
-     * stable during CS high and is reset on the first SCK of the next request.
-     */
+
+    /* --------------------------------------------------------------------- */
+    /* Entire transport now runs in the 27 MHz system-clock domain           */
+    /* --------------------------------------------------------------------- */
+
     always_ff @(posedge clk_i) begin
+
         if (!rst_ni) begin
-            cs_sync1_q <= 1'b1;
-            cs_sync2_q <= 1'b1;
-            cs_prev_q <= 1'b1;
-            rx_activity_sync1_q <= 1'b0;
-            rx_activity_sync2_q <= 1'b0;
-            rx_activity_seen_q <= 1'b0;
-            tx_complete_sync1_q <= 1'b0;
-            tx_complete_sync2_q <= 1'b0;
-            tx_complete_seen_q <= 1'b0;
-            tx_complete_pending_q <= 1'b0;
 
-            rx_len_hold_q <= '0;
-            rx_overflow_hold_q <= 1'b0;
-            rx_pending_q <= 1'b0;
+            /* Input synchronizers: SPI bus idles CS=1, SCK=0. */
+            sck_meta_q <= 1'b0;
+            sck_sync_q <= 1'b0;
+            sck_prev_q <= 1'b0;
 
-            tx_len_hold_q <= '0;
-            tx_ready_q <= 1'b0;
+            cs_meta_q  <= 1'b1;
+            cs_sync_q  <= 1'b1;
+            cs_delay_q <= 1'b1;
+            cs_prev_q  <= 1'b1;
+
+            mosi_meta_q <= 1'b0;
+            mosi_sync_q <= 1'b0;
+
+
+            /* RX state. */
+            rx_shift_q          <= 8'h00;
+            rx_bit_q            <= 3'd0;
+            rx_count_q          <= '0;
+            rx_overflow_q       <= 1'b0;
+            rx_capture_active_q <= 1'b0;
+
+            rx_len_hold_q       <= '0;
+            rx_overflow_hold_q  <= 1'b0;
+            rx_pending_q        <= 1'b0;
+
+
+            /* TX state. */
+            tx_len_hold_q           <= '0;
+            tx_byte_q               <= '0;
+            tx_bit_q                <= 3'd7;
+            tx_rd_data_q            <= 8'h00;
+            tx_ready_q              <= 1'b0;
+            tx_done_q               <= 1'b0;
+            tx_transaction_active_q <= 1'b0;
+
             tx_frame_consumed_o <= 1'b0;
+
         end else begin
-            cs_sync1_q <= spi_cs_ni;
-            cs_sync2_q <= cs_sync1_q;
-            cs_prev_q <= cs_sync2_q;
 
-            rx_activity_sync1_q <= rx_activity_toggle_q;
-            rx_activity_sync2_q <= rx_activity_sync1_q;
-            tx_complete_sync1_q <= tx_complete_toggle_q;
-            tx_complete_sync2_q <= tx_complete_sync1_q;
+            /* ------------------------------------------------------------- */
+            /* Synchronize asynchronous external SPI signals                 */
+            /* ------------------------------------------------------------- */
 
+            sck_meta_q <= spi_sck_i;
+            sck_sync_q <= sck_meta_q;
+            sck_prev_q <= sck_sync_q;
+
+            cs_meta_q  <= spi_cs_ni;
+            cs_sync_q  <= cs_meta_q;
+            cs_delay_q <= cs_sync_q;
+            cs_prev_q  <= cs_delay_q;
+
+            mosi_meta_q <= spi_mosi_i;
+            mosi_sync_q <= mosi_meta_q;
+
+
+            /* Default one-clock pulse. */
             tx_frame_consumed_o <= 1'b0;
 
-            /* Response RAM may be changed only while no response is visible. */
-            if (tx_wr_en_i && !tx_ready_q && (tx_wr_addr_i < MAX_FRAME_BYTES))
+
+            /* ------------------------------------------------------------- */
+            /* TX RAM                                                        */
+            /* ------------------------------------------------------------- */
+
+            /*
+             * Synchronous read keeps TX storage compatible with Gowin BSRAM
+             * inference.
+             *
+             * tx_byte_q changes shortly after falling SCK. At SPI=1 MHz and
+             * clk_i=27 MHz, many system clocks occur before the following
+             * rising SCK samples MISO.
+             */
+            tx_rd_data_q <= tx_mem[tx_byte_q];
+
+            /*
+             * Response memory can be modified only while no committed
+             * response is exposed to the SPI master.
+             */
+            if (tx_wr_en_i &&
+                !tx_ready_q &&
+                (tx_wr_addr_i < MAX_FRAME_BYTES)) begin
+
                 tx_mem[tx_wr_addr_i] <= tx_wr_data_i;
+            end
 
-            if (tx_frame_commit_i && !tx_ready_q &&
-                (tx_frame_len_i != 0) && (tx_frame_len_i <= MAX_FRAME_BYTES)) begin
+
+            /* Commit complete response image. */
+            if (tx_frame_commit_i &&
+                !tx_ready_q &&
+                (tx_frame_len_i != 0) &&
+                (tx_frame_len_i <= MAX_FRAME_BYTES)) begin
+
                 tx_len_hold_q <= tx_frame_len_i;
-                tx_ready_q <= 1'b1;
+                tx_ready_q    <= 1'b1;
+
+                /*
+                 * Keep byte zero prefetched while waiting for the master to
+                 * assert CS after IRQ.
+                 */
+                tx_byte_q <= '0;
+                tx_bit_q  <= 3'd7;
+                tx_done_q <= 1'b0;
             end
 
-            /*
-             * A completed request has had many system clocks for the activity
-             * toggle to synchronize before CS rises.  Sampling rx_count/flags
-             * here is therefore a bundled-data CDC: the multi-bit values are
-             * static for the whole CS-high processing interval.
-             */
-            if (cs_rise_sys && !tx_ready_q && !rx_pending_q &&
-                (rx_activity_sync2_q != rx_activity_seen_q)) begin
-                rx_activity_seen_q <= rx_activity_sync2_q;
-                rx_len_hold_q <= rx_count_q;
-                rx_overflow_hold_q <= rx_overflow_q || (rx_bit_q != 0);
-                rx_pending_q <= 1'b1;
+
+            /* ------------------------------------------------------------- */
+            /* CS falling: start one SPI transaction                         */
+            /* ------------------------------------------------------------- */
+
+            if (cs_fall_sys) begin
+
+                /*
+                 * If a response is ready, this is a response transaction.
+                 * Otherwise it is a request transaction.
+                 */
+                if (tx_ready_q) begin
+
+                    tx_transaction_active_q <= 1'b1;
+
+                    tx_byte_q <= '0;
+                    tx_bit_q  <= 3'd7;
+                    tx_done_q <= 1'b0;
+
+                    rx_capture_active_q <= 1'b0;
+
+                end else begin
+
+                    rx_capture_active_q <= 1'b1;
+
+                    rx_shift_q    <= 8'h00;
+                    rx_bit_q      <= 3'd0;
+                    rx_count_q    <= '0;
+                    rx_overflow_q <= 1'b0;
+
+                    tx_transaction_active_q <= 1'b0;
+                end
             end
 
-            if (rx_frame_accept_i)
+
+            /* ------------------------------------------------------------- */
+            /* Rising SCK: sample MOSI                                       */
+            /* ------------------------------------------------------------- */
+
+            if (sck_rise_sys && rx_capture_active_q) begin
+
+                rx_shift_q <= {rx_shift_q[6:0], mosi_sync_q};
+
+                if (rx_bit_q == 3'd7) begin
+
+                    if (rx_count_q < MAX_FRAME_BYTES) begin
+
+                        rx_mem[rx_count_q] <= {
+                            rx_shift_q[6:0],
+                            mosi_sync_q
+                        };
+
+                        rx_count_q <= rx_count_q + 1'b1;
+
+                    end else begin
+
+                        rx_overflow_q <= 1'b1;
+                    end
+
+                    rx_bit_q <= 3'd0;
+
+                end else begin
+
+                    rx_bit_q <= rx_bit_q + 1'b1;
+                end
+            end
+
+
+            /* ------------------------------------------------------------- */
+            /* Falling SCK: advance MISO                                     */
+            /* ------------------------------------------------------------- */
+
+            if (sck_fall_sys &&
+                tx_transaction_active_q &&
+                tx_ready_q &&
+                !tx_done_q) begin
+
+                if (tx_bit_q == 3'd0) begin
+
+                    /*
+                     * Current byte's bit 0 has just been sampled on the
+                     * preceding rising edge.
+                     */
+                    if ((tx_byte_q + 1'b1) >= tx_len_hold_q) begin
+
+                        /* Final response byte is complete. */
+                        tx_done_q <= 1'b1;
+
+                    end else begin
+
+                        tx_byte_q <= tx_byte_q + 1'b1;
+                        tx_bit_q  <= 3'd7;
+                    end
+
+                end else begin
+
+                    tx_bit_q <= tx_bit_q - 1'b1;
+                end
+            end
+
+
+            /* ------------------------------------------------------------- */
+            /* CS rising: finish transaction                                 */
+            /* ------------------------------------------------------------- */
+
+            if (cs_rise_sys) begin
+
+                /*
+                 * Request transaction:
+                 *
+                 * rx_count_q already contains the number of complete bytes.
+                 * A non-zero rx_bit_q means CS rose in the middle of a byte.
+                 */
+                if (rx_capture_active_q) begin
+
+                    rx_capture_active_q <= 1'b0;
+
+                    if (!rx_pending_q) begin
+
+                        rx_len_hold_q      <= rx_count_q;
+                        rx_overflow_hold_q <=
+                            rx_overflow_q || (rx_bit_q != 3'd0);
+
+                        rx_pending_q <= 1'b1;
+                    end
+                end
+
+
+                /*
+                 * Response transaction:
+                 *
+                 * Consume only if every committed response bit was actually
+                 * clocked by the master.
+                 *
+                 * If CS rises early, tx_ready_q stays asserted so the master
+                 * may retry the complete response from byte zero.
+                 */
+                if (tx_transaction_active_q) begin
+
+                    tx_transaction_active_q <= 1'b0;
+
+                    if (tx_ready_q && tx_done_q) begin
+
+                        tx_ready_q         <= 1'b0;
+                        tx_len_hold_q      <= '0;
+                        tx_frame_consumed_o <= 1'b1;
+                    end
+
+                    /*
+                     * Return addressing state to the beginning while CS is
+                     * high. This also keeps byte 0 prefetched for a retry.
+                     */
+                    tx_byte_q <= '0;
+                    tx_bit_q  <= 3'd7;
+                    tx_done_q <= 1'b0;
+                end
+            end
+
+
+            /* Request consumer acknowledgment. */
+            if (rx_frame_accept_i) begin
                 rx_pending_q <= 1'b0;
-
-            /* Synchronize the exact-last-bit event independently from CS. */
-            if (tx_complete_event_sys) begin
-                tx_complete_seen_q <= tx_complete_sync2_q;
-                tx_complete_pending_q <= 1'b1;
             end
+
+
+            /* ------------------------------------------------------------- */
+            /* Security zeroize                                              */
+            /* ------------------------------------------------------------- */
 
             /*
-             * Consume only after both conditions are true: every response bit
-             * was clocked and CS is observed high.  If CS rises before the
-             * toggle reaches clk_i, the complete-event branch below still sees
-             * synchronized CS high on the following cycle.
+             * RAM arrays are deliberately not bulk-reset because that would
+             * prevent efficient FPGA RAM inference.
+             *
+             * All architected valid/length/readability state is invalidated,
+             * so stale RAM contents cannot be exposed after zeroize.
              */
-            if (tx_ready_q && cs_sync2_q &&
-                (tx_complete_pending_q || tx_complete_event_sys)) begin
-                tx_ready_q <= 1'b0;
-                tx_len_hold_q <= '0;
-                tx_complete_pending_q <= 1'b0;
-                tx_frame_consumed_o <= 1'b1;
-            end
-
-            /* Invalidate all architected transport state; RAM contents become unreadable. */
             if (zeroize_i) begin
-                rx_len_hold_q <= '0;
-                rx_overflow_hold_q <= 1'b0;
-                rx_pending_q <= 1'b0;
-                rx_activity_seen_q <= rx_activity_sync2_q;
 
-                tx_len_hold_q <= '0;
-                tx_ready_q <= 1'b0;
-                tx_complete_pending_q <= 1'b0;
-                tx_complete_seen_q <= tx_complete_sync2_q;
+                rx_shift_q          <= 8'h00;
+                rx_bit_q            <= 3'd0;
+                rx_count_q          <= '0;
+                rx_overflow_q       <= 1'b0;
+                rx_capture_active_q <= 1'b0;
+
+                rx_len_hold_q      <= '0;
+                rx_overflow_hold_q <= 1'b0;
+                rx_pending_q       <= 1'b0;
+
+
+                tx_len_hold_q           <= '0;
+                tx_byte_q               <= '0;
+                tx_bit_q                <= 3'd7;
+                tx_rd_data_q            <= 8'h00;
+                tx_ready_q              <= 1'b0;
+                tx_done_q               <= 1'b0;
+                tx_transaction_active_q <= 1'b0;
+
                 tx_frame_consumed_o <= 1'b0;
             end
         end
     end
 
-    /*
-     * rx_first_q is the only state using CS as an asynchronous SET.  The SET
-     * value is constant and synthesizable; the first following SCK clears it.
-     * This lets rx_count remain untouched and stable throughout CS high.
-     */
-    always_ff @(posedge spi_sck_i or posedge spi_cs_ni or negedge rst_ni) begin
-        if (!rst_ni)
-            rx_first_q <= 1'b1;
-        else if (spi_cs_ni)
-            rx_first_q <= 1'b1;
-        else
-            rx_first_q <= 1'b0;
-    end
-
-    /* Request bytes are captured on rising SCK (SPI mode 0). */
-    always_ff @(posedge spi_sck_i or negedge rst_ni) begin
-        if (!rst_ni) begin
-            rx_shift_q <= 8'h00;
-            rx_bit_q <= 3'd0;
-            rx_count_q <= '0;
-            rx_overflow_q <= 1'b0;
-            rx_activity_toggle_q <= 1'b0;
-        end else if (!spi_cs_ni && !tx_ready_q) begin
-            if (rx_first_q) begin
-                rx_shift_q <= {7'h00, spi_mosi_i};
-                rx_bit_q <= 3'd1;
-                rx_count_q <= '0;
-                rx_overflow_q <= 1'b0;
-                rx_activity_toggle_q <= ~rx_activity_toggle_q;
-            end else begin
-                rx_shift_q <= {rx_shift_q[6:0], spi_mosi_i};
-                if (rx_bit_q == 3'd7) begin
-                    if (rx_count_q < MAX_FRAME_BYTES) begin
-                        rx_mem[rx_count_q] <= {rx_shift_q[6:0], spi_mosi_i};
-                        rx_count_q <= rx_count_q + 1'b1;
-                    end else begin
-                        rx_overflow_q <= 1'b1;
-                    end
-                    rx_bit_q <= 3'd0;
-                end else begin
-                    rx_bit_q <= rx_bit_q + 1'b1;
-                end
-            end
-        end
-    end
-
-    /*
-     * Response indices advance on falling SCK so each MISO bit is stable around
-     * the next rising sampling edge.  CS rising performs only constant async
-     * resets of these counters, which maps cleanly to FPGA flip-flops.
-     */
-    always_ff @(negedge spi_sck_i or posedge spi_cs_ni or negedge rst_ni) begin
-        if (!rst_ni) begin
-            tx_byte_q <= '0;
-            tx_bit_q <= 3'd7;
-            tx_done_sck_q <= 1'b0;
-        end else if (spi_cs_ni) begin
-            tx_byte_q <= '0;
-            tx_bit_q <= 3'd7;
-            tx_done_sck_q <= 1'b0;
-        end else if (tx_ready_q && !tx_done_sck_q) begin
-            if (tx_bit_q == 3'd0) begin
-                if ((tx_byte_q + 1'b1) >= tx_len_hold_q) begin
-                    tx_done_sck_q <= 1'b1;
-                end else begin
-                    tx_byte_q <= tx_byte_q + 1'b1;
-                    tx_bit_q <= 3'd7;
-                end
-            end else begin
-                tx_bit_q <= tx_bit_q - 1'b1;
-            end
-        end
-    end
-
-    /* Toggle exactly once when the final response bit has just been shifted. */
-    always_ff @(negedge spi_sck_i or negedge rst_ni) begin
-        if (!rst_ni) begin
-            tx_complete_toggle_q <= 1'b0;
-        end else if (!spi_cs_ni && tx_ready_q && !tx_done_sck_q &&
-                     (tx_bit_q == 3'd0) &&
-                     ((tx_byte_q + 1'b1) >= tx_len_hold_q)) begin
-            tx_complete_toggle_q <= ~tx_complete_toggle_q;
-        end
-    end
 endmodule
