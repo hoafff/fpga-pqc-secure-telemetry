@@ -2,7 +2,20 @@ module primer1_btp_endpoint_deploy #(
     parameter integer CLOCK_HZ = 27_000_000,
     parameter logic [7:0] KEY_DIRECTION_ID = 8'h01,
     parameter integer MAX_FRAME_BYTES = 1038,
-    parameter integer COUNT_W = $clog2(MAX_FRAME_BYTES + 1)
+    parameter integer COUNT_W = $clog2(MAX_FRAME_BYTES + 1),
+
+    /*
+     * Legacy standalone forward-NTT path.
+     *
+     * In the final Primer #1 deployment all PQC opcodes 0x20..0x28 are
+     * routed by primer1_endpoint_router to primer1_pqc_btp_endpoint.
+     * Therefore the control endpoint does not need a second NTT engine.
+     *
+     * Keep default = 1 so direct/unit tests of this module retain the
+     * historical behaviour. The deployment router explicitly sets this
+     * parameter to 0.
+     */
+    parameter integer ENABLE_LEGACY_NTT = 1
 ) (
     input  logic clk_i,
     input  logic rst_ni,
@@ -300,7 +313,7 @@ module primer1_btp_endpoint_deploy #(
                 10'd10: response_fill_byte = 8'h00;
                 10'd11: response_fill_byte = stp_retained_len;
                 default: begin
-                    stp_packet_rd_addr = response_fill_index_q - 10'd12;
+                    stp_packet_rd_addr = response_fill_index_q[5:0] - 6'd12;
                     response_fill_byte = stp_packet_rd_data;
                 end
             endcase
@@ -426,23 +439,47 @@ module primer1_btp_endpoint_deploy #(
         .sequence_commit_o     (session_sequence_commit)
     );
 
-    forward_ntt_core u_forward_ntt (
-        .clk_i           (clk_i),
-        .rst_ni          (rst_ni),
-        .start_i         (ntt_start),
-        .busy_o          (ntt_busy_o),
-        .done_o          (ntt_done),
-        .host_re_i       (ntt_host_re),
-        .host_we_i       (ntt_host_we),
-        .host_addr_i     (ntt_host_addr),
-        .host_wdata_i    (ntt_host_wdata),
-        .host_ready_o    (ntt_host_ready),
-        .host_rvalid_o   (ntt_host_rvalid),
-        .host_rdata_o    (ntt_host_rdata),
-        .stage_o         (ntt_stage),
-        .stage_barrier_o (ntt_stage_barrier),
-        .active_bank_o   (ntt_active_bank)
-    );
+    /*
+     * The old control endpoint contained its own forward_ntt_core.
+     * The final deployment already has the complete PQC accelerator behind
+     * primer1_pqc_btp_endpoint, so instantiating this second engine wastes
+     * FPGA logic.
+     *
+     * Generate-time removal means the legacy engine consumes zero resources
+     * in the deployment build while remaining available to standalone tests.
+     */
+    generate
+        if (ENABLE_LEGACY_NTT != 0) begin : g_legacy_ntt
+            forward_ntt_core u_forward_ntt (
+                .clk_i           (clk_i),
+                .rst_ni          (rst_ni),
+                .start_i         (ntt_start),
+                .busy_o          (ntt_busy_o),
+                .done_o          (ntt_done),
+                .host_re_i       (ntt_host_re),
+                .host_we_i       (ntt_host_we),
+                .host_addr_i     (ntt_host_addr),
+                .host_wdata_i    (ntt_host_wdata),
+                .host_ready_o    (ntt_host_ready),
+                .host_rvalid_o   (ntt_host_rvalid),
+                .host_rdata_o    (ntt_host_rdata),
+                .stage_o         (ntt_stage),
+                .stage_barrier_o (ntt_stage_barrier),
+                .active_bank_o   (ntt_active_bank)
+            );
+        end else begin : g_no_legacy_ntt
+            assign ntt_busy_o        = 1'b0;
+            assign ntt_done          = 1'b0;
+
+            assign ntt_host_ready    = 1'b1;
+            assign ntt_host_rvalid   = 1'b0;
+            assign ntt_host_rdata    = 16'h0000;
+
+            assign ntt_stage         = 3'd0;
+            assign ntt_stage_barrier = 1'b0;
+            assign ntt_active_bank   = 1'b0;
+        end
+    endgenerate
 
     task automatic queue_generic(
         input logic [15:0] status,
