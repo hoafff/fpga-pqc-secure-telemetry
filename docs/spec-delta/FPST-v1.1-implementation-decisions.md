@@ -45,7 +45,7 @@ This file records project-owned implementation choices and evidence for the FPST
 | IMP-027 | IMPLEMENTED | Primer heartbeat is a project liveness contract required by the current Tiny recovery architecture and continues through secure-disable/zeroize/fatal state; integrated Tiny+P1+P2 regression verifies no recovery deadlock. Nominal period provenance is recorded separately in IMP-021. | Primer tops + supervisor integration test | liveness/recovery architecture changes |
 | IMP-028 | IMPLEMENTED | P2 local authentication-threshold fault drives P2 `fault_o` on J2-12/T13; Tiny project profile consumes it on J1-11/pin15. Tiny pin capability is VERIFIED as General I/O, but the assembled jumper is PHYSICAL-PENDING under IMP-023. The project uses `0x0608 ERR_AUTH_THRESHOLD`, adopted from the FPST baseline; P2 `fault_o` does not mirror Tiny `FAULT_LATCH` back into Tiny. | P2 top, Tiny top/CST, wiring/profile | P2 fault topology or error-profile decision changes |
 | IMP-029 | IMPLEMENTED | Harness verification is two-stage: flag=0 electrical-only/no BTP traffic; after measured electrical evidence rebuild flag=1 then begin 1 MHz SPI capture. Primer full deployment remains intentionally zeroized while Tiny is absent unless an isolated lab fixture legitimately supplies the control levels. | wiring guide + SN32/Keil docs | bring-up procedure changes |
-| IMP-030 | IMPLEMENTED | A1/A2 mailbox, CRC-16 and 3 MHz initial transport material is removed from active deployment paths and isolated under explicit `pre-btp-direct` legacy/archive namespaces; current production/self-test paths do not depend on it | docs + SN32 firmware legacy | historical source needed |
+| IMP-030 | IMPLEMENTED | A1/A2 mailbox, CRC-16 and 3 MHz initial transport material is removed from the working tree; current production/self-test paths do not depend on it and Git history preserves audit provenance | docs + Git history | historical source needed |
 | IMP-031 | PROFILE | **FIX-005 is resolved for the MVP by Policy B.** Tiny is the hardware safety authority for the two Primer dataplane endpoints; SN32 remains the trusted controller and is responsible for software invalidation/zeroization of its transient cryptographic/session state. A dedicated Tiny→SN32 hardware reset/zeroize wire is not required for the MVP and `SYSTEM_RESET_N` remains unconnected to SN32. Such a path is optional future hardening and must not be assigned to a spare GPIO without schematic/connector/polarity/electrical evidence. | wiring guide, `board_profile.h`, SN32 port, this register | threat model requires asynchronous containment of a wedged/compromised MCU |
 
 ## FIX-005 — MVP Policy B resolution
@@ -73,7 +73,10 @@ Therefore FIX-005 is **not an MVP release blocker**. The MVP does **not** claim 
 
 ## Current transport binding
 
-The old project-local A1/A2 memory-mailbox + CRC-16 profile and earlier 3 MHz bring-up value are obsolete for deployment and must not be reintroduced. Historical material is clearly archived and is never a deployment source of truth.
+The old project-local A1/A2 memory-mailbox + CRC-16 profile and earlier 3 MHz
+bring-up value are obsolete for deployment and must not be reintroduced. Their
+source and detailed obsolete documents have been removed from the working tree;
+Git history is never a deployment source of truth.
 
 Current deployed contract:
 
@@ -96,7 +99,7 @@ Use this order whenever sources disagree:
 3. **Current RTL/firmware/CST/SDC and behavior already established by executable tests.**
 4. **Explicit project integration decisions in this register and maintained deployment profiles.**
 5. **`FPST-SYS-SPEC-001 v1.1` as a reference/baseline, not an absolute authority.**
-6. Historical/archive material — never a deployment source of truth.
+6. Git history — never a deployment source of truth.
 
 If code/CST/profile disagree with higher-authority evidence, stop and resolve the discrepancy; do not change wiring or source merely to match a stale/lower-authority document.
 

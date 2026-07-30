@@ -14,7 +14,7 @@
 3. RTL/firmware/CST/SDC hiện hành và behavior đã có executable test;
 4. quyết định integration của project;
 5. `FPST-SYS-SPEC-001 v1.1` chỉ là baseline tham khảo;
-6. archive/legacy chỉ dùng lịch sử.
+6. Git history chỉ dùng để truy vết lịch sử.
 
 ---
 

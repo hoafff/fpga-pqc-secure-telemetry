@@ -1,3 +1,6 @@
+`ifndef FPST_PRIMER1_PQC_BTP_ENDPOINT_V2_SV
+`define FPST_PRIMER1_PQC_BTP_ENDPOINT_V2_SV
+
 module primer1_pqc_btp_endpoint #(
     parameter integer CLOCK_HZ = 27_000_000,
     parameter integer MAX_FRAME_BYTES = 1038,
@@ -246,7 +249,7 @@ module primer1_pqc_btp_endpoint #(
         .start_pointwise_i(accelerator_start_pointwise),
         .start_addsub_i(accelerator_start_addsub),
         .addsub_sub_i(binary_sub_q),
-        .operand_base_i(current_opcode_q == OP_PQC_POLY_ADD_SUB ? 10'd1 : 10'd0),
+        .operand_base_i(accelerator_start_addsub ? 10'd1 : 10'd0),
         .operand_byte_addr_o(accelerator_operand_addr),
         .operand_byte_data_i(request_payload_rd_data_i),
         .host_re_i(accelerator_host_re),
@@ -895,3 +898,5 @@ module primer1_pqc_btp_endpoint #(
     logic unused_stage_barrier;
     always_comb unused_stage_barrier = accelerator_stage_barrier;
 endmodule
+
+`endif

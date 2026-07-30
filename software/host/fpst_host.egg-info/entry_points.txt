@@ -1,2 +1,0 @@
-[console_scripts]
-fpst-host = fpst_host.cli:main

@@ -4,7 +4,8 @@ module tb_primer1_deployment_pqc;
     import fpst_btp_pkg::*;
 
     localparam time SYS_HALF = 18.518ns;
-    localparam time SPI_HALF = 100ns; // 5 MHz simulation-only transport rate
+    /* Production bring-up profile: SPI mode 0 at 1 MHz. */
+    localparam time SPI_HALF = 500ns;
     localparam integer MAX_BYTES = 600;
 
     logic sys_clk;

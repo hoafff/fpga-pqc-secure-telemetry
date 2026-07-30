@@ -1,3 +1,6 @@
+`ifndef FPST_PRIMER1_ENDPOINT_ROUTER_V2_SV
+`define FPST_PRIMER1_ENDPOINT_ROUTER_V2_SV
+
 module primer1_endpoint_router #(
     parameter integer CLOCK_HZ = 27_000_000,
     parameter integer MAX_FRAME_BYTES = 1038,
@@ -319,3 +322,5 @@ module primer1_endpoint_router #(
     logic unused_control_outputs;
     always_comb unused_control_outputs = ^{control_irq,control_ntt_busy_unused};
 endmodule
+
+`endif

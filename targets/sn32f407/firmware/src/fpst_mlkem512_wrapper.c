@@ -57,6 +57,15 @@ void fpst_mlkem512_unbind_primer1(void) {
     g_backend_error = FPST_OK;
 }
 
+void fpst_mlkem512_backend_progress(void) {
+    if (g_primer1_link != NULL &&
+        g_primer1_link->platform != NULL &&
+        g_primer1_link->platform->watchdog_feed != NULL) {
+        g_primer1_link->platform->watchdog_feed(
+            g_primer1_link->platform->ctx);
+    }
+}
+
 bool fpst_mlkem512_is_available(void) {
 #if FPST_MLKEM_NATIVE_ENABLED
     return true;
@@ -94,6 +103,7 @@ void fpst_mlkem512_backend_ntt(int16_t data[FPST_PQC_COEFFICIENTS]) {
         return;
     }
 
+    fpst_mlkem512_backend_progress();
     for (uint16_t i = 0u; i < FPST_PQC_COEFFICIENTS; ++i) {
         const int32_t signed_value = (int32_t)data[i];
         const uint32_t sign = ((uint32_t)signed_value) >> 31;
@@ -139,6 +149,7 @@ void fpst_mlkem512_backend_ntt(int16_t data[FPST_PQC_COEFFICIENTS]) {
     for (uint16_t i = 0u; i < FPST_PQC_COEFFICIENTS; ++i)
         data[i] = (int16_t)canonical[i];
 
+    fpst_mlkem512_backend_progress();
     fpst_secure_zero(canonical, sizeof(canonical));
     return;
 
@@ -152,10 +163,12 @@ static fpst_result_t begin_kem(void) {
     if (g_primer1_link == NULL || g_primer1_link->platform == NULL)
         return FPST_ERR_STATE;
     g_backend_error = FPST_OK;
+    fpst_mlkem512_backend_progress();
     return FPST_OK;
 }
 
 static fpst_result_t finish_kem(int upstream_rc) {
+    fpst_mlkem512_backend_progress();
     if (g_backend_error != FPST_OK) return g_backend_error;
     return upstream_rc == 0 ? FPST_OK : FPST_ERR_STATE;
 }

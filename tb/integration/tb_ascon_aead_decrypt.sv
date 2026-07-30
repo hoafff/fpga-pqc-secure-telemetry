@@ -256,8 +256,8 @@ module tb_ascon_aead_decrypt;
         /* Declared payload limit is enforced before any stream consumption. */
         pulse_start(16'd0,16'd129);
         #1;
-        if (!error_valid || error_code != 16'h0501) begin
-            $display("FAIL: data_len=129 did not raise ERR_ASCON_LENGTH");
+        if (!done || !error_valid || error_code != 16'h0501) begin
+            $display("FAIL: data_len=129 did not terminate with ERR_ASCON_LENGTH");
             $fatal(1);
         end
 

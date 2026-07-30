@@ -13,7 +13,7 @@ Khi tài liệu hoặc source bất đồng, dùng thứ tự sau:
 3. **RTL, firmware, CST, SDC hiện hành và behavior đã được executable test xác nhận**;
 4. **quyết định integration của project** trong decision register/deployment profiles;
 5. **`FPST-SYS-SPEC-001 v1.1` chỉ là reference baseline**;
-6. archive/legacy chỉ dùng để truy vết lịch sử, không dùng để build/deploy.
+6. Git history chỉ dùng để truy vết lịch sử, không dùng để build/deploy.
 
 Nếu source/constraint/profile mâu thuẫn với nguồn có thẩm quyền cao hơn: **STOP**, không tự đổi pin hoặc dây để khớp một file cũ.
 
@@ -114,7 +114,10 @@ Current supervisor package includes:
 - blocked clear while cause remains active;
 - integrated Tiny + P1 + P2 security-plane regression.
 
-The current nominal `100 ms` heartbeat, `350 ms` watchdog and `0x0608 ERR_AUTH_THRESHOLD` are **project profile/error values adopted from the FPST reference baseline**, not manufacturer electrical requirements.
+The current nominal `100 ms` heartbeat, `250 ms` foreground-progress lease,
+`350 ms` watchdog and `0x0608 ERR_AUTH_THRESHOLD` are **project profile/error
+values adopted from the FPST reference baseline**, not manufacturer electrical
+requirements.
 
 Next gate: exact Gowin build for `GW1N-UV1P5QN48XC7/I6` and generated `.fs`.
 
@@ -129,7 +132,8 @@ Final dual-Primer firmware includes:
 - SHAKE256/KDF and atomic pair-session provisioning;
 - conditioned ADC entropy/CSPRNG path;
 - telemetry bridge/commit reconciliation;
-- UART diagnostics and independent MCU heartbeat;
+- UART diagnostics and a SysTick heartbeat gated by recent main-application
+  progress;
 - software zeroize/session/CSPRNG-state hygiene required by Policy B.
 
 Current EVK routes include UART0 J10 `P3.1/P3.2` and shared SPI0 `P1.0/P1.1/P1.2`.
@@ -166,10 +170,11 @@ Python 3.10/3.12 CI covers the host package.
 The old A1/A2 memory-mailbox + CRC-16 + old 3 MHz bring-up profile is **not part of deployment**.
 
 - current-path tombstone: `docs/interfaces/FPST-MCU-FPGA-LINK-001-v1.1.md`;
-- archived documentation: `docs/archive/pre-btp-direct/`;
-- archived firmware helpers: `targets/sn32f407/firmware/legacy/pre-btp-direct/`.
+- obsolete documents and firmware helpers have been removed from the working
+  tree; their history remains recoverable from Git.
 
-Do not add archive/legacy sources back to a production target merely to match historical material.
+Do not restore obsolete A1/A2, CRC-16 or 3 MHz sources merely to match
+historical material.
 
 ## 5. What remains before programming/hardware qualification
 
@@ -212,7 +217,7 @@ Rules:
 3. testbench/reference code is not deployment RTL;
 4. interface changes update both endpoints and the decision register together;
 5. third-party crypto revisions remain explicitly pinned;
-6. archived material never overrides a maintained deployment profile.
+6. Git history never overrides a maintained deployment profile.
 
 ## 7. Maintained deployment entry points
 

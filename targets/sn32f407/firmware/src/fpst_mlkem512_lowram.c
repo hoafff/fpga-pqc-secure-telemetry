@@ -84,6 +84,7 @@ static void sample_eta1_scalar(mlk_poly *out,
 
     fpst_secure_zero(ext, sizeof(ext));
     fpst_secure_zero(prf, sizeof(prf));
+    fpst_mlkem512_backend_progress();
 }
 
 static void generate_transposed_matrix_row(
@@ -101,6 +102,7 @@ static void generate_transposed_matrix_row(
         seed_ext[MLKEM_SYMBYTES + 0u] = row_index;
         seed_ext[MLKEM_SYMBYTES + 1u] = column;
         mlk_poly_rej_uniform(&row[column], seed_ext);
+        fpst_mlkem512_backend_progress();
     }
     fpst_secure_zero(seed_ext, sizeof(seed_ext));
 }
@@ -122,6 +124,7 @@ static void indcpa_encrypt_lowram(
     /* L11: NTT(r). This calls the qualified Primer #1 forward-NTT hook. */
     mlk_polyvec_ntt(w->sp);
     mlk_polyvec_mulcache_compute(w->sp_cache, w->sp);
+    fpst_mlkem512_backend_progress();
 
     /*
      * L12/L15/L18/L21/L22, one output row at a time. Upstream holds the full
@@ -133,6 +136,7 @@ static void indcpa_encrypt_lowram(
         mlk_polyvec_basemul_acc_montgomery_cached(
             &w->work, w->row, w->sp, w->sp_cache);
         mlk_poly_invntt_tomont(&w->work);
+        fpst_mlkem512_backend_progress();
 
         mlk_poly_getnoise_eta2(&w->row[0], noise_seed,
                                (uint8_t)(2u + row_index));
@@ -141,6 +145,7 @@ static void indcpa_encrypt_lowram(
         mlk_poly_compress_du(
             ciphertext + (size_t)row_index * MLKEM_POLYCOMPRESSEDBYTES_DU,
             &w->work);
+        fpst_mlkem512_backend_progress();
     }
 
     /*
@@ -151,6 +156,7 @@ static void indcpa_encrypt_lowram(
     mlk_polyvec_basemul_acc_montgomery_cached(
         &w->work, w->row, w->sp, w->sp_cache);
     mlk_poly_invntt_tomont(&w->work);
+    fpst_mlkem512_backend_progress();
 
     /* eta2 nonce 4 is e2 for ML-KEM-512. */
     mlk_poly_getnoise_eta2(&w->row[0], noise_seed, 4u);
@@ -162,6 +168,7 @@ static void indcpa_encrypt_lowram(
         ciphertext + MLKEM_POLYVECCOMPRESSEDBYTES_DU,
         &w->work);
 
+    fpst_mlkem512_backend_progress();
     fpst_secure_zero(public_seed, sizeof(public_seed));
 }
 
@@ -181,6 +188,7 @@ int fpst_mlkem512_lowram_enc_derand(
 
     g_workspace_busy = true;
     memset(&g_workspace, 0, sizeof(g_workspace));
+    fpst_mlkem512_backend_progress();
 
     /* Upstream crypto_kem_enc_derand performs the modulus check first. */
     if (public_key_modulus_check(public_key) != 0)
@@ -190,6 +198,7 @@ int fpst_mlkem512_lowram_enc_derand(
     mlk_hash_h(buf + MLKEM_SYMBYTES,
                public_key, MLKEM_INDCCA_PUBLICKEYBYTES);
     mlk_hash_g(kr, buf, sizeof(buf));
+    fpst_mlkem512_backend_progress();
 
     indcpa_encrypt_lowram(ciphertext, buf, public_key, kr + MLKEM_SYMBYTES);
     memcpy(shared_secret, kr, MLKEM_SYMBYTES);
@@ -204,6 +213,7 @@ cleanup:
     fpst_secure_zero(kr, sizeof(kr));
     fpst_secure_zero(&g_workspace, sizeof(g_workspace));
     g_workspace_busy = false;
+    fpst_mlkem512_backend_progress();
     return rc;
 }
 

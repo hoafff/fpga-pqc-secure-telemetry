@@ -56,6 +56,20 @@ static void test_routed_shared_link(void) {
     assert(result.remote_status == FPST_REMOTE_ERR_REPLAY);
     assert(result.sequence_valid && result.sequence == 2u);
 
+    /* A full outage must remain recoverable through the retained-packet API. */
+    p2.drop_rx_requests = true;
+    sample[2] ^= 0x5Au;
+    assert(fpst_pair_bridge_send_sample(&bridge, sample, &result) ==
+           FPST_ERR_TIMEOUT);
+    assert(bridge.retained_valid && bridge.retained_sequence == 2u);
+    assert(shared_link.platform == &p1_platform);
+
+    p2.drop_rx_requests = false;
+    assert(fpst_pair_bridge_retry_retained(&bridge, &result) == FPST_OK);
+    assert(!bridge.retained_valid && !p1.retained);
+    assert(shared_link.platform == &p1_platform);
+    assert(session.next_sequence == 3u && p1.sequence == 3u && p2.sequence == 3u);
+
     assert(fpst_session_zeroize_pair_routed(&session,
                                              &p1_platform, &p2_platform) == FPST_OK);
     assert(shared_link.platform == &p1_platform);

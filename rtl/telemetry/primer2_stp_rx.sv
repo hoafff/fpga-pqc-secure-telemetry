@@ -1,6 +1,6 @@
 module primer2_stp_rx #(
-    parameter integer MAX_PAYLOAD_BYTES = 128,
-    parameter integer MAX_PACKET_BYTES = 168
+    parameter integer MAX_PAYLOAD_BYTES = 24,
+    parameter integer MAX_PACKET_BYTES = 64
 ) (
     input  logic         clk_i,
     input  logic         rst_ni,
@@ -51,8 +51,10 @@ module primer2_stp_rx #(
      *
      *   complete packet  : 64 bytes
      *
-     * The public parameters are retained for source compatibility, but the
-     * deployed telemetry profile is deliberately fixed to 24-byte telemetry.
+     * The public parameters are retained for source compatibility, but their
+     * defaults and the deployed profile are deliberately fixed to 24/64. A
+     * non-profile instantiation is rejected by the crypto core and terminated
+     * below instead of leaving this FSM waiting forever.
      */
     localparam integer STP_HEADER_BYTES    = 24;
     localparam integer STP_TAG_BYTES       = 16;
@@ -410,6 +412,39 @@ module primer2_stp_rx #(
             end
 
 
+            /*
+             * A configuration/protocol error can make the decrypt core reject
+             * start/input without entering its normal completion path. Abort
+             * immediately on every non-authentication crypto error so a bad
+             * parameter override can never strand this receiver in FEED/TAG.
+             *
+             * Authentication-tag failure is handled in ST_CORE_WAIT because it
+             * also updates the consecutive-failure counter and fatal threshold.
+             */
+            if (core_error_valid &&
+                (core_error_code != ERR_AUTH_TAG) &&
+                ((state_q == ST_CORE_START) ||
+                 (state_q == ST_CORE_FEED) ||
+                 (state_q == ST_CORE_TAG) ||
+                 (state_q == ST_CORE_WAIT))) begin
+
+                done_o <= 1'b1;
+                error_valid_o <= 1'b1;
+                error_code_o <= core_error_code;
+                release_valid_o <= 1'b0;
+                release_len_o <= '0;
+                auth_success_seen_q <= 1'b0;
+                pending_crypto_error_q <= 1'b0;
+                pending_crypto_error_code_q <= ERR_OK;
+
+                for (i = 0;
+                     i < MAX_PAYLOAD_BYTES;
+                     i = i + 1)
+                    release_q[i] <= 8'h00;
+
+                state_q <= ST_IDLE;
+
+            end else begin
             case (state_q)
 
                 ST_IDLE: begin
@@ -787,6 +822,7 @@ module primer2_stp_rx #(
                 end
 
             endcase
+            end
 
 
             /*

@@ -19,6 +19,13 @@
 fpst_result_t fpst_mlkem512_bind_primer1(fpst_fpga_link_t *link);
 void fpst_mlkem512_unbind_primer1(void);
 
+/*
+ * Internal cooperative-liveness seam used by the serialized low-RAM/native
+ * arithmetic path. It refreshes the bound platform progress lease when one is
+ * configured and is a no-op otherwise.
+ */
+void fpst_mlkem512_backend_progress(void);
+
 /* True only when the pinned mlkem-native source was enabled at build time. */
 bool fpst_mlkem512_is_available(void);
 

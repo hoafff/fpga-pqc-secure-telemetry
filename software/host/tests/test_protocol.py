@@ -80,11 +80,35 @@ class ProtocolTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertTrue(result.status.startswith("BLOCKED:"))
 
-    def test_wiring_field(self):
+    def test_unverified_wiring_is_failure(self):
         client = Sn32CliClient(FakeTransport({"wiring": "wiring=UNVERIFIED\r\n"}))
         result = client.wiring()
-        self.assertTrue(result.ok)
+        self.assertFalse(result.ok)
         self.assertEqual(result.fields["wiring"], "UNVERIFIED")
+        self.assertEqual(result.status, "UNVERIFIED")
+
+    def test_verified_two_primer_wiring_is_success(self):
+        client = Sn32CliClient(
+            FakeTransport({"wiring": "wiring=verified-two-primer\r\n"})
+        )
+        result = client.wiring()
+        self.assertTrue(result.ok)
+        self.assertEqual(result.status, "verified-two-primer")
+
+    def test_retained_telemetry_timeout_is_failure(self):
+        client = Sn32CliClient(
+            FakeTransport(
+                {
+                    "telemetry": (
+                        "telemetry=RETRY_PENDING seq=0x0000000000000002\r\n"
+                        "ERR code=0x00000005\r\n"
+                    )
+                }
+            )
+        )
+        result = client.command("telemetry")
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "ERR code=0x00000005")
 
     def test_final_status2_field_without_terminal_ok(self):
         client = Sn32CliClient(FakeTransport({"status2": "state2=0x00000002\r\n"}))

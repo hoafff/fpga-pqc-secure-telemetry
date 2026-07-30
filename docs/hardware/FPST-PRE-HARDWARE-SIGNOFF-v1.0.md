@@ -26,7 +26,7 @@ The nominal **100 ms heartbeat**, **350 ms Tiny heartbeat timeout**, and project
 | FIX-003 two-stage harness gate | Gate A flag=0 electrical-only; Gate B flag=1 measured SPI | **CONFIRMED** procedure; physical execution pending FIX-010/012 |
 | FIX-004 standalone fail-safe | active-low `ZEROIZE_N` pull-down intent retained | **PROVISIONAL / PHYSICAL-PENDING** until actual powered/unpowered levels and sequencing are measured |
 | FIX-005 Tiny→SN32 reset/zeroize | **MVP Policy B adopted**: Tiny hardware-containment scope is P1/P2; SN32 is trusted controller with software state hygiene; no mandatory Tiny→SN32 wire | **CONFIRMED project decision; not an MVP release blocker**. Async containment of a wedged/compromised MCU is not claimed |
-| FIX-006 legacy A1/A2/CRC16 | removed from active production paths; archived under `pre-btp-direct` | **CONFIRMED**; current production/self-test paths do not depend on legacy transport |
+| FIX-006 legacy A1/A2/CRC16 | removed from the working tree; audit provenance remains in Git history | **CONFIRMED**; current production/self-test paths do not depend on legacy transport |
 | FIX-007 Tiny zeroize polarity | internal active-high wipe vs physical active-low `ZEROIZE_N` separated | **CONFIRMED** |
 | FIX-008 PC host vs final dual-MCU CLI | final command registry + interactive `kem-session` | **CONFIRMED** by source comparison + Python CI; real UART session remains physical integration evidence |
 | FIX-009 exact vendor builds | procedure frozen below | **OPEN — vendor evidence required** |

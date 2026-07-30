@@ -36,12 +36,8 @@ Use these current sources instead:
 4. `docs/hardware/FPST-WIRING-GUIDE-v1.1.md`
 5. current target board profiles/CST/SDC and executable RTL/firmware.
 
-Historical protocol notes are archived at:
-
-`docs/archive/pre-btp-direct/FPST-MCU-FPGA-LINK-001-v1.1.md`
-
-Legacy C helpers are isolated under:
-
-`targets/sn32f407/firmware/legacy/pre-btp-direct/`
+The detailed obsolete protocol document and legacy C helpers have been removed
+from the working tree. They remain recoverable through Git history if an audit
+requires them.
 
 **Do not restore A1/A2, CRC-16 or 3 MHz bring-up to production code to make it match historical material.**
