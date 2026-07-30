@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: fpst-host
+Version: 0.1.0
+Summary: FPST v1.1 PC host for the SN32F407F control node
+Requires-Python: >=3.10
+Requires-Dist: pyserial>=3.5
