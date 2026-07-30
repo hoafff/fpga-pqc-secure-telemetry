@@ -38,6 +38,14 @@ run_test tb_primer2_stp_rx \
     "${ROOT_DIR}/rtl/telemetry/primer2_stp_rx.sv" \
     "${ROOT_DIR}/tb/integration/tb_primer2_stp_rx.sv"
 
+# A deliberately invalid legacy 128/168 instantiation must terminate with a
+# length error instead of entering the historical FEED-state deadlock.
+run_test tb_primer2_stp_rx_bad_config \
+    "${ROOT_DIR}/rtl/transport/fpst_btp_pkg.sv" \
+    "${ASCON_SOURCES[@]}" \
+    "${ROOT_DIR}/rtl/telemetry/primer2_stp_rx.sv" \
+    "${ROOT_DIR}/tb/integration/tb_primer2_stp_rx_bad_config.sv"
+
 # Exercise the actual Primer #2 BTP deployment endpoint contract seen by SN32:
 # RX key provisioning, session activation, STP commit response, fresh-transaction
 # replay reconciliation and counters. A real Primer #1 STP packet is used as the
@@ -55,10 +63,15 @@ run_test tb_primer2_btp_endpoint \
 # Compile the complete board target as a hierarchy/syntax gate. This catches
 # missing source-manifest entries and integration port drift even before a
 # device-specific Gowin build is available.
-mapfile -t DEPLOY_SOURCES < <(
-    sed -e 's/[[:space:]]*#.*$//' -e '/^[[:space:]]*$/d' \
-        "${ROOT_DIR}/targets/primer20k_2/sources-fpst-deployment.f"
-)
+MANIFEST_LIST="${BUILD_DIR}/sources-fpst-deployment.list"
+sed -e 's/[[:space:]]*#.*$//' -e '/^[[:space:]]*$/d' \
+    "${ROOT_DIR}/targets/primer20k_2/sources-fpst-deployment.f" \
+    > "${MANIFEST_LIST}"
+mapfile -t DEPLOY_SOURCES < "${MANIFEST_LIST}"
+if ((${#DEPLOY_SOURCES[@]} == 0)); then
+    echo "ERROR: Primer #2 deployment manifest resolved to no sources" >&2
+    exit 1
+fi
 
 echo "==> Compiling kiwi_primer20k_fpst_rx_top"
 iverilog -g2012 -Wall -s kiwi_primer20k_fpst_rx_top \

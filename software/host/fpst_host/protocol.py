@@ -123,8 +123,8 @@ class Sn32CliClient:
                 if line.startswith(("ERR code=", "REMOTE_ERR", "BLOCKED:", "code=0x"))
             )
         elif name == "wiring" and "wiring" in fields:
-            ok = True
             status = fields["wiring"]
+            ok = status == "verified-two-primer"
         elif name == "help" and lines:
             ok = True
             status = "OK"

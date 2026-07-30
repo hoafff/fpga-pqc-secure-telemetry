@@ -9,13 +9,18 @@ cd "${ROOT_DIR}"
 
 # Preserve manifest order (packages before importers) while removing duplicates shared
 # by the two Primer deployment manifests. The Tiny sources are appended afterward.
-mapfile -t SOURCES < <(
-  cat targets/primer20k_1/sources-fpst-deployment.f \
-      targets/primer20k_2/sources-fpst-deployment.f \
-      targets/tiny1p5/sources.f \
-    | sed -e 's/[[:space:]]*#.*$//' -e '/^[[:space:]]*$/d' \
-    | awk '!seen[$0]++'
-)
+MANIFEST_LIST="${BUILD_DIR}/supervisor-system-sources.list"
+cat targets/primer20k_1/sources-fpst-deployment.f \
+    targets/primer20k_2/sources-fpst-deployment.f \
+    targets/tiny1p5/sources.f \
+  | sed -e 's/[[:space:]]*#.*$//' -e '/^[[:space:]]*$/d' \
+  | awk '!seen[$0]++' \
+  > "${MANIFEST_LIST}"
+mapfile -t SOURCES < "${MANIFEST_LIST}"
+if ((${#SOURCES[@]} == 0)); then
+  echo "ERROR: integrated deployment manifests resolved to no sources" >&2
+  exit 1
+fi
 
 printf '==> Compile integrated Tiny + Primer #1 + Primer #2 security plane\n'
 iverilog -g2012 -Wall \

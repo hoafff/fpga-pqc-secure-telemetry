@@ -54,7 +54,7 @@ When a target document disagrees with another source, use this order:
 3. current RTL/firmware/CST/SDC plus executable-test behavior;
 4. project integration decisions/deployment profiles;
 5. `FPST-SYS-SPEC-001 v1.1` as reference baseline;
-6. archive/legacy material.
+6. Git history.
 
 Do not invent a pin/protocol/electrical behavior to satisfy a lower-authority or historical document.
 

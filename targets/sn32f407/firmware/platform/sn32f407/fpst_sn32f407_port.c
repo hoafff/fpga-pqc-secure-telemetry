@@ -1,6 +1,7 @@
 #include "fpst_sn32f407_port.h"
 #include "board_profile.h"
 #include "fpst_entropy_rng.h"
+#include "fpst_heartbeat_gate.h"
 #include "fpst_profile.h"
 
 #include <SN32F400.h>
@@ -53,9 +54,9 @@ enum {
 
 static volatile uint32_t g_millis;
 static volatile uint32_t g_millis_high;
-static volatile uint16_t g_heartbeat_countdown;
 static volatile bool g_heartbeat_level;
 static volatile bool g_heartbeat_ready;
+static volatile fpst_heartbeat_gate_t g_heartbeat_gate;
 static bool g_spi_selected;
 static bool g_adc_ready;
 static fpst_entropy_rng_t g_entropy_rng;
@@ -77,20 +78,11 @@ void SysTick_Handler(void) {
     if (next == 0u) ++g_millis_high;
     g_millis = next;
 
-    /*
-     * MCU heartbeat is interrupt-driven, not main-loop driven, so waiting for a
-     * long FPGA command cannot falsely advertise a hung application as healthy.
-     */
-    if (g_heartbeat_ready) {
-        if (g_heartbeat_countdown > 1u) {
-            --g_heartbeat_countdown;
-        } else {
-            g_heartbeat_countdown = FPST_SN32F407_MCU_HEARTBEAT_PERIOD_MS;
-            g_heartbeat_level = !g_heartbeat_level;
-            gpio_write(FPST_SN32F407_MCU_HEARTBEAT_PORT,
-                       FPST_SN32F407_MCU_HEARTBEAT_PIN,
-                       g_heartbeat_level);
-        }
+    if (g_heartbeat_ready && fpst_heartbeat_gate_tick(&g_heartbeat_gate)) {
+        g_heartbeat_level = !g_heartbeat_level;
+        gpio_write(FPST_SN32F407_MCU_HEARTBEAT_PORT,
+                   FPST_SN32F407_MCU_HEARTBEAT_PIN,
+                   g_heartbeat_level);
     }
 }
 
@@ -202,10 +194,15 @@ static void init_link_gpio(void) {
                     GPIO_CFG_PULL_UP);
 }
 
-static void init_heartbeat_gpio(void) {
+static fpst_result_t init_heartbeat_gpio(void) {
     g_heartbeat_ready = false;
     g_heartbeat_level = false;
-    g_heartbeat_countdown = FPST_SN32F407_MCU_HEARTBEAT_PERIOD_MS;
+    fpst_result_t rc = fpst_heartbeat_gate_init(
+        &g_heartbeat_gate,
+        FPST_SN32F407_MCU_HEARTBEAT_PERIOD_MS,
+        FPST_SN32F407_MCU_HEARTBEAT_PROGRESS_TIMEOUT_MS);
+    if (rc != FPST_OK) return rc;
+
     gpio_write(FPST_SN32F407_MCU_HEARTBEAT_PORT,
                FPST_SN32F407_MCU_HEARTBEAT_PIN, false);
     gpio_set_mode(FPST_SN32F407_MCU_HEARTBEAT_PORT,
@@ -214,6 +211,7 @@ static void init_heartbeat_gpio(void) {
                     FPST_SN32F407_MCU_HEARTBEAT_PIN,
                     GPIO_CFG_INACTIVE_SCHMITT_EN);
     g_heartbeat_ready = true;
+    return FPST_OK;
 }
 
 static void init_uart0(void) {
@@ -316,7 +314,10 @@ fpst_result_t fpst_sn32f407_adc_read(uint16_t *sample_12bit) {
 
 static fpst_result_t entropy_adc_sample(void *ctx, uint16_t *sample) {
     (void)ctx;
-    return fpst_sn32f407_adc_read(sample);
+    port_watchdog_feed(NULL);
+    const fpst_result_t rc = fpst_sn32f407_adc_read(sample);
+    port_watchdog_feed(NULL);
+    return rc;
 }
 
 static fpst_result_t spi_xfer_byte(uint8_t tx, uint8_t *rx,
@@ -423,7 +424,7 @@ static void port_spi_end(void *ctx) {
 
 static void port_watchdog_feed(void *ctx) {
     (void)ctx;
-    /* Final watchdog ownership is part of system/supervisor integration. */
+    fpst_heartbeat_gate_feed(&g_heartbeat_gate);
 }
 
 void fpst_sn32f407_uart0_write(const uint8_t *data, size_t len) {
@@ -509,7 +510,8 @@ fpst_result_t fpst_sn32f407_platform_init(fpst_platform_t *out) {
 
     init_pinmux();
     init_link_gpio();
-    init_heartbeat_gpio();
+    fpst_result_t rc = init_heartbeat_gpio();
+    if (rc != FPST_OK) return rc;
     init_uart0();
     init_spi0();
 
@@ -520,6 +522,7 @@ fpst_result_t fpst_sn32f407_platform_init(fpst_platform_t *out) {
      * live ML-KEM operations stay fail-closed.
      */
     (void)init_adc0();
+    port_watchdog_feed(NULL);
 
     memset(out, 0, sizeof(*out));
     out->ctx = NULL;
@@ -533,4 +536,4 @@ fpst_result_t fpst_sn32f407_platform_init(fpst_platform_t *out) {
     out->fpga_zeroize = NULL; /* Tiny/supervisor-owned in the final topology. */
     out->watchdog_feed = port_watchdog_feed;
     return FPST_OK;
-	}
+}

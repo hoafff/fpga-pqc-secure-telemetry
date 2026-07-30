@@ -347,8 +347,9 @@ module ascon_aead_decrypt #(
                 release_index_q <= '0;
                 error_valid_o   <= 1'b1;
                 error_code_o    <= ERR_ASCON_LENGTH;
-            quarantine_block_q <= '0;
-            quarantine_tail_q  <= '0;
+                done_o          <= 1'b1;
+                quarantine_block_q <= '0;
+                quarantine_tail_q  <= '0;
             end else begin
                 case (state_q)
                     ST_IDLE: begin
@@ -358,6 +359,7 @@ module ascon_aead_decrypt #(
                                 (data_len_i != 16'd24)) begin
                                 error_valid_o <= 1'b1;
                                 error_code_o  <= ERR_ASCON_LENGTH;
+                                done_o        <= 1'b1;
                             end else begin
                                 key_q           <= key_i;
                                 nonce_q         <= nonce_i;

@@ -113,13 +113,17 @@
 #define FPST_SN32F407_ENTROPY_ADC_CHANNEL       0u
 
 /*
- * MCU heartbeat is generated from SysTick, independently of the main loop.
- * 100 ms is the current project-profile period adopted from the FPST reference
- * baseline; it is not a manufacturer timing requirement.
+ * SysTick supplies millisecond timing, but a recent cooperative progress feed
+ * is required before it may toggle the MCU heartbeat. This prevents an
+ * interrupt-only heartbeat from reporting a stalled main application as alive.
+ * 100 ms is the adopted producer period. A 250 ms progress lease is below the
+ * Tiny 350 ms no-transition watchdog and must be refreshed by live foreground
+ * work or a bounded wait path.
  */
 #define FPST_SN32F407_MCU_HEARTBEAT_PORT        2u
 #define FPST_SN32F407_MCU_HEARTBEAT_PIN         9u
 #define FPST_SN32F407_MCU_HEARTBEAT_PERIOD_MS 100u
+#define FPST_SN32F407_MCU_HEARTBEAT_PROGRESS_TIMEOUT_MS 250u
 
 /* EVK J10 DB_UART: UTX_P31 / URX_P32. */
 #define FPST_SN32F407_UART_TX_PORT              3u

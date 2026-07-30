@@ -121,7 +121,9 @@ max payload       : 1024 bytes
 retry             : same txid + byte-identical request
 ```
 
-The obsolete A1/A2 memory-mailbox + CRC-16 transport is not used by deployment. Historical material remains under explicit archive/legacy namespaces.
+The obsolete A1/A2 memory-mailbox + CRC-16 transport is not used by deployment.
+Its source and detailed obsolete documents have been removed from the working
+tree and remain recoverable through Git history only.
 
 Maintained protocol/profile details live in current RTL/firmware/CST/SDC plus the project decision register and deployment profiles. They remain subordinate to higher-authority physical/schematic/official-board evidence.
 
@@ -142,7 +144,8 @@ The final dual image contains:
 - P1 forward-NTT hook;
 - conditioned ADC entropy/CSPRNG path;
 - canonical telemetry records;
-- independent SysTick MCU heartbeat;
+- SysTick MCU heartbeat gated by recent main-application progress, so a live
+  interrupt cannot mask a stalled foreground loop;
 - UART diagnostics/session commands.
 
 Shared secret and derived traffic-key material are wiped rather than printed/returned to host.
@@ -199,7 +202,10 @@ Do not weaken fail-safe bias merely to simplify ping tests.
 
 ## 12. Project timing provenance
 
-Current MCU heartbeat = **100 ms** and Tiny watchdog = **350 ms**. These are project-profile values adopted from `FPST-SYS-SPEC-001 v1.1` as a reference baseline; they are not SONiX/board timing requirements.
+Current MCU heartbeat = **100 ms**, its foreground-progress lease is **250 ms**,
+and the Tiny watchdog is **350 ms**. These are project-profile values adopted
+from `FPST-SYS-SPEC-001 v1.1` as a reference baseline; they are not SONiX/board
+timing requirements.
 
 ## 13. Hardware qualification still required
 

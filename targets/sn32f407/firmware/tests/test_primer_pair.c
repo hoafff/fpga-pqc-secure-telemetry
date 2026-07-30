@@ -44,6 +44,7 @@ typedef struct {
     unsigned accepted_count;
     unsigned replay_count;
     bool lose_next_commit_response;
+    bool drop_rx_requests;
 } pair_mock_t;
 
 static uint32_t mock_millis(void *ctx) {
@@ -363,6 +364,10 @@ static void process_primer2(pair_mock_t *m, const fpst_frame_view_t *req) {
 static void process_request(pair_mock_t *m) {
     fpst_frame_view_t req;
     assert(fpst_frame_decode(m->request, m->request_len, &req) == FPST_OK);
+    if (m->role == MOCK_PRIMER2_RX && m->drop_rx_requests) {
+        /* Simulate a reachable P2 transport that never acknowledges the frame. */
+        return;
+    }
     if (m->role == MOCK_PRIMER1_TX)
         process_primer1(m, &req);
     else
@@ -502,6 +507,28 @@ static void test_pair_session_and_bridge(void) {
     assert(p2.replay_count == 1u);
     assert(rx_result.remote_status == FPST_REMOTE_ERR_REPLAY);
     assert(rx_result.sequence_valid && rx_result.sequence == 2u);
+
+    /*
+     * Third packet: exhaust the transport retry budget before P2 processes the
+     * request. The bridge must retain exactly one P1 packet, reject generation
+     * of a replacement, and later resume that same packet without reset/zeroize.
+     */
+    p2.drop_rx_requests = true;
+    sample[1] ^= 0x3Cu;
+    assert(fpst_pair_bridge_send_sample(&bridge, sample, &rx_result) ==
+           FPST_ERR_TIMEOUT);
+    assert(bridge.retained_valid && p1.retained);
+    assert(bridge.retained_sequence == 2u);
+    assert(session.next_sequence == 2u && p1.sequence == 2u && p2.sequence == 2u);
+    assert(fpst_pair_bridge_send_sample(&bridge, sample, &rx_result) ==
+           FPST_ERR_BUSY);
+
+    p2.drop_rx_requests = false;
+    assert(fpst_pair_bridge_retry_retained(&bridge, &rx_result) == FPST_OK);
+    assert(!bridge.retained_valid && !p1.retained);
+    assert(session.next_sequence == 3u && p1.sequence == 3u && p2.sequence == 3u);
+    assert(p1.retained_commit_count == 3u && p2.accepted_count == 3u);
+    assert(rx_result.commit_accepted && rx_result.sequence == 2u);
 
     assert(fpst_session_zeroize_pair(&session, &p2_link) == FPST_OK);
     assert(session.state == FPST_SESSION_NO_KEY);

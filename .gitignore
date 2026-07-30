@@ -9,6 +9,7 @@ Thumbs.db
 # Python
 __pycache__/
 *.py[cod]
+*.egg-info/
 .venv/
 venv/
 .pytest_cache/
@@ -19,6 +20,8 @@ venv/
 *.elf
 *.exe
 *.out
+/cc*.s
+/cc*.res
 
 # FPGA tool outputs
 *.bit
@@ -76,6 +79,7 @@ results/**/*.html
 results/**/*.png
 results/**/*.pdf
 !results/**/.gitkeep
+software/host/gate_*_results.jsonl
 
 # Secrets
 .env

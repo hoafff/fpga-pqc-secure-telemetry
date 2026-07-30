@@ -30,6 +30,7 @@ typedef struct {
     bool done;
     uint8_t last_operation;
     unsigned ntt_calls;
+    unsigned progress_feeds;
 } mlkem_mock_t;
 
 typedef struct {
@@ -50,6 +51,10 @@ static uint32_t mock_millis(void *ctx) {
 
 static void mock_delay(void *ctx, uint32_t ms) {
     ((mlkem_mock_t *)ctx)->now_ms += ms;
+}
+
+static void mock_watchdog_feed(void *ctx) {
+    ++((mlkem_mock_t *)ctx)->progress_feeds;
 }
 
 static fpst_result_t mock_rng_fill(void *ctx, uint8_t *out, size_t len) {
@@ -231,6 +236,7 @@ static void test_differential_mlkem512(void) {
     platform.ctx = &g_mock;
     platform.millis = mock_millis;
     platform.delay_ms = mock_delay;
+    platform.watchdog_feed = mock_watchdog_feed;
 
     fpst_fpga_link_t link;
     memset(&link, 0, sizeof(link));
@@ -246,7 +252,9 @@ static void test_differential_mlkem512(void) {
     assert(memcmp(pk_hw, pk_ref, sizeof(pk_hw)) == 0);
     assert(memcmp(sk_hw, sk_ref, sizeof(sk_hw)) == 0);
 
+    const unsigned progress_before_encap = g_mock.progress_feeds;
     assert(fpst_mlkem512_encaps_derand(ct_hw, ss_hw, pk_hw, encap_coins) == FPST_OK);
+    assert(g_mock.progress_feeds > progress_before_encap);
     assert(fpst_mlkem512_ref_enc_derand(ct_ref, ss_ref, pk_ref, encap_coins) == 0);
     assert(memcmp(ct_hw, ct_ref, sizeof(ct_hw)) == 0);
     assert(memcmp(ss_hw, ss_ref, sizeof(ss_hw)) == 0);

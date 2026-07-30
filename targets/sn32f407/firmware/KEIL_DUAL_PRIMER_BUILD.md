@@ -39,6 +39,7 @@ Final production source set:
 targets/sn32f407/firmware/src/fpst_crc32.c
 targets/sn32f407/firmware/src/fpst_sha3.c
 targets/sn32f407/firmware/src/fpst_kdf.c
+targets/sn32f407/firmware/src/fpst_heartbeat_gate.c
 targets/sn32f407/firmware/src/fpst_transport.c
 targets/sn32f407/firmware/src/fpst_platform.c
 targets/sn32f407/firmware/src/fpst_fpga_link.c
@@ -60,7 +61,7 @@ targets/sn32f407/firmware/platform/sn32f407/fpst_sn32f407_dual_main.c
 software/third_party/mlkem-native/src/mlkem/mlkem_native.c
 ```
 
-Do not add files under `tests/` or `firmware/legacy/` to the production target.
+Do not add files under `tests/` to the production target.
 
 ## 3. Shared-SPI pin profile
 

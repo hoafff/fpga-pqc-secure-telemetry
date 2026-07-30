@@ -46,6 +46,7 @@ Do not patch/update the dependency without updating the lock and rerunning the d
 targets/sn32f407/firmware/src/fpst_crc32.c
 targets/sn32f407/firmware/src/fpst_sha3.c
 targets/sn32f407/firmware/src/fpst_kdf.c
+targets/sn32f407/firmware/src/fpst_heartbeat_gate.c
 targets/sn32f407/firmware/src/fpst_transport.c
 targets/sn32f407/firmware/src/fpst_platform.c
 targets/sn32f407/firmware/src/fpst_fpga_link.c
@@ -66,7 +67,7 @@ software/third_party/mlkem-native/src/mlkem/mlkem_native.c
 
 For the final dual-Primer target, follow `KEIL_DUAL_PRIMER_BUILD.md` and **exclude** the single-Primer `fpst_sn32f407_main.c`.
 
-Do not add `tests/` or `firmware/legacy/` sources to production.
+Do not add `tests/` sources to production.
 
 Include paths:
 

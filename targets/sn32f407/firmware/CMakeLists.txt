@@ -12,6 +12,7 @@ add_library(fpst_firmware_core
     src/fpst_crc32.c
     src/fpst_sha3.c
     src/fpst_kdf.c
+    src/fpst_heartbeat_gate.c
     src/fpst_transport.c
     src/fpst_platform.c
     src/fpst_fpga_link.c
@@ -117,6 +118,10 @@ add_executable(test_telemetry tests/test_telemetry.c)
 target_link_libraries(test_telemetry PRIVATE fpst_firmware_core)
 target_compile_options(test_telemetry PRIVATE -Wall -Wextra -Werror -Wpedantic)
 
+add_executable(test_heartbeat_gate tests/test_heartbeat_gate.c)
+target_link_libraries(test_heartbeat_gate PRIVATE fpst_firmware_core)
+target_compile_options(test_heartbeat_gate PRIVATE -Wall -Wextra -Werror -Wpedantic)
+
 add_executable(test_mlkem_session_sink
     tests/test_mlkem_session_sink.c
     tests/mlkem_session_pair_link_mock.c
@@ -131,6 +136,7 @@ add_test(NAME primer_pair COMMAND test_primer_pair)
 add_test(NAME primer_pair_routed COMMAND test_primer_pair_routed)
 add_test(NAME entropy_rng COMMAND test_entropy_rng)
 add_test(NAME telemetry COMMAND test_telemetry)
+add_test(NAME heartbeat_gate COMMAND test_heartbeat_gate)
 add_test(NAME mlkem_session_sink COMMAND test_mlkem_session_sink)
 if(FPST_ENABLE_MLKEM_NATIVE)
     add_test(NAME mlkem_native_wrapper COMMAND test_mlkem_native_wrapper)

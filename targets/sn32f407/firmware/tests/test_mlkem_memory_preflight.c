@@ -40,8 +40,8 @@ enum {
  * pinned monolithic mlkem-native object. The real board callbacks live in
  * fpst_mlkem512_wrapper.c, but this size-only test must not pull the hardware
  * integration path merely to inspect static memory. These link-only traps make
- * any accidental crypto execution fail immediately while satisfying the two
- * callback symbols referenced by the pinned upstream object.
+ * any accidental crypto execution fail immediately while satisfying the
+ * callbacks referenced by the low-RAM and pinned upstream objects.
  */
 void fpst_mlkem512_upstream_randombytes_forbidden(uint8_t *out, size_t len) {
     (void)out;
@@ -52,6 +52,10 @@ void fpst_mlkem512_upstream_randombytes_forbidden(uint8_t *out, size_t len) {
 void fpst_mlkem512_backend_ntt(int16_t data[256]) {
     (void)data;
     assert(!"memory preflight must not execute the NTT backend");
+}
+
+void fpst_mlkem512_backend_progress(void) {
+    /* Size-only link seam: no live platform exists in this preflight. */
 }
 
 int main(void) {

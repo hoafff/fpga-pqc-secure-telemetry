@@ -311,6 +311,42 @@ static void handle_telemetry(void) {
         return;
     }
 
+    fpst_primer2_rx_result_t result;
+    memset(&result, 0, sizeof(result));
+
+    /*
+     * A failed P1 -> MCU -> P2 delivery leaves the byte-identical P1 packet
+     * retained by design. Recover that packet before sampling again; otherwise
+     * every later telemetry command would ask P1 to encrypt new data and receive
+     * FPST_ERR_BUSY forever. One command commits at most one packet, so a
+     * recovered old sample is reported explicitly instead of silently sending
+     * both the retained and a fresh sample.
+     */
+    if (g_bridge.retained_valid) {
+        const uint64_t retained_sequence = g_bridge.retained_sequence;
+        const fpst_result_t retry_rc =
+            fpst_pair_bridge_retry_retained(&g_bridge, &result);
+
+        if (retry_rc != FPST_OK) {
+            console("telemetry=RETRY_PENDING seq=0x");
+            console_hex64(retained_sequence);
+            console("\r\n");
+            print_result(retry_rc);
+            fpst_secure_zero(&result, sizeof(result));
+            return;
+        }
+
+        console("telemetry=RECOVERED seq=0x");
+        console_hex64(retained_sequence);
+        console(" plaintext_len=0x");
+        console_hex16(result.plaintext_len);
+        console(" receiver_status=0x");
+        console_hex16(result.remote_status);
+        console("\r\n");
+        fpst_secure_zero(&result, sizeof(result));
+        return;
+    }
+
     uint16_t adc = 0u;
     fpst_result_t rc = fpst_sn32f407_adc_read(&adc);
     uint8_t sample[FPST_STP_SAMPLE_BYTES];
@@ -320,13 +356,18 @@ static void handle_telemetry(void) {
                                             adc, sample);
     }
 
-    fpst_primer2_rx_result_t result;
     if (rc == FPST_OK)
         rc = fpst_pair_bridge_send_sample(&g_bridge, sample, &result);
     fpst_secure_zero(sample, sizeof(sample));
 
     if (rc != FPST_OK) {
+        if (g_bridge.retained_valid) {
+            console("telemetry=RETRY_PENDING seq=0x");
+            console_hex64(g_bridge.retained_sequence);
+            console("\r\n");
+        }
         print_result(rc);
+        fpst_secure_zero(&result, sizeof(result));
         return;
     }
 
