@@ -233,23 +233,37 @@ static void init_uart0(void) {
 static void init_spi0(void) {
     SN_SYS1->AHBCLKEN_b.SPI0CLKEN = 1u;
 
+    /* Configure only while SPI is disabled. */
     SN_SPI0->CTRL0_b.SPIEN = 0u;
-    SN_SPI0->CTRL0_b.DL = 7u;       /* 8-bit words */
+
+    SN_SPI0->CTRL0_b.DL = 7u;       /* 8-bit SPI frames */
     SN_SPI0->CTRL0_b.MS = 0u;       /* master */
     SN_SPI0->CTRL0_b.LOOPBACK = 0u;
     SN_SPI0->CTRL0_b.SDODIS = 0u;
 
-    /* Divider register encodes n as (n/2)-1. n=12 -> 1 MHz at 12 MHz. */
-    SN_SPI0->CLKDIV_b.DIV = (FPST_LINK_SPI_DIVISOR / 2u) - 1u;
+    /*
+     * Keep the FIFO threshold extension disabled for this polling driver.
+     * NEW_TH_EN only selects the newer threshold fields; it does not change
+     * the SPI DATA register width or the physical FIFO organization.
+     */
+    SN_SPI0->FIFO_TH = 0u;
 
-    /* SPI Mode 0: SCK idle low, sample on rising edge. */
+    /* 12 MHz / 12 = 1 MHz. */
+    SN_SPI0->CLKDIV_b.DIV =
+        (FPST_LINK_SPI_DIVISOR / 2u) - 1u;
+
+    /* SPI Mode 0, MSB first. */
     SN_SPI0->CTRL1 = 0u;
 
-    /* CS is GPIO because each Primer has its own select. */
+    /* CS is controlled by GPIO for the two independent Primer selects. */
     SN_SPI0->CTRL0_b.SELDIS = 1u;
+
+    /* Reset FSM/FIFOs after completing the configuration. */
     SN_SPI0->CTRL0_b.FRESET = 3u;
+
     SN_SPI0->IE = 0u;
     NVIC_DisableIRQ(SPI0_IRQn);
+
     SN_SPI0->CTRL0_b.SPIEN = 1u;
     g_spi_selected = false;
 }
@@ -262,7 +276,7 @@ static fpst_result_t init_adc0(void) {
     g_adc_ready = false;
 
     /* Exact register flow follows the SONiX SN32F400 ADC example. */
-    __ADC_ENABLE_HCLK;
+    SN_SYS1->AHBCLKEN_b.ADCCLKEN = 1; // B?t AHB clock cho ngo?i vi ADC
     SN_ADC->ADM_b.AVREFHSEL = 0u; /* internal reference */
     SN_ADC->ADM_b.VHS = 4u;       /* internal 2 V/VDD reference profile */
     SN_ADC->ADM_b.OVRMODE = 1u;   /* overwrite on overrun */
@@ -307,18 +321,39 @@ static fpst_result_t entropy_adc_sample(void *ctx, uint16_t *sample) {
 
 static fpst_result_t spi_xfer_byte(uint8_t tx, uint8_t *rx,
                                    uint32_t timeout_ms) {
-    const uint32_t start = g_millis;
+    uint32_t start = g_millis;
+
     while ((SN_SPI0->STAT & SPI_STAT_TX_FULL) != 0u) {
-        if (deadline_expired(start, timeout_ms)) return FPST_ERR_TIMEOUT;
+        if (deadline_expired(start, timeout_ms)) {
+            return FPST_ERR_TIMEOUT;
+        }
     }
-    SN_SPI0->DATA = tx;
+
+    /*
+     * DL=7 means one DATA write starts one 8-bit SPI frame.
+     * Use the vendor-recommended sequence: write, wait until BUSY clears,
+     * then read the completed receive frame.
+     */
+    SN_SPI0->DATA = (uint32_t)tx;
+
+    start = g_millis;
+    while ((SN_SPI0->STAT & SPI_STAT_BUSY) != 0u) {
+        if (deadline_expired(start, timeout_ms)) {
+            return FPST_ERR_TIMEOUT;
+        }
+    }
 
     while ((SN_SPI0->STAT & SPI_STAT_RX_EMPTY) != 0u) {
-        if (deadline_expired(start, timeout_ms)) return FPST_ERR_TIMEOUT;
+        if (deadline_expired(start, timeout_ms)) {
+            return FPST_ERR_TIMEOUT;
+        }
     }
 
-    const uint8_t value = (uint8_t)SN_SPI0->DATA;
-    if (rx != NULL) *rx = value;
+    const uint8_t value = (uint8_t)(SN_SPI0->DATA & 0xFFu);
+    if (rx != NULL) {
+        *rx = value;
+    }
+
     return FPST_OK;
 }
 
@@ -498,4 +533,4 @@ fpst_result_t fpst_sn32f407_platform_init(fpst_platform_t *out) {
     out->fpga_zeroize = NULL; /* Tiny/supervisor-owned in the final topology. */
     out->watchdog_feed = port_watchdog_feed;
     return FPST_OK;
-}
+	}
