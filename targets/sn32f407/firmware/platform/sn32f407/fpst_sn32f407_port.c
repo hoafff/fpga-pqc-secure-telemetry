@@ -230,6 +230,18 @@ static void init_uart0(void) {
     SN_UART0->CTRL = UART_CTRL_ENABLE_RX_TX;
 }
 
+static inline void spi0_data_write(uint8_t value) {
+    volatile uint16_t *const data_reg =
+        (volatile uint16_t *)(uintptr_t)&SN_SPI0->DATA;
+    *data_reg = (uint16_t)value;
+}
+
+static inline uint8_t spi0_data_read(void) {
+    volatile uint16_t *const data_reg =
+        (volatile uint16_t *)(uintptr_t)&SN_SPI0->DATA;
+    return (uint8_t)(*data_reg & 0x00FFu);
+}
+
 static void init_spi0(void) {
     SN_SYS1->AHBCLKEN_b.SPI0CLKEN = 1u;
 
@@ -242,11 +254,11 @@ static void init_spi0(void) {
     SN_SPI0->CTRL0_b.SDODIS = 0u;
 
     /*
-     * Keep the FIFO threshold extension disabled for this polling driver.
-     * NEW_TH_EN only selects the newer threshold fields; it does not change
-     * the SPI DATA register width or the physical FIFO organization.
+     * NEW_TH_EN=1 selects the 16-entry, 8-bit FIFO organization required for
+     * byte-oriented BTP transfers. Leaving it cleared packs data as 16-bit FIFO
+     * entries and can produce duplicated or skipped bytes.
      */
-    SN_SPI0->FIFO_TH = 0u;
+    SN_SPI0->FIFO_TH = (1u << 31);
 
     /* 12 MHz / 12 = 1 MHz. */
     SN_SPI0->CLKDIV_b.DIV =
@@ -276,7 +288,7 @@ static fpst_result_t init_adc0(void) {
     g_adc_ready = false;
 
     /* Exact register flow follows the SONiX SN32F400 ADC example. */
-    SN_SYS1->AHBCLKEN_b.ADCCLKEN = 1; // B?t AHB clock cho ngo?i vi ADC
+    SN_SYS1->AHBCLKEN_b.ADCCLKEN = 1u; /* Enable AHB clock for ADC. */
     SN_ADC->ADM_b.AVREFHSEL = 0u; /* internal reference */
     SN_ADC->ADM_b.VHS = 4u;       /* internal 2 V/VDD reference profile */
     SN_ADC->ADM_b.OVRMODE = 1u;   /* overwrite on overrun */
@@ -330,11 +342,10 @@ static fpst_result_t spi_xfer_byte(uint8_t tx, uint8_t *rx,
     }
 
     /*
-     * DL=7 means one DATA write starts one 8-bit SPI frame.
-     * Use the vendor-recommended sequence: write, wait until BUSY clears,
-     * then read the completed receive frame.
+     * DL=7 means one DATA write starts one 8-bit SPI frame. Use explicit
+     * half-word MMIO accesses because SPIn_DATA is a 16-bit register field.
      */
-    SN_SPI0->DATA = (uint32_t)tx;
+    spi0_data_write(tx);
 
     start = g_millis;
     while ((SN_SPI0->STAT & SPI_STAT_BUSY) != 0u) {
@@ -349,7 +360,7 @@ static fpst_result_t spi_xfer_byte(uint8_t tx, uint8_t *rx,
         }
     }
 
-    const uint8_t value = (uint8_t)(SN_SPI0->DATA & 0xFFu);
+    const uint8_t value = spi0_data_read();
     if (rx != NULL) {
         *rx = value;
     }
@@ -533,4 +544,4 @@ fpst_result_t fpst_sn32f407_platform_init(fpst_platform_t *out) {
     out->fpga_zeroize = NULL; /* Tiny/supervisor-owned in the final topology. */
     out->watchdog_feed = port_watchdog_feed;
     return FPST_OK;
-	}
+}
