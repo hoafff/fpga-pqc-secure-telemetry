@@ -54,6 +54,7 @@ targets/sn32f407/firmware/src/fpst_mlkem512_lowram.c
 targets/sn32f407/firmware/src/fpst_mlkem512_wrapper.c
 targets/sn32f407/firmware/src/fpst_mlkem_session.c
 
+targets/sn32f407/firmware/platform/sn32f407/fpst_sn32f407_p010_guard.c
 targets/sn32f407/firmware/platform/sn32f407/fpst_sn32f407_port.c
 targets/sn32f407/firmware/platform/sn32f407/fpst_sn32f407_multiport.c
 targets/sn32f407/firmware/platform/sn32f407/fpst_sn32f407_dual_main.c
@@ -204,7 +205,8 @@ SN32 trusted controller    -> software session/CSPRNG/transient-state hygiene
 
 Therefore:
 
-- Tiny `SYSTEM_RESET_N` is not connected to SN32 in the MVP;
+- legacy Tiny `SYSTEM_RESET_N/RESET_PULSE` is retired;
+- conditional `Tiny_FAULT_N` uses P0.10 input-only source policy, but J1-9/J11-1 remains disconnected until physical qualification;
 - a dedicated Tiny→SN32 hardware reset/zeroize path is optional future hardening, not an MVP release blocker;
 - do not invent a spare SN32 GPIO/reset assignment;
 - firmware/end-to-end acceptance must verify SN32 software session invalidation and CSPRNG/transient-state zeroization;

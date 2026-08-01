@@ -62,7 +62,8 @@
  Tiny J1-10 FAULT_LATCH -----+-----------------------> Primer #1 J2-13
                               +-----------------------> Primer #2 J2-13
 
- Tiny J1-9 SYSTEM_RESET_N ---------------------------> NOT CONNECTED TO SN32 (MVP POLICY B)
+ Tiny J1-9 Tiny_FAULT_N ---------X--------------------> SN32 P0.10/J11-1
+                                      SOURCE-ONLY CANDIDATE; PHYSICAL WIRE BLOCKED
 
  ALL BOARDS: GND <-----------------------------------> GND COMMON
 ```
@@ -75,7 +76,7 @@ Các kết nối phải đọc đúng:
 - heartbeat đi **SN32/Primer -> Tiny** và là project **liveness signal**. Primer tiếp tục toggle khi secure-disabled/zeroized/safe-locked nếu clock/logic còn sống vì recovery FSM hiện tại cần heartbeat khỏe.
 - `P2_CRYPTO_FAULT` là local-fault route riêng của project. Tiny J1-11/pin15 đã được tài liệu board xác nhận là General I/O; **đường jumper P2 J2-12→Tiny J1-11 chưa được coi là physical-confirmed cho tới khi đo**.
 - `SECURE_ENABLE`, `ZEROIZE_N`, `FAULT_LATCH` đi **Tiny -> hai Primer**.
-- theo MVP **Policy B**, `SYSTEM_RESET_N` không nối SN32; Tiny chịu trách nhiệm hardware containment của P1/P2, còn SN32 là trusted controller chịu trách nhiệm software invalidation/zeroization của state transient.
+- theo MVP **Policy B**, legacy `SYSTEM_RESET_N/RESET_PULSE` không bắt buộc; J1-9 được chọn có điều kiện cho open-drain `Tiny_FAULT_N`, nhưng chưa được nối sang SN32 trước khi hoàn tất gate điện;
 
 > [!CAUTION]
 > Không nối chung `fault_o` P1 và P2: đây là output push-pull LVCMOS33. Project chỉ đề xuất route P2 `J2-12/T13` tới input dedicated Tiny J1-11. Đo continuity/level trước khi coi route này là hợp lệ trên mạch thật.
@@ -150,7 +151,7 @@ Hai MISO chỉ được nối chung vì endpoint deselected phải high-Z. RTL i
 | 6 | 9 | `CLEAR_FAULT` | rising-event | input |
 | 7 | 10 | `SECURE_ENABLE` | active-high | output |
 | 8 | 11 | `ZEROIZE_N` | **active-low physical output** | output |
-| 9 | 12 | `SYSTEM_RESET_N` | active-low Tiny output; not connected to SN32 in MVP | output |
+| 9 | 12 | `Tiny_FAULT_N` | active-low open-drain `0/Z`, no Tiny pull; physical route still blocked | output candidate |
 | 10 | 14 | `FAULT_LATCH` | active-high | output |
 | 11 | 15 | `P2_CRYPTO_FAULT` | active-high local P2 fault | input |
 
@@ -184,9 +185,9 @@ Primer #2 J2-12 / T13 fault_o  ---->  Tiny J1-11 / pin15 crypto_fault_i
 
 P2 `fault_o` mang local `auth_threshold_fault` và không echo `FAULT_LATCH` của Tiny. Project hiện dùng mã `0x0608 ERR_AUTH_THRESHOLD`, adopted từ FPST baseline. Semantic RTL/constraint đã implemented; physical jumper vẫn **PHYSICAL-PENDING**.
 
-### 5.4 SYSTEM_RESET_N — MVP Policy B
+### 5.4 Tiny_FAULT_N — source-only candidate
 
-`Tiny J1-9 / SYSTEM_RESET_N` tồn tại ở Tiny output nhưng **không nối SN32 trong MVP**.
+Legacy `SYSTEM_RESET_N/RESET_PULSE` không bắt buộc theo Policy B và đã được loại khỏi active Tiny RTL. `Tiny J1-9` hiện là `Tiny_FAULT_N`: fault kéo LOW, no-fault release `Z`, không drive HIGH và không có internal pull-up.
 
 Policy B:
 
@@ -195,7 +196,7 @@ Tiny hardware containment -> Primer #1 + Primer #2
 SN32 trusted controller    -> software session/CSPRNG/transient-secret hygiene
 ```
 
-Không tự chọn reset GPIO SN32. Nếu threat model tương lai yêu cầu asynchronous containment của MCU bị treo/compromised, phải xác nhận destination reset/zeroize từ schematic/connector/polarity/electrical ownership rồi mới thay đổi profile và firmware.
+SN32 P0.10/J11-1 là endpoint candidate dạng digital input/no-pull. I2C0/CMP/CT16B1 phải reset/clock-off và UART0 phải route P3.1/P3.2 trước enable. Hai chân vẫn phải ngắt cho đến khi Stage E/F và route gate cho phép; đây không phải đường reset MCU.
 
 ### 5.5 External tamper / manual / clear
 
@@ -234,7 +235,7 @@ Project intent cho các net kết nối P1/P2:
 SECURE_ENABLE   -> default LOW  (disable)
 ZEROIZE_N       -> default LOW  (assert zeroize)
 P2_CRYPTO_FAULT -> Tiny input default LOW when undriven
-SYSTEM_RESET_N  -> not connected to SN32 in MVP Policy B
+Tiny_FAULT_N    -> source-only `0/Z`; J1-9/J11-1 physically disconnected
 ```
 
 Primer CST có pull-down trên `secure_enable_i`/`zeroize_ni`. Vì `ZEROIZE_N` active-low, full deployment image khi Tiny absent được **thiết kế** để ở zeroized state. Tuy nhiên internal pull/CST không tự chứng minh power-off leakage, back-powering hay level thực; phải đo supervisor-present/absent.
@@ -291,7 +292,7 @@ Firmware production chặn Primer BTP transaction khi `FPST_SN32F407_HARNESS_VER
 - [ ] Tiny absent: đo P1/P2 `ZEROIZE_N` thực tế phải safe-low;
 - [ ] Tiny healthy: đo release `ZEROIZE_N`/`SECURE_ENABLE`;
 - [ ] tamper: `SECURE_ENABLE` hạ, `ZEROIZE_N` low, Primer heartbeat vẫn toggle nếu logic còn sống;
-- [ ] **không nối Tiny SYSTEM_RESET_N vào SN32 trong MVP Policy B**.
+- [ ] **không nối Tiny J1-9 `Tiny_FAULT_N` vào SN32 P0.10 trước khi route gate cho phép**.
 
 ### Gate B — measured transaction, `HARNESS_VERIFIED=1`
 
@@ -336,7 +337,7 @@ Tiny security control
   Tiny J1-7 SECURE_ENABLE ---> P1 J2-15 + P2 J2-15
   Tiny J1-8 ZEROIZE_N -------> P1 J2-16 + P2 J2-16
   Tiny J1-10 FAULT_LATCH ----> P1 J2-13 + P2 J2-13
-  Tiny J1-9 SYSTEM_RESET_N --> NOT CONNECTED TO SN32 (MVP POLICY B)
+  Tiny J1-9 Tiny_FAULT_N --X--> SN32 P0.10/J11-1  [PHYSICAL BLOCKED]
 
 ALL BOARDS
   GND ------------------------ GND COMMON

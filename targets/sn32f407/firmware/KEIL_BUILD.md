@@ -59,6 +59,7 @@ targets/sn32f407/firmware/src/fpst_mlkem512_lowram.c
 targets/sn32f407/firmware/src/fpst_mlkem512_wrapper.c
 targets/sn32f407/firmware/src/fpst_mlkem_session.c
 
+targets/sn32f407/firmware/platform/sn32f407/fpst_sn32f407_p010_guard.c
 targets/sn32f407/firmware/platform/sn32f407/fpst_sn32f407_port.c
 targets/sn32f407/firmware/platform/sn32f407/fpst_sn32f407_main.c
 
@@ -201,7 +202,7 @@ P3.1   UART0_TX / UTX_P31 -> EVK J10 DB_UART
 P3.2   UART0_RX / URX_P32 -> EVK J10 DB_UART
 ```
 
-**Do not use the stale legacy `P0.10/P0.11` UART route.** On this EVK deployment those pins are not the selected J10 UART route. UART host profile is `115200 8N1` at 3.3 V logic.
+**Do not use the stale legacy `P0.10/P0.11` UART route.** P0-P010-001 locks both pins input/no-pull and disables I2C0/CMP/CT16B1 ownership. UART0 must be routed to J10 `P3.1/P3.2` before enable. UART host profile is `115200 8N1` at 3.3 V logic.
 
 The 100 ms heartbeat period is a project-profile value adopted from the FPST reference baseline; it is not a SONiX hardware timing requirement.
 
@@ -214,7 +215,7 @@ Tiny hardware containment -> Primer #1 + Primer #2
 SN32 trusted controller    -> software session/CSPRNG/transient-state hygiene
 ```
 
-No mandatory Tiny→SN32 hardware reset/zeroize wire is part of the MVP. Do not invent a spare SN32 GPIO for `SYSTEM_RESET_N`. A future asynchronous MCU-containment feature requires separate schematic/electrical evidence and an explicit architecture revision.
+No mandatory Tiny→SN32 hardware reset/zeroize wire is part of the MVP. J1-9 is conditionally repurposed as open-drain `Tiny_FAULT_N` on P0.10, but the physical wire remains blocked until its electrical qualification stages pass.
 
 ## 12. Hardware-ready gates
 

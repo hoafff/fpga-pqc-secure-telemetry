@@ -42,13 +42,16 @@
  * P2.9 is assigned by the project profile to the MCU heartbeat output. Its
  * inter-board wire to Tiny remains physical evidence-dependent.
  *
- * IMPORTANT — MVP Policy B / Tiny -> SN32 reset-zeroize boundary:
+ * IMPORTANT — Tiny J1-9 -> SN32 P0.10/J11-1 qualification boundary:
  * Tiny is the hardware safety authority for the two Primer dataplane endpoints.
  * SN32 is the trusted controller and is responsible for software invalidation /
  * zeroization of its transient cryptographic and session state. Therefore the
- * MVP does NOT require a dedicated Tiny SYSTEM_RESET_N or ZEROIZE wire to SN32.
- * No corresponding SN32 GPIO/reset macro is defined here and no spare GPIO may
- * be invented merely because it appears unused.
+ * retired Tiny SYSTEM_RESET_N function is not architecturally required.
+ * The conditionally selected replacement is Tiny_FAULT_N, an active-low
+ * open-drain 0/Z source. P0.10 and the adjacent EEPROM SDA pin P0.11 are locked
+ * to digital input/no-pull; I2C0, CMP and CT16B1 ownership are reset/clock-gated;
+ * UART0 is routed to P3.1/P3.2 before enable. A runtime readback guard enforces
+ * that source policy, but it does not authorize the physical J1-9/J11-1 wire.
  *
  * A future threat model that requires asynchronous containment of a wedged or
  * compromised MCU may add such a path only after schematic/connector/polarity/
@@ -85,6 +88,12 @@
 
 /* PFPA UART0 route 2/2 selects P3.1/P3.2, the EVK J10 DB_UART nets. */
 #define FPST_SN32F407_PFPA_UART0_VALUE       0x0000000Au
+
+/* EVK EEPROM-shared pins held input/high-Z by P0-P010-001 source guard. */
+#define FPST_SN32F407_TINY_FAULT_N_PORT        0u
+#define FPST_SN32F407_TINY_FAULT_N_PIN        10u
+#define FPST_SN32F407_EEPROM_SDA_PORT           0u
+#define FPST_SN32F407_EEPROM_SDA_PIN           11u
 
 #define FPST_SN32F407_SPI_SCK_PORT            1u
 #define FPST_SN32F407_SPI_SCK_PIN             0u

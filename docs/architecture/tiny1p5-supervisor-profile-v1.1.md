@@ -20,9 +20,7 @@ startup heartbeat grace 1000 ms
 secure qualification    500 ms
 heartbeat timeout        350 ms  (project profile; adopted from FPST baseline)
 zeroize hold             10 ms
-reset pulse              10 ms
 recovery qualification  500 ms
-fatal reset policy       enabled inside Tiny by default
 ```
 
 Security order inside the Tiny supervisor is fixed:
@@ -33,13 +31,13 @@ fatal detect
   -> SECURE_ENABLE = 0
   -> KEY_ZEROIZE = 1
   -> zeroize hold
-  -> SYSTEM_RESET_N pulse at the Tiny output
   -> SAFE_LOCKED
+  -> Tiny_FAULT_N remains LOW while the fault latch is set
 ```
 
-`KEY_ZEROIZE` stays asserted throughout `ZEROIZE`, `RESET_PULSE`, `SAFE_LOCKED`, and `RECOVERY_QUALIFY`.
+`KEY_ZEROIZE` stays asserted throughout `ZEROIZE`, `SAFE_LOCKED`, and `RECOVERY_QUALIFY`.
 
-Under MVP **Policy B**, Tiny hardware containment is required for Primer #1/#2. Tiny `SYSTEM_RESET_N` is not connected to SN32 and is not required for the MVP release. SN32 remains the trusted controller and performs software invalidation/zeroization of its transient cryptographic/session state. The project does not claim asynchronous containment of a wedged/compromised MCU.
+Under MVP **Policy B**, the legacy Tiny `SYSTEM_RESET_N/RESET_PULSE` function is not architecturally required. J1-9 is conditionally reassigned to active-low `Tiny_FAULT_N`, with a single `0/Z` driver and no Tiny-side pull. SN32 remains the trusted controller and performs software invalidation/zeroization of transient state. This source decision does not authorize the physical J1-9↔P0.10 connection or claim asynchronous reset of a wedged MCU.
 
 ## Recovery contract
 
@@ -71,7 +69,7 @@ The 1P5 RTL cannot prove safe electrical behavior after loss of 1P5 power by its
 SECURE_ENABLE   -> pull-down
 ZEROIZE_N       -> pull-down  (active-low physical wire, asserts zeroize)
 P2_CRYPTO_FAULT -> pull-down at Tiny input (inactive when undriven)
-SYSTEM_RESET_N  -> not connected to SN32 in MVP Policy B
+Tiny_FAULT_N    -> open-drain 0/Z; no internal pull; physical route separately gated
 ```
 
 The reusable core signal `key_zeroize_o` is active-high internally; `supervisor_top.sv` inverts it to physical active-low `zeroize_no / ZEROIZE_N` at J1-8.
@@ -89,7 +87,7 @@ Do not label this target hardware-verified until all applicable MVP evidence is 
 - measured fail-safe/default levels for connected endpoint-control nets;
 - measured project-profile heartbeat period and 350 ms trip behavior;
 - proof that heartbeat continues during zeroize/fault while the Primer clock/logic remains alive;
-- Tiny-local zeroize-before-`SYSTEM_RESET_N` output ordering if that output path is exercised;
+- Tiny J1-9 never drives push-pull HIGH in POR, normal, fault or illegal states;
 - independent MCU/PQC/crypto timeout tests, P2 authentication-threshold fault, tamper, clear rejection, and qualified recovery.
 
 A future architecture that requires Tiny to asynchronously contain SN32 must add and separately qualify a verified Tiny→SN32 reset/zeroize path; that is optional hardening beyond the MVP Policy B scope.

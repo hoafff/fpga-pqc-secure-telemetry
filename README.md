@@ -60,7 +60,8 @@ Tiny hardware controls in MVP:
   Tiny ZEROIZE_N ------------> Primer #1 + Primer #2
   Tiny FAULT_LATCH ----------> Primer #1 + Primer #2
 
-Tiny SYSTEM_RESET_N ---------> NOT CONNECTED TO SN32 IN MVP POLICY B
+Tiny J1-9 Tiny_FAULT_N --X--> SN32 P0.10/J11-1
+  [source-only candidate; physical connection remains blocked]
 ```
 
 ### MVP Policy B security boundary
@@ -70,7 +71,7 @@ Tiny hardware containment -> Primer #1 + Primer #2
 SN32 trusted controller    -> software session/CSPRNG/transient-secret hygiene
 ```
 
-A dedicated Tiny→SN32 hardware reset/zeroize path is **optional future hardening**, not an MVP requirement. The project does not claim asynchronous hardware containment of MCU-resident state if SN32 itself is wedged/compromised.
+The legacy Tiny→SN32 reset path is not an MVP requirement. J1-9 is now a conditionally selected active-low fault indication, not a reset output; physical connection remains separately gated. The project does not claim asynchronous hardware reset/containment of a wedged SN32.
 
 ## 3. Current code status
 

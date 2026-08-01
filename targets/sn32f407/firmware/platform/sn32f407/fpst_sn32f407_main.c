@@ -473,7 +473,9 @@ static void handle_command(const char *line) {
 }
 
 int main(void) {
+    fpst_sn32f407_p010_early_lock();
     SystemInit();
+    fpst_sn32f407_p010_early_lock();
     SystemCoreClockUpdate();
 
     fpst_result_t rc = fpst_sn32f407_platform_init(&g_platform);

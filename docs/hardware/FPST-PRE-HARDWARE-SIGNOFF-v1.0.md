@@ -50,7 +50,7 @@ SN32 trusted controller
 
 MVP requirements:
 
-- Tiny J1-9 `SYSTEM_RESET_N` remains **not connected to SN32**.
+- Legacy Tiny J1-9 `SYSTEM_RESET_N/RESET_PULSE` is retired. J1-9 is a source-only `Tiny_FAULT_N` candidate and remains **physically disconnected from SN32 P0.10/J11-1**.
 - No spare SN32 GPIO/reset pin may be assigned merely because it appears unused.
 - SN32 software zeroization/invalidation behavior remains part of the firmware acceptance scope.
 - The MVP must not be described as providing asynchronous hardware containment of MCU-resident state when SN32 itself is wedged or compromised.
@@ -114,6 +114,7 @@ Required:
 - [ ] exact Gowin device/tool version.
 - [ ] synthesis/P&R/timing PASS at 27 MHz.
 - [ ] LUT utilization <=70%.
+- [ ] I/O/post-route evidence proves J1-9 is open-drain `0/Z`, with no push-pull HIGH or internal pull.
 - [ ] `.fs` SHA-256 + programming log.
 - [ ] real Tiny boot shows secure disabled and physical `ZEROIZE_N` asserted until qualification.
 
@@ -197,7 +198,7 @@ Observed setup/hold/signal-integrity margins must be compared with the actual de
 | Tiny J1-8 ZEROIZE_N | P1/P2 J2-16 / R11 | fan-out | NOT MEASURED | OPEN |
 | Tiny J1-10 FAULT_LATCH | P1/P2 J2-13 / R12 | fan-out | NOT MEASURED | OPEN |
 | all boards GND | common GND | connected | NOT MEASURED | OPEN |
-| Tiny J1-9 SYSTEM_RESET_N | SN32 reset/zeroize destination | **NOT CONNECTED by MVP Policy B** | N/A | NOT REQUIRED FOR MVP |
+| Tiny J1-9 Tiny_FAULT_N | SN32 P0.10/J11-1 | **CONDITIONALLY SELECTED; KEEP DISCONNECTED** | NOT MEASURED | BLOCKED pending route qualification |
 
 Tiny J1-11 / FPGA pin15 is supported by official board material as a normal General-I/O pin. That evidence proves pin capability only; it does not prove the P2 J2-12→Tiny J1-11 assembled route.
 
@@ -222,7 +223,7 @@ Archive timestamped captures/results for:
 - [ ] independent heartbeat loss trips the project-profile ~350 ms watchdog behavior;
 - [ ] P2 authentication-threshold fault reaches Tiny through the proposed direct route and latches project code `0x0608` without waiting for heartbeat timeout;
 - [ ] fatal path deasserts `SECURE_ENABLE` and asserts physical `ZEROIZE_N`;
-- [ ] Tiny-local `ZEROIZE_N` precedes any `SYSTEM_RESET_N` output pulse if that local output ordering is tested;
+- [ ] Tiny J1-9 is `Z` without fault and LOW with latched/illegal-state fault, and never sources HIGH;
 - [ ] clear is rejected while the originating fault remains active;
 - [ ] qualified recovery succeeds only with heartbeats healthy and fatal sources inactive;
 - [ ] recovery does not resurrect old Primer key/session state.

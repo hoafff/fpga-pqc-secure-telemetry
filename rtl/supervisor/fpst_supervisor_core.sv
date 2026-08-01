@@ -4,9 +4,7 @@ module fpst_supervisor_core #(
     parameter integer STARTUP_GRACE_MS       = 1000,
     parameter integer QUALIFY_MS             = 500,
     parameter integer ZEROIZE_HOLD_MS        = 10,
-    parameter integer RESET_PULSE_MS         = 10,
-    parameter integer RECOVERY_QUALIFY_MS    = 500,
-    parameter bit     RESET_ON_FATAL         = 1'b1
+    parameter integer RECOVERY_QUALIFY_MS    = 500
 ) (
     input  logic        clk_i,
     input  logic        rst_ni,
@@ -20,7 +18,6 @@ module fpst_supervisor_core #(
     input  logic        manual_fault_i,
     output logic        secure_enable_o,
     output logic        key_zeroize_o,
-    output logic        system_reset_no,
     output logic        fault_latched_o,
     output logic [15:0] error_code_o,
     output logic [31:0] first_fault_time_ms_o,
@@ -43,7 +40,7 @@ module fpst_supervisor_core #(
     localparam logic [2:0] ST_QUALIFY          = 3'd1;
     localparam logic [2:0] ST_MONITOR          = 3'd2;
     localparam logic [2:0] ST_ZEROIZE          = 3'd3;
-    localparam logic [2:0] ST_RESET_PULSE      = 3'd4;
+    /* 3'd4 was the retired Tiny-local RESET_PULSE state. Keep it illegal. */
     localparam logic [2:0] ST_SAFE_LOCKED      = 3'd5;
     localparam logic [2:0] ST_RECOVERY_QUALIFY = 3'd6;
 
@@ -179,18 +176,7 @@ module fpst_supervisor_core #(
                     if (tick_ms_i) begin
                         if ((ZEROIZE_HOLD_MS <= 1) || (state_timer_ms_q >= ZEROIZE_HOLD_MS - 1)) begin
                             state_timer_ms_q <= 16'd0;
-                            if (RESET_ON_FATAL) state_q <= ST_RESET_PULSE;
-                            else state_q <= ST_SAFE_LOCKED;
-                        end else begin
-                            state_timer_ms_q <= state_timer_ms_q + 1'b1;
-                        end
-                    end
-                end
-                ST_RESET_PULSE: begin
-                    if (tick_ms_i) begin
-                        if ((RESET_PULSE_MS <= 1) || (state_timer_ms_q >= RESET_PULSE_MS - 1)) begin
                             state_q <= ST_SAFE_LOCKED;
-                            state_timer_ms_q <= 16'd0;
                         end else begin
                             state_timer_ms_q <= state_timer_ms_q + 1'b1;
                         end
@@ -237,13 +223,11 @@ module fpst_supervisor_core #(
     always_comb begin
         secure_enable_o = 1'b0;
         key_zeroize_o = 1'b1;
-        system_reset_no = 1'b1;
         case (state_q)
             ST_QUALIFY: begin key_zeroize_o = 1'b0; end
             ST_MONITOR: begin secure_enable_o = 1'b1; key_zeroize_o = 1'b0; end
-            ST_RESET_PULSE: begin system_reset_no = 1'b0; end
             ST_STARTUP, ST_ZEROIZE, ST_SAFE_LOCKED, ST_RECOVERY_QUALIFY: begin end
-            default: begin system_reset_no = 1'b0; end
+            default: begin end
         endcase
     end
 

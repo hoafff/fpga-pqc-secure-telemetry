@@ -33,6 +33,8 @@ SPI0 shared  : SCK=P1.0 / MISO=P1.1 / MOSI=P1.2
 
 `P0.10/P0.11` không phải final EVK UART route. Current board profile dùng UART0 PFPA route 2 trên `P3.1/P3.2` theo EVK J10 schematic/net mapping.
 
+`P0-P010-001` source guard khóa P0.10 và P0.11 là digital input/no-pull, reset rồi clock-gate I2C0/CMP/CT16B1, route I2C/PWM khỏi hai chân và kiểm tra readback mỗi SysTick. Sai lệch runtime được latch, heartbeat MCU dừng và policy được áp lại. Đây là source qualification; Tiny J1-9 vẫn chưa được phép nối vào J11-1.
+
 ## 3. Final dual-Primer project wiring profile
 
 Shared SPI:
@@ -77,7 +79,8 @@ SN32 trusted controller        -> software session/CSPRNG/transient-state hygien
 
 Therefore:
 
-- no mandatory Tiny→SN32 `SYSTEM_RESET_N` or dedicated hardware-zeroize wire is part of the MVP;
+- legacy Tiny→SN32 `SYSTEM_RESET_N/RESET_PULSE` is not part of the MVP;
+- J1-9 is a conditional `Tiny_FAULT_N` input candidate at P0.10, not a reset line, and remains physically disconnected;
 - no spare SN32 GPIO/reset pin may be invented merely to satisfy an older baseline assumption;
 - SN32 software zeroization/invalidation remains part of the firmware/end-to-end acceptance scope;
 - the MVP does **not** claim asynchronous hardware containment of MCU-resident state when SN32 itself is wedged/compromised.

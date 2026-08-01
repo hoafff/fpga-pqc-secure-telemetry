@@ -42,6 +42,13 @@ target_include_directories(test_sn32_dual_board_syntax PRIVATE
 target_compile_options(test_sn32_dual_board_syntax PRIVATE
     -Wall -Wextra -Werror -Wpedantic)
 
+add_library(fpst_sn32_p010_guard STATIC
+    platform/sn32f407/fpst_sn32f407_p010_guard.c)
+target_include_directories(fpst_sn32_p010_guard PUBLIC
+    platform/sn32f407)
+target_compile_options(fpst_sn32_p010_guard PRIVATE
+    -Wall -Wextra -Werror -Wpedantic)
+
 if(FPST_ENABLE_MLKEM_NATIVE)
     set(FPST_MLKEM_NATIVE_MONOLITHIC "${FPST_MLKEM_NATIVE_ROOT}/mlkem/mlkem_native.c")
     set(FPST_MLKEM_NATIVE_API_DIR "${FPST_MLKEM_NATIVE_ROOT}/mlkem")
@@ -122,6 +129,11 @@ add_executable(test_heartbeat_gate tests/test_heartbeat_gate.c)
 target_link_libraries(test_heartbeat_gate PRIVATE fpst_firmware_core)
 target_compile_options(test_heartbeat_gate PRIVATE -Wall -Wextra -Werror -Wpedantic)
 
+add_executable(test_sn32_p010_guard tests/test_sn32_p010_guard.c)
+target_link_libraries(test_sn32_p010_guard PRIVATE fpst_sn32_p010_guard)
+target_compile_options(test_sn32_p010_guard PRIVATE
+    -Wall -Wextra -Werror -Wpedantic)
+
 add_executable(test_mlkem_session_sink
     tests/test_mlkem_session_sink.c
     tests/mlkem_session_pair_link_mock.c
@@ -131,12 +143,19 @@ target_include_directories(test_mlkem_session_sink PRIVATE include)
 target_compile_options(test_mlkem_session_sink PRIVATE -Wall -Wextra -Werror -Wpedantic)
 
 enable_testing()
+find_package(Python3 COMPONENTS Interpreter QUIET)
 add_test(NAME firmware_core COMMAND test_firmware_core)
 add_test(NAME primer_pair COMMAND test_primer_pair)
 add_test(NAME primer_pair_routed COMMAND test_primer_pair_routed)
 add_test(NAME entropy_rng COMMAND test_entropy_rng)
 add_test(NAME telemetry COMMAND test_telemetry)
 add_test(NAME heartbeat_gate COMMAND test_heartbeat_gate)
+add_test(NAME sn32_p010_guard COMMAND test_sn32_p010_guard)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME sn32_p010_source_contract
+        COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_p010_source_contract.py)
+endif()
 add_test(NAME mlkem_session_sink COMMAND test_mlkem_session_sink)
 if(FPST_ENABLE_MLKEM_NATIVE)
     add_test(NAME mlkem_native_wrapper COMMAND test_mlkem_native_wrapper)

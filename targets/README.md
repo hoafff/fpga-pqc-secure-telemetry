@@ -29,7 +29,7 @@ Tiny hardware containment -> Primer #1 + Primer #2
 SN32 trusted controller    -> software session/CSPRNG/transient-state hygiene
 ```
 
-Tiny `SYSTEM_RESET_N` is not connected to SN32 in the MVP and is not an MVP release blocker. A future asynchronous MCU-containment path requires a separate architecture decision plus schematic/electrical evidence.
+Legacy Tiny `SYSTEM_RESET_N/RESET_PULSE` is not an MVP requirement and has been retired from active Tiny RTL. J1-9 is conditionally assigned to open-drain `Tiny_FAULT_N`; its physical connection to SN32 P0.10 remains blocked pending the separate electrical gate.
 
 ## Layout rule
 

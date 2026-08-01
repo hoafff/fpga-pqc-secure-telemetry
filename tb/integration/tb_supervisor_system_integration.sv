@@ -25,7 +25,7 @@ module tb_supervisor_system_integration;
 
     logic secure_enable;
     logic zeroize_n;
-    logic system_reset_n;
+    wire tiny_fault_n;
     logic fault_latched;
     logic led_fault, led_secure;
 
@@ -40,8 +40,6 @@ module tb_supervisor_system_integration;
     integer p2_hb_edges = 0;
     logic p1_hb_prev = 1'b0;
     logic p2_hb_prev = 1'b0;
-    logic zeroize_seen_before_reset = 1'b0;
-    logic reset_order_check_active = 1'b0;
 
     always #5 clk = ~clk;
 
@@ -64,17 +62,8 @@ module tb_supervisor_system_integration;
             p2_hb_prev <= p2_hb;
         end
 
-        /*
-         * Zeroize-before-reset is a fatal-path property, not a time-zero/POR
-         * property. Arm this monitor immediately before the injected fatal so
-         * unknown/initial POR values cannot masquerade as an ordering failure.
-         */
-        if (reset_order_check_active) begin
-            if (!zeroize_n)
-                zeroize_seen_before_reset <= 1'b1;
-            if (!system_reset_n && !zeroize_seen_before_reset)
-                $fatal(1, "SYSTEM_RESET_N asserted before ZEROIZE_N during armed fatal path");
-        end
+        assert ((tiny_fault_n === 1'b0) || (tiny_fault_n === 1'bz))
+            else $fatal(1, "Tiny_FAULT_N drove an illegal value (must be 0/Z): %b", tiny_fault_n);
     end
 
     supervisor_top #(
@@ -86,9 +75,7 @@ module tb_supervisor_system_integration;
         .STARTUP_GRACE_MS(4),
         .QUALIFY_MS(6),
         .ZEROIZE_HOLD_MS(2),
-        .RESET_PULSE_MS(2),
-        .RECOVERY_QUALIFY_MS(6),
-        .RESET_ON_FATAL(1'b1)
+        .RECOVERY_QUALIFY_MS(6)
     ) tiny (
         .clk_27m(clk),
         .hb_mcu_i(hb_mcu),
@@ -102,7 +89,7 @@ module tb_supervisor_system_integration;
         .btn_clear_n(btn_clear_n),
         .secure_enable_o(secure_enable),
         .zeroize_no(zeroize_n),
-        .system_reset_no(system_reset_n),
+        .tiny_fault_no(tiny_fault_n),
         .fault_latched_o(fault_latched),
         .led_fault_o(led_fault),
         .led_secure_o(led_secure)
@@ -159,6 +146,8 @@ module tb_supervisor_system_integration;
             for (i = 0; i < limit; i = i + 1) begin
                 @(posedge clk);
                 if (fault_latched && tiny.u_supervisor_core.error_code_q == expected) begin
+                    if (tiny_fault_n !== 1'b0)
+                        $fatal(1, "Tiny_FAULT_N did not sink LOW for fault=%04h", expected);
                     found = 1'b1;
                     i = limit;
                 end
@@ -186,8 +175,8 @@ module tb_supervisor_system_integration;
             pulse_clear();
             wait_state(ST_RECOVERY, 12);
             wait_state(ST_MONITOR, 80);
-            if (fault_latched || !secure_enable || !zeroize_n)
-                $fatal(1, "recovery failed fault=%0b secure=%0b zeroize_n=%0b", fault_latched, secure_enable, zeroize_n);
+            if (fault_latched || !secure_enable || !zeroize_n || tiny_fault_n !== 1'bz)
+                $fatal(1, "recovery failed fault=%0b secure=%0b zeroize_n=%0b tiny_fault_n=%b", fault_latched, secure_enable, zeroize_n, tiny_fault_n);
         end
     endtask
 
@@ -212,6 +201,8 @@ module tb_supervisor_system_integration;
         wait_state(ST_MONITOR, 120);
         if (!secure_enable || !zeroize_n || fault_latched)
             $fatal(1, "failed initial qualification");
+        if (tiny_fault_n !== 1'bz)
+            $fatal(1, "Tiny_FAULT_N must release Z when no fault is latched");
 
         /* 2. MCU heartbeat timeout. */
         hb_mcu_run = 1'b0;
@@ -234,16 +225,11 @@ module tb_supervisor_system_integration;
         p2_rst_n = 1'b1;
         recover_to_monitor();
 
-        /* 5,7,8,9,10. Tamper, zeroize-before-reset, clear rejection, live HB, recovery. */
+        /* 5,7,8,9,10. Tamper, 0/Z fault output, clear rejection, live HB, recovery. */
         @(negedge clk);
-        zeroize_seen_before_reset = 1'b0;
-        reset_order_check_active = 1'b1;
         tamper_ext_n = 1'b0;
         wait_fault_code(E_TAMP, 20);
         wait_state(ST_SAFE, 30);
-        reset_order_check_active = 1'b0;
-        if (!zeroize_seen_before_reset)
-            $fatal(1, "fatal path reached SAFE_LOCKED without observing ZEROIZE_N assertion");
         if (secure_enable || zeroize_n)
             $fatal(1, "tamper did not force secure-disable/zeroize");
         prove_live_heartbeats_while_safe();

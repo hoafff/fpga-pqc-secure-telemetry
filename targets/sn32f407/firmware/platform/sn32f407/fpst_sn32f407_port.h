@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include "fpst_csprng.h"
 #include "fpst_platform.h"
+#include "fpst_sn32f407_p010_guard.h"
 
 /*
  * Initialize the legacy Primer #1 SONiX SN32F407F hardware adapter using the
@@ -46,5 +47,16 @@ uint64_t fpst_sn32f407_uptime_ms64(void);
 
 /* True only after the physical two-Primer jumper harness is verified. */
 bool fpst_sn32f407_link_wiring_verified(void);
+
+/*
+ * P0-P010-001 runtime ownership/readback guard. A violation is sticky until
+ * reset, stops the MCU heartbeat and immediately reapplies the input-only lock.
+ */
+void fpst_sn32f407_p010_early_lock(void);
+bool fpst_sn32f407_p010_guard_ok(void);
+uint32_t fpst_sn32f407_p010_guard_faults(void);
+bool fpst_sn32f407_p010_guard_snapshot(
+    fpst_sn32f407_p010_readback_t *out
+);
 
 #endif

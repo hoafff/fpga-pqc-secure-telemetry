@@ -3,6 +3,7 @@
 #include "fpst_entropy_rng.h"
 #include "fpst_heartbeat_gate.h"
 #include "fpst_profile.h"
+#include "fpst_sn32f407_p010_guard.h"
 
 #include <SN32F400.h>
 #include <SN32F400_Def.h>
@@ -60,6 +61,9 @@ static volatile fpst_heartbeat_gate_t g_heartbeat_gate;
 static bool g_spi_selected;
 static bool g_adc_ready;
 static fpst_entropy_rng_t g_entropy_rng;
+static volatile bool g_p010_guard_armed;
+static volatile bool g_p010_guard_failed;
+static volatile uint32_t g_p010_guard_violations;
 
 static uint32_t port_millis(void *ctx);
 static void port_delay_ms(void *ctx, uint32_t ms);
@@ -72,11 +76,23 @@ static void port_spi_end(void *ctx);
 static void port_watchdog_feed(void *ctx);
 static void gpio_write(unsigned port, unsigned pin, bool high);
 static fpst_result_t entropy_adc_sample(void *ctx, uint16_t *sample);
+static uint32_t p010_guard_check(void);
+static void p010_guard_restore(void);
 
 void SysTick_Handler(void) {
     const uint32_t next = g_millis + 1u;
     if (next == 0u) ++g_millis_high;
     g_millis = next;
+
+    if (g_p010_guard_armed) {
+        const uint32_t violations = p010_guard_check();
+        if (violations != FPST_P010_VIOLATION_NONE) {
+            g_p010_guard_failed = true;
+            g_p010_guard_violations |= violations;
+            g_heartbeat_ready = false;
+            p010_guard_restore();
+        }
+    }
 
     if (g_heartbeat_ready && fpst_heartbeat_gate_tick(&g_heartbeat_gate)) {
         g_heartbeat_level = !g_heartbeat_level;
@@ -84,6 +100,30 @@ void SysTick_Handler(void) {
                    FPST_SN32F407_MCU_HEARTBEAT_PIN,
                    g_heartbeat_level);
     }
+}
+
+static fpst_sn32f407_p010_regs_t p010_guard_registers(void) {
+    const fpst_sn32f407_p010_regs_t regs = {
+        .gpio0_mode = &SN_GPIO0->MODE,
+        .gpio0_cfg = &SN_GPIO0->CFG,
+        .pfpa_uart0 = &SN_PFPA->UART0,
+        .pfpa_i2c0 = &SN_PFPA->I2C0,
+        .pfpa_ct16b1 = &SN_PFPA->CT16B1,
+        .sys1_ahbclken = &SN_SYS1->AHBCLKEN,
+        .sys1_prst = &SN_SYS1->PRST
+    };
+    return regs;
+}
+
+static void p010_guard_restore(void) {
+    const fpst_sn32f407_p010_regs_t regs = p010_guard_registers();
+    fpst_sn32f407_p010_guard_apply(&regs);
+}
+
+static uint32_t p010_guard_check(void) {
+    const fpst_sn32f407_p010_regs_t regs = p010_guard_registers();
+    fpst_sn32f407_p010_readback_t snapshot;
+    return fpst_sn32f407_p010_guard_readback(&regs, &snapshot);
 }
 
 static volatile uint32_t *gpio_mode_reg(unsigned port) {
@@ -159,6 +199,7 @@ static void init_pinmux(void) {
      * SEL route stays 0 because hardware SEL is disabled; P1.8 remains the
      * software-controlled W25Q16 CE# and is held high during Primer traffic.
      */
+    /* This UART route write occurs before UART0 clock/CTRL enable. */
     SN_PFPA->UART0 = FPST_SN32F407_PFPA_UART0_VALUE;
     SN_PFPA->SPI0 = FPST_SN32F407_PFPA_SPI0_VALUE;
 }
@@ -214,7 +255,12 @@ static fpst_result_t init_heartbeat_gpio(void) {
     return FPST_OK;
 }
 
-static void init_uart0(void) {
+static fpst_result_t init_uart0(void) {
+    /* Never enable UART0 while its reset route could drive P0.10. */
+    if (p010_guard_check() != FPST_P010_VIOLATION_NONE) {
+        return FPST_ERR_STATE;
+    }
+
     SN_SYS1->AHBCLKEN |= UART0_CLK_EN;
 
     SN_UART0->LC = UART_LC_8N1_DIVISOR_ACCESS;
@@ -226,6 +272,8 @@ static void init_uart0(void) {
     SN_UART0->IE = 0u;
     NVIC_DisableIRQ(UART0_IRQn);
     SN_UART0->CTRL = UART_CTRL_ENABLE_RX_TX;
+    return p010_guard_check() == FPST_P010_VIOLATION_NONE ?
+        FPST_OK : FPST_ERR_STATE;
 }
 
 static void init_spi0(void) {
@@ -496,8 +544,42 @@ bool fpst_sn32f407_link_wiring_verified(void) {
     return FPST_SN32F407_HARNESS_VERIFIED != 0;
 }
 
+void fpst_sn32f407_p010_early_lock(void) {
+    /* Safe before clocks/UART are initialized; intentionally does not arm ISR. */
+    p010_guard_restore();
+}
+
+bool fpst_sn32f407_p010_guard_ok(void) {
+    return g_p010_guard_armed &&
+           !g_p010_guard_failed &&
+           p010_guard_check() == FPST_P010_VIOLATION_NONE;
+}
+
+uint32_t fpst_sn32f407_p010_guard_faults(void) {
+    return g_p010_guard_violations | p010_guard_check();
+}
+
+bool fpst_sn32f407_p010_guard_snapshot(
+    fpst_sn32f407_p010_readback_t *out
+) {
+    const fpst_sn32f407_p010_regs_t regs = p010_guard_registers();
+    const uint32_t violations =
+        fpst_sn32f407_p010_guard_readback(&regs, out);
+    return g_p010_guard_armed && !g_p010_guard_failed &&
+           violations == FPST_P010_VIOLATION_NONE;
+}
+
 fpst_result_t fpst_sn32f407_platform_init(fpst_platform_t *out) {
     if (out == NULL) return FPST_ERR_ARGUMENT;
+
+    /* Earliest application-controlled lock after the DFP SystemInit(). */
+    g_p010_guard_armed = false;
+    g_p010_guard_failed = false;
+    g_p010_guard_violations = FPST_P010_VIOLATION_NONE;
+    p010_guard_restore();
+    if (p010_guard_check() != FPST_P010_VIOLATION_NONE) {
+        return FPST_ERR_STATE;
+    }
 
     SystemCoreClockUpdate();
     if (SystemCoreClock != FPST_SN32F407_HCLK_HZ) return FPST_ERR_STATE;
@@ -512,7 +594,8 @@ fpst_result_t fpst_sn32f407_platform_init(fpst_platform_t *out) {
     init_link_gpio();
     fpst_result_t rc = init_heartbeat_gpio();
     if (rc != FPST_OK) return rc;
-    init_uart0();
+    rc = init_uart0();
+    if (rc != FPST_OK) return rc;
     init_spi0();
 
     /*
@@ -523,6 +606,11 @@ fpst_result_t fpst_sn32f407_platform_init(fpst_platform_t *out) {
      */
     (void)init_adc0();
     port_watchdog_feed(NULL);
+
+    if (p010_guard_check() != FPST_P010_VIOLATION_NONE) {
+        return FPST_ERR_STATE;
+    }
+    g_p010_guard_armed = true;
 
     memset(out, 0, sizeof(*out));
     out->ctx = NULL;

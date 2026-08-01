@@ -13,7 +13,7 @@ TAMPER/MANUAL --------------------------------+--> security FSM
                                                  +--> SECURE_ENABLE
                                                  +--> key_zeroize_o (internal active-high)
                                                  +--> ZEROIZE_N     (physical active-low)
-                                                 +--> SYSTEM_RESET_N (Tiny output only in MVP)
+                                                 +--> Tiny_FAULT_N (J1-9, open-drain 0/Z)
                                                  +--> FAULT_LATCH
 ```
 
@@ -26,7 +26,7 @@ Tiny hardware containment -> Primer #1 + Primer #2
 SN32 trusted controller    -> software invalidation / transient-state zeroization
 ```
 
-Tiny `SYSTEM_RESET_N` không nối SN32 trong MVP. Dự án không claim asynchronous hardware containment của MCU nếu SN32 bị treo/compromised.
+Đường `SYSTEM_RESET_N/RESET_PULSE` cũ không bắt buộc theo Policy B và đã được loại khỏi Tiny active RTL. J1-9 hiện được chọn có điều kiện cho `Tiny_FAULT_N`; source chỉ cho phép sink LOW hoặc release `Z`. Việc nối sang SN32 vẫn là một gate phần cứng riêng và chưa được tài liệu này cho phép.
 
 ## 2. Thiết bị
 
@@ -52,7 +52,8 @@ Implemented:
 - first-fatal latch using the current project error registry;
 - fail-safe internal defaults `SECURE_ENABLE=0`, `key_zeroize_o=1`;
 - startup/heartbeat qualification before secure enable;
-- `ZEROIZE -> RESET_PULSE -> SAFE_LOCKED` local Tiny FSM path;
+- `ZEROIZE -> SAFE_LOCKED` local Tiny FSM path;
+- J1-9 `Tiny_FAULT_N` single-driver open-drain `0/Z`, no internal pull;
 - conditional recovery with continuous healthy-heartbeat qualification;
 - illegal-state fail-safe behavior;
 - S1 local tamper, S2 local clear/recovery, D3 fault LED, D4 secure LED;
@@ -113,7 +114,6 @@ Default project timings:
 | Secure qualification | 500 ms |
 | Heartbeat timeout | 350 ms |
 | Fatal zeroize hold | 10 ms |
-| Tiny-local reset-output pulse | 10 ms |
 | Recovery qualification | 500 ms |
 
 See `docs/architecture/tiny1p5-supervisor-profile-v1.1.md` and the decision register before changing these values.
@@ -127,14 +127,13 @@ RESET
   -> MONITOR            SEC=1 ZEROIZE=0
        fatal
   -> ZEROIZE            SEC=0 ZEROIZE=1
-  -> RESET_PULSE        SYSTEM_RESET_N=0 locally, ZEROIZE=1
   -> SAFE_LOCKED        SEC=0 ZEROIZE=1 FAULT=1
        authorized clear + healthy heartbeats + local causes inactive
   -> RECOVERY_QUALIFY   SEC=0 ZEROIZE=1
   -> STARTUP
 ```
 
-`SYSTEM_RESET_N` state above describes the Tiny output only. Under MVP Policy B it is not connected to SN32.
+`Tiny_FAULT_N` sinks LOW during internal POR and whenever the fault latch is set or the supervisor state encoding is illegal; after POR, a valid no-fault state releases the pad to `Z`. Encoding `3'd4`, formerly `RESET_PULSE`, is now deliberately illegal and fails closed.
 
 Clear is rejected while tamper/manual/P2 crypto fault remains active or heartbeat set is unhealthy. Loss of health or a new fatal source during recovery returns to `SAFE_LOCKED`.
 
@@ -176,7 +175,7 @@ External J1 project mapping:
 | 6 | `CLEAR_FAULT` / `clear_fault_i` | 9 | rising event |
 | 7 | `SECURE_ENABLE` / `secure_enable_o` | 10 | active-high |
 | 8 | **`ZEROIZE_N` / `zeroize_no`** | 11 | **active-low** |
-| 9 | `SYSTEM_RESET_N` / `system_reset_no` | 12 | active-low Tiny output; not wired to SN32 in MVP |
+| 9 | `Tiny_FAULT_N` / `tiny_fault_no` | 12 | active-low open-drain output; only `0/Z`; conditionally selected, physical route still blocked |
 | 10 | `FAULT_LATCH` / `fault_latched_o` | 14 | active-high |
 | 11 | `P2_CRYPTO_FAULT` / `crypto_fault_i` | 15 | active-high |
 
@@ -200,7 +199,7 @@ Official Kiwi 1P5 Rev2.2 pin material confirms `J1-11 / FPGA pin15 IOB2B` is **G
 SECURE_ENABLE   -> project intent LOW when undriven
 ZEROIZE_N       -> project intent LOW when undriven (active-low => zeroize)
 P2_CRYPTO_FAULT -> Tiny input LOW/inactive when undriven
-SYSTEM_RESET_N  -> not connected to SN32 in MVP Policy B
+Tiny_FAULT_N    -> no Tiny-side pull; external SN32 R49 pull-up only after route qualification
 ```
 
 CST/default bias is not enough to claim safe behavior through all power sequencing. Measure actual levels, leakage and contention before sign-off.
@@ -212,7 +211,7 @@ bash targets/tiny1p5/scripts/run_iverilog.sh
 bash scripts/sim/run_supervisor_system_integration.sh
 ```
 
-Coverage includes heartbeat timeout/recovery, tamper/manual/P2 auth-threshold fault, first-fatal stickiness, blocked clear, Tiny-local zeroize-before-reset-output ordering, live heartbeat during safe-lock, recovery abort and post-recovery endpoint key/session invalidity.
+Coverage includes heartbeat timeout/recovery, tamper/manual/P2 auth-threshold fault, first-fatal stickiness, blocked clear, J1-9 `0/Z` behavior during POR/fault/illegal state, live heartbeat during safe-lock, recovery abort and post-recovery endpoint key/session invalidity.
 
 ## 11. Gowin build/program procedure
 

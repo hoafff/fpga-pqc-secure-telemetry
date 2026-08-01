@@ -7,10 +7,12 @@ vlog -sv ../../rtl/supervisor/fpst_sync_bit.sv \
          ../../rtl/supervisor/fpst_debounce_active_low.sv \
          ../../rtl/supervisor/fpst_heartbeat_watchdog.sv \
          ../../rtl/supervisor/fpst_supervisor_core.sv \
+         rtl/supervisor_top.sv \
          ../../tb/supervisor/tb_fpst_heartbeat_watchdog.sv \
          ../../tb/supervisor/tb_fpst_debounce_active_low.sv \
-         ../../tb/supervisor/tb_fpst_supervisor_core.sv
-foreach tb {tb_fpst_heartbeat_watchdog tb_fpst_debounce_active_low tb_fpst_supervisor_core} {
+         ../../tb/supervisor/tb_fpst_supervisor_core.sv \
+         ../../tb/supervisor/tb_supervisor_top_open_drain.sv
+foreach tb {tb_fpst_heartbeat_watchdog tb_fpst_debounce_active_low tb_fpst_supervisor_core tb_supervisor_top_open_drain} {
     vsim -c work.$tb -do "run -all; quit -f"
 }
 quit -f
